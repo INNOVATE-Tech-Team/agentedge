@@ -25,7 +25,7 @@ $agent = require_login();
           <div class="roster-count" id="roster-count">Loading agents…</div>
           <table class="tx" id="roster-table" hidden>
             <thead><tr>
-              <th>Agent</th><th>Email</th><th>Phone</th><th>Location</th><th>Languages</th>
+              <th>Agent</th><th>Email</th><th>Role</th><th>Market Center</th>
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>

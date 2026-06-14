@@ -1,43 +1,60 @@
 <?php
-// Agent roster — a directory of agents. Demo mode returns sample agents;
-// real mode reads active agents from tblstaff joined to tblre_transaction_agents.
+// Agent roster — pulled live from the bold360.vip CRM public directory
+// (/public/directory/agents). Works from anywhere over HTTPS, so no database
+// or firewall dependency. Falls back to sample data if the CRM is unreachable
+// and we're in demo mode.
 require __DIR__ . '/../db.php';
 require __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 if (!current_agent()) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
-if (!empty(cfg()['demo'])) {
-    echo json_encode(['agents' => [
-        ['name' => 'Jordan Avery',  'email' => 'jordan@innovateonline.com', 'phone' => '(843) 555-0142', 'location' => 'Myrtle Beach, SC', 'languages' => 'English, Spanish'],
-        ['name' => 'Sam Rivera',    'email' => 'sam@innovateonline.com',    'phone' => '(843) 555-0190', 'location' => 'Conway, SC',       'languages' => 'English'],
-        ['name' => 'Taylor Brooks', 'email' => 'taylor@innovateonline.com', 'phone' => '(910) 555-0177', 'location' => 'Wilmington, NC',   'languages' => 'English'],
-        ['name' => 'Casey Lin',     'email' => 'casey@innovateonline.com',  'phone' => '(843) 555-0118', 'location' => 'Charleston, SC',   'languages' => 'English, Mandarin'],
-        ['name' => 'Morgan Patel',  'email' => 'morgan@innovateonline.com', 'phone' => '(843) 555-0203', 'location' => 'Myrtle Beach, SC', 'languages' => 'English, Hindi'],
-        ['name' => 'Drew Sullivan', 'email' => 'drew@innovateonline.com',   'phone' => '(803) 555-0166', 'location' => 'Columbia, SC',     'languages' => 'English'],
-    ]]);
+$c = cfg();
+$url = $c['crm_roster_url'] ?? 'https://bold360.vip/api/public/directory/agents';
+
+$ROLE_LABELS = [
+    'mc_leader'       => 'Market Center Leader',
+    'broker_in_charge'=> 'Broker In Charge',
+    'recruiter'       => 'Agent',
+    'agent'           => 'Agent',
+    'retention_admin' => 'Admin',
+    'super_admin'     => 'Admin',
+];
+
+function fetch_json(string $url): ?array {
+    $ctx = stream_context_create(['http' => ['timeout' => 10, 'header' => "Accept: application/json\r\n"]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) return null;
+    $d = json_decode($raw, true);
+    return is_array($d) ? $d : null;
+}
+
+$data = fetch_json($url);
+
+if ($data !== null) {
+    $agents = [];
+    foreach ($data as $a) {
+        $mcs = array_map(fn($m) => $m['name'] ?? '', $a['marketCenters'] ?? []);
+        $mcs = array_values(array_filter($mcs));
+        $agents[] = [
+            'name'         => $a['fullName'] ?? ($a['email'] ?? 'Agent'),
+            'email'        => $a['email'] ?? '',
+            'role'         => $ROLE_LABELS[$a['role'] ?? ''] ?? ucfirst(str_replace('_', ' ', $a['role'] ?? '')),
+            'marketCenter' => implode(', ', $mcs),
+            'photo'        => $a['photoUrl'] ?? null,
+        ];
+    }
+    echo json_encode(['agents' => $agents, 'source' => 'crm']);
     exit;
 }
 
-$out = ['agents' => []];
-try {
-    $rows = db_query(
-        "SELECT s.firstname, s.lastname, s.email, s.phonenumber, a.city, a.state_province
-         FROM tblstaff s
-         JOIN tblre_transaction_agents a ON a.staffid = s.staffid
-         WHERE s.active = 1
-         ORDER BY s.firstname, s.lastname"
-    );
-    foreach ($rows as $r) {
-        $loc = trim(trim(($r['city'] ?? '') . ', ' . ($r['state_province'] ?? '')), ', ');
-        $out['agents'][] = [
-            'name'      => trim(($r['firstname'] ?? '') . ' ' . ($r['lastname'] ?? '')) ?: 'Agent',
-            'email'     => $r['email'] ?? '',
-            'phone'     => $r['phonenumber'] ?? '',
-            'location'  => $loc,
-            'languages' => '', // mapped from a languages lookup table later
-        ];
-    }
-} catch (Throwable $e) {
-    $out['error'] = 'query failed: ' . $e->getMessage();
+// CRM unreachable — sample data so the preview still renders.
+if (!empty($c['demo'])) {
+    echo json_encode(['agents' => [
+        ['name' => 'Jordan Avery',  'email' => 'jordan@innovateonline.com', 'role' => 'Agent',                'marketCenter' => 'Myrtle Beach', 'photo' => null],
+        ['name' => 'Sam Rivera',    'email' => 'sam@innovateonline.com',    'role' => 'Market Center Leader', 'marketCenter' => 'Conway',       'photo' => null],
+        ['name' => 'Taylor Brooks', 'email' => 'taylor@innovateonline.com', 'role' => 'Agent',                'marketCenter' => 'Wilmington',   'photo' => null],
+    ], 'source' => 'sample']);
+    exit;
 }
-echo json_encode($out);
+
+echo json_encode(['agents' => [], 'error' => 'Could not reach the CRM directory.']);

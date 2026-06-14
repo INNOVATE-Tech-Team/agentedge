@@ -14,16 +14,15 @@ function render(rows) {
   body.innerHTML = rows.map(a => `<tr>
     <td>${esc(a.name)}</td>
     <td>${a.email ? `<a href="mailto:${esc(a.email)}">${esc(a.email)}</a>` : '—'}</td>
-    <td>${esc(a.phone) || '—'}</td>
-    <td>${esc(a.location) || '—'}</td>
-    <td>${esc(a.languages) || '—'}</td>
+    <td>${esc(a.role) || '—'}</td>
+    <td>${esc(a.marketCenter) || '—'}</td>
   </tr>`).join('');
 }
 
 function applyFilter() {
   const q = document.getElementById('roster-search').value.trim().toLowerCase();
   if (!q) return render(ALL);
-  render(ALL.filter(a => `${a.name} ${a.email} ${a.location} ${a.languages}`.toLowerCase().includes(q)));
+  render(ALL.filter(a => `${a.name} ${a.email} ${a.role} ${a.marketCenter}`.toLowerCase().includes(q)));
 }
 
 document.getElementById('roster-search').addEventListener('input', applyFilter);
