@@ -9,19 +9,11 @@ header('Content-Type: application/json');
 if (!current_agent()) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
 $c = cfg();
-$url = $c['crm_roster_url'] ?? 'https://bold360.vip/api/public/directory/agents';
-
-$ROLE_LABELS = [
-    'mc_leader'       => 'Market Center Leader',
-    'broker_in_charge'=> 'Broker In Charge',
-    'recruiter'       => 'Agent',
-    'agent'           => 'Agent',
-    'retention_admin' => 'Admin',
-    'super_admin'     => 'Admin',
-];
+// Full retention roster from the bold360.vip CRM (team_members + canonical_agents).
+$url = $c['crm_roster_url'] ?? 'https://bold360.vip/api/public/retention-roster';
 
 function fetch_json(string $url): ?array {
-    $ctx = stream_context_create(['http' => ['timeout' => 10, 'header' => "Accept: application/json\r\n"]]);
+    $ctx = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
     $raw = @file_get_contents($url, false, $ctx);
     if ($raw === false) return null;
     $d = json_decode($raw, true);
@@ -33,28 +25,29 @@ $data = fetch_json($url);
 if ($data !== null) {
     $agents = [];
     foreach ($data as $a) {
-        $mcs = array_map(fn($m) => $m['name'] ?? '', $a['marketCenters'] ?? []);
-        $mcs = array_values(array_filter($mcs));
+        // Market center may come as a string or an array of {name}.
+        $mc = $a['marketCenter'] ?? '';
+        if ($mc === '' && !empty($a['marketCenters'])) {
+            $mc = implode(', ', array_filter(array_map(fn($m) => $m['name'] ?? '', $a['marketCenters'])));
+        }
         $agents[] = [
             'name'         => $a['fullName'] ?? ($a['email'] ?? 'Agent'),
-            'email'        => $a['email'] ?? '',
-            'role'         => $ROLE_LABELS[$a['role'] ?? ''] ?? ucfirst(str_replace('_', ' ', $a['role'] ?? '')),
-            'marketCenter' => implode(', ', $mcs),
-            'photo'        => $a['photoUrl'] ?? null,
+            'marketCenter' => $mc,
+            'brokerage'    => $a['brokerage'] ?? '',
         ];
     }
-    echo json_encode(['agents' => $agents, 'source' => 'crm']);
+    echo json_encode(['agents' => $agents, 'count' => count($agents), 'source' => 'crm']);
     exit;
 }
 
 // CRM unreachable — sample data so the preview still renders.
 if (!empty($c['demo'])) {
     echo json_encode(['agents' => [
-        ['name' => 'Jordan Avery',  'email' => 'jordan@innovateonline.com', 'role' => 'Agent',                'marketCenter' => 'Myrtle Beach', 'photo' => null],
-        ['name' => 'Sam Rivera',    'email' => 'sam@innovateonline.com',    'role' => 'Market Center Leader', 'marketCenter' => 'Conway',       'photo' => null],
-        ['name' => 'Taylor Brooks', 'email' => 'taylor@innovateonline.com', 'role' => 'Agent',                'marketCenter' => 'Wilmington',   'photo' => null],
+        ['name' => 'Jordan Avery',  'marketCenter' => 'Myrtle Beach', 'brokerage' => 'INNOVATE Real Estate'],
+        ['name' => 'Sam Rivera',    'marketCenter' => 'Conway',       'brokerage' => 'INNOVATE Real Estate'],
+        ['name' => 'Taylor Brooks', 'marketCenter' => 'Wilmington',   'brokerage' => 'INNOVATE Real Estate'],
     ], 'source' => 'sample']);
     exit;
 }
 
-echo json_encode(['agents' => [], 'error' => 'Could not reach the CRM directory.']);
+echo json_encode(['agents' => [], 'error' => 'Could not reach the CRM roster.']);
