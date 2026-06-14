@@ -1,22 +1,8 @@
 <?php
 require __DIR__ . '/db.php';
 require __DIR__ . '/auth.php';
+require __DIR__ . '/nav.php';
 $agent = require_login();
-
-// Agent menu. Each item: label, href, and (optional) external=true to mark an
-// SSO link out to another system. Edit this list to match your tools.
-$nav = [
-    ['label' => 'Dashboard',          'href' => 'index.php', 'active' => true],
-    ['label' => 'My Transactions',    'href' => '#'],
-    ['label' => 'Commissions & Cap',  'href' => '#'],
-    ['label' => 'My Network',         'href' => '#'],
-    ['label' => 'Training',           'href' => '#'],
-    ['label' => 'Marketing & Social', 'href' => '#'],
-    ['label' => 'Open House Pool',    'href' => '#'],
-    ['label' => 'Knowledge Base',     'href' => '#'],
-    ['label' => 'Support',            'href' => '#'],
-    ['label' => 'My Profile',         'href' => '#'],
-];
 ?>
 <!doctype html>
 <html lang="en">
@@ -29,21 +15,7 @@ $nav = [
 </head>
 <body>
   <div class="layout">
-    <!-- Sidebar menu -->
-    <aside class="sidebar">
-      <div class="sb-brand"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></div>
-      <nav class="sb-nav">
-        <?php foreach ($nav as $item): ?>
-          <a class="sb-item <?= !empty($item['active']) ? 'sb-active' : '' ?>" href="<?= htmlspecialchars($item['href']) ?>"<?= !empty($item['external']) ? ' target="_blank" rel="noopener"' : '' ?>>
-            <?= htmlspecialchars($item['label']) ?><?= !empty($item['external']) ? ' <span class="sb-ext">↗</span>' : '' ?>
-          </a>
-        <?php endforeach; ?>
-      </nav>
-      <div class="sb-foot">
-        <div class="sb-who"><?= htmlspecialchars($agent['name'] ?: $agent['email']) ?></div>
-        <a class="sb-signout" href="logout.php">Sign out</a>
-      </div>
-    </aside>
+    <?php render_sidebar('dashboard', $agent); ?>
 
     <!-- Main content -->
     <div class="content">

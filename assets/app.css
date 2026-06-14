@@ -74,6 +74,9 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
   .sb-foot{display:flex;align-items:center;justify-content:space-between}
   .sb-who{margin:0}
 }
+.search{padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;min-width:240px;background:#fff;outline:none}
+.roster-count{font-size:12px;color:var(--faint);margin-bottom:12px;font-weight:600}
+.tx td a{color:var(--green-d);text-decoration:none}
 
 .tx{width:100%;border-collapse:collapse;font-size:14px}
 .tx th{text-align:left;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);padding:8px}
