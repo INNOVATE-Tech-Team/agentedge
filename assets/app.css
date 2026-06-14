@@ -59,7 +59,10 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .sb-active{background:#171717;color:#fff;border-left-color:var(--green)}
 .sb-ext{color:var(--green);font-size:11px}
 .sb-foot{padding:14px 18px;border-top:1px solid #222}
-.sb-who{font-size:12px;color:#cfcfcf;margin-bottom:6px}
+.sb-who{font-size:12px;color:#cfcfcf;margin-bottom:6px;display:flex;flex-direction:column;gap:3px}
+.sb-role{color:var(--green);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.sb-admin{background:var(--green);color:#111;font-size:9px;font-weight:800;border-radius:4px;padding:1px 5px;vertical-align:middle;letter-spacing:.5px}
+.sb-roleswitch{width:100%;margin:0 0 10px;padding:6px 8px;border-radius:6px;border:1px solid #333;background:#171717;color:#cfcfcf;font-size:12px}
 .sb-signout{color:var(--green);text-decoration:none;font-weight:700;font-size:13px}
 .content{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
 .content-top{padding:14px 24px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
@@ -104,8 +107,12 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .field{display:flex;flex-direction:column;gap:5px}
 .field.full{grid-column:1 / -1}
 .field label{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
-.field input{padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fafafa}
+.field input,.field select{padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fafafa}
 .field input:disabled{background:#f0f0f0;color:var(--faint)}
+.checklist{list-style:none;margin:0;padding:0}
+.checklist li{position:relative;padding:8px 8px 8px 28px;border-bottom:1px solid var(--border);font-size:14px}
+.checklist li::before{content:"";position:absolute;left:6px;top:11px;width:13px;height:13px;border:2px solid var(--border);border-radius:4px}
+.checklist li:last-child{border-bottom:0}
 .form-sub{font-size:13px;color:var(--faint);margin:2px 0 16px}
 .form-actions{display:flex;align-items:center;gap:14px;margin-top:18px}
 .btn-save{padding:11px 22px;border:0;border-radius:8px;background:var(--green);color:#111;font-weight:800;font-size:14px;cursor:pointer}

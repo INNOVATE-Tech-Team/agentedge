@@ -41,7 +41,6 @@ function render(rows) {
   body.innerHTML = rows.map(a => `<tr>
     <td>${esc(a.name)}</td>
     <td>${esc(a.marketCenter) || '—'}</td>
-    <td>${esc(a.brokerage) || '—'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>
   </tr>`).join('');
@@ -58,7 +57,7 @@ function sortRows(rows) {
 function refresh() {
   const q = document.getElementById('roster-search').value.trim().toLowerCase();
   let rows = ALL;
-  if (q) rows = rows.filter(a => `${a.name} ${a.marketCenter} ${a.brokerage} ${a.email}`.toLowerCase().includes(q));
+  if (q) rows = rows.filter(a => `${a.name} ${a.marketCenter} ${a.email}`.toLowerCase().includes(q));
   VIEW = sortRows(rows);
   render(VIEW);
   document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {

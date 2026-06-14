@@ -27,7 +27,6 @@ $agent = require_login();
             <thead><tr>
               <th data-sort="name">Agent</th>
               <th data-sort="marketCenter">Market Center</th>
-              <th data-sort="brokerage">Brokerage</th>
               <th data-sort="email">Contact</th>
               <th class="no-sort">Social</th>
             </tr></thead>
