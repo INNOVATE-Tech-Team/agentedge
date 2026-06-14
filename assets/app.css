@@ -1,0 +1,54 @@
+:root{
+  --green:#82C112; --green-d:#5b8e0d; --ink:#111; --muted:#5b5b5b; --faint:#8a8a8a;
+  --bg:#f4f5f1; --surface:#fff; --border:#e6e7e8; --amber:#A07221; --red:#C0392B; --blue:#2C9CC9;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+
+/* Login */
+.login-body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0e0e0e;padding:20px}
+.login-card{background:#fff;border-radius:16px;padding:28px;width:min(400px,100%);display:flex;flex-direction:column;gap:10px}
+.brand{font-weight:900;letter-spacing:1px;color:var(--ink)}
+.brand-sub{font-weight:800;color:var(--green-d);margin-top:-6px}
+.login-hint{color:var(--faint);font-size:13px;margin:6px 0 8px}
+.login-card label{font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;display:flex;flex-direction:column;gap:5px}
+.login-card input{padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:15px;background:#fafafa}
+.login-card button{margin-top:10px;padding:13px;border:0;border-radius:8px;background:var(--green);color:#111;font-weight:800;font-size:15px;cursor:pointer}
+.login-err{background:#fdecea;color:var(--red);border:1px solid #f5c6c0;border-radius:8px;padding:9px 12px;font-size:13px}
+
+/* App */
+.topbar{display:flex;align-items:center;justify-content:space-between;background:#0e0e0e;color:#fff;padding:12px 20px}
+.topbar-brand .brand{color:#fff}.topbar-brand .brand-edge{color:var(--green);font-weight:800}
+.topbar-right{display:flex;align-items:center;gap:14px;font-size:13px}
+.who{color:#cfcfcf}.logout{color:var(--green);text-decoration:none;font-weight:700}
+.wrap{max-width:1100px;margin:0 auto;padding:20px}
+.banner{background:#fff7e6;border:1px solid #f0d9a8;color:#8a6d1f;border-radius:8px;padding:9px 12px;font-size:13px;font-weight:600;margin-bottom:14px}
+
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.tile{border-radius:12px;padding:18px;color:#fff}
+.tile-val{font-size:26px;font-weight:800}.tile-lbl{font-size:12px;opacity:.95;margin-top:2px}
+.tile-green{background:#7bbf2e}.tile-amber{background:#c98a1f}.tile-red{background:#e0584b}.tile-blue{background:#2c9cc9}
+@media(max-width:720px){.tiles{grid-template-columns:repeat(2,1fr)}}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:860px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px}
+.card h2{font-size:15px;margin:0 0 14px}
+
+.cap-wrap{position:relative;width:220px;height:220px;margin:0 auto}
+.cap-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800;color:var(--ink)}
+.cap-legend{display:flex;justify-content:space-around;margin:16px 0 0;padding:0}
+.cap-legend div{text-align:center}
+.cap-legend dt{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+.cap-legend dd{margin:2px 0 0;font-weight:800}
+.src-note{font-size:11px;color:var(--faint);margin-top:10px;text-align:center}
+.network-empty{color:var(--faint);font-size:14px;padding:30px 10px;text-align:center;font-style:italic}
+.residual-head{display:flex;align-items:baseline;gap:8px;margin-bottom:12px}
+.residual-amt{font-size:26px;font-weight:800;color:var(--green-d)}
+.residual-lbl{font-size:12px;color:var(--faint)}
+
+.tx{width:100%;border-collapse:collapse;font-size:14px}
+.tx th{text-align:left;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);padding:8px}
+.tx td{padding:9px 8px;border-bottom:1px solid var(--border)}
+.tx .num{text-align:right}
+.muted{color:var(--faint);font-style:italic}
