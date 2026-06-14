@@ -13,7 +13,7 @@ function nav_items(): array {
         ['key' => 'openhouse',    'label' => 'Open House Pool',    'href' => '#'],
         ['key' => 'kb',           'label' => 'Knowledge Base',     'href' => '#'],
         ['key' => 'support',      'label' => 'Support',            'href' => '#'],
-        ['key' => 'profile',      'label' => 'My Profile',         'href' => '#'],
+        ['key' => 'profile',      'label' => 'My Profile',         'href' => 'profile.php'],
     ];
 }
 

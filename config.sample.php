@@ -21,4 +21,11 @@ return [
     // dashboard shows realistic sample numbers (for previewing on bold360.vip).
     // Set false on the production server (innovateonline.com) to use real data.
     'demo' => false,
+
+    // bold360.vip CRM — source of the agent roster + profile editing.
+    'crm_base'  => 'https://bold360.vip/api',
+    // Shared token that unlocks contact details (email/phone) and lets agents
+    // save profile edits. Must match AGENTEDGE_TOKEN in the CRM's environment.
+    // Leave blank to show the roster without contact info and disable editing.
+    'crm_token' => '',
 ];

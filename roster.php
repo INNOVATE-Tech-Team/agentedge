@@ -23,9 +23,13 @@ $agent = require_login();
       <main class="wrap">
         <section class="card">
           <div class="roster-count" id="roster-count">Loading agents…</div>
-          <table class="tx" id="roster-table" hidden>
+          <table class="tx sortable" id="roster-table" hidden>
             <thead><tr>
-              <th>Agent</th><th>Market Center</th><th>Brokerage</th>
+              <th data-sort="name">Agent</th>
+              <th data-sort="marketCenter">Market Center</th>
+              <th data-sort="brokerage">Brokerage</th>
+              <th data-sort="email">Contact</th>
+              <th class="no-sort">Social</th>
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
