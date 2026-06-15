@@ -22,6 +22,17 @@ return [
     // Set false on the production server (innovateonline.com) to use real data.
     'demo' => false,
 
+    // Perfex login bridge — when set, logins are verified through this endpoint
+    // (the agent's existing Perfex password) instead of the local DB or demo.
+    // This is how real logins work on bold360.vip (which can't reach the Perfex
+    // DB directly). Leave blank to fall back to demo/local auth.
+    'auth_bridge_url'   => '',   // e.g. https://innovateonline.com/agentedge-auth/verify.php
+    'auth_bridge_token' => '',   // must match $BRIDGE_TOKEN in verify.php
+
+    // Show sample dashboard tiles/cap instead of querying a local DB. Keep true
+    // on bold360.vip (no local Perfex DB) until the Darwin / tx feed is wired.
+    'sample_dashboard' => false,
+
     // bold360.vip CRM — source of the agent roster + profile editing.
     'crm_base'  => 'https://bold360.vip/api',
     // Shared token that unlocks contact details (email/phone) and lets agents

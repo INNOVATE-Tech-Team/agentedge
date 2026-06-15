@@ -45,9 +45,9 @@ if (trim($in['full_name'] ?? '') === '') {
 if ($token === '') {
     echo json_encode(['ok' => false, 'error' => 'Onboarding isn\'t configured yet (no CRM token).']); exit;
 }
-if (!empty($c['demo'])) {
+if (!writes_enabled()) {
     echo json_encode(['ok' => false, 'demo' => true,
-        'error' => 'Preview mode — the agent was NOT created (so we don\'t add test records to the live CRM). This works for real on the production server.']);
+        'error' => 'Preview mode — the agent was NOT created (so we don\'t add test records to the live CRM). This works for real once real logins are on.']);
     exit;
 }
 

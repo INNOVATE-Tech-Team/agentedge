@@ -20,6 +20,22 @@ function cfg(): array {
     return $cfg;
 }
 
+// --- Mode helpers -----------------------------------------------------------
+// demo_login(): any-password preview login (only when no real auth is set up).
+// writes_enabled(): can we save profile edits / create agents? (real auth only)
+// sample_dashboard(): show sample tiles/cap instead of querying a local DB.
+function demo_login(): bool {
+    $c = cfg();
+    return empty($c['auth_bridge_url']) && !empty($c['demo']);
+}
+function writes_enabled(): bool {
+    return !demo_login();
+}
+function sample_dashboard(): bool {
+    $c = cfg();
+    return !empty($c['sample_dashboard']) || demo_login();
+}
+
 function db(): mysqli {
     static $m = null;
     if ($m === null) {

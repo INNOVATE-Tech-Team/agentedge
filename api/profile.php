@@ -60,8 +60,8 @@ if ($action === 'load') {
     }
     echo json_encode([
         'matched'  => true,
-        'editable' => empty($c['demo']),
-        'demo'     => !empty($c['demo']),
+        'editable' => writes_enabled(),
+        'demo'     => !writes_enabled(),
         'profile'  => [
             'id'           => $record['id'] ?? null,
             'fullName'     => $record['name'] ?? ($record['fullName'] ?? ''),
@@ -81,9 +81,9 @@ if (!$record || empty($record['id'])) {
     echo json_encode(['ok' => false, 'error' => 'We couldn\'t match your record, so there\'s nothing to save to.']);
     exit;
 }
-if (!empty($c['demo'])) {
+if (!writes_enabled()) {
     echo json_encode(['ok' => false, 'demo' => true,
-        'error' => 'Preview mode — changes aren\'t saved. Editing goes live on the production server.']);
+        'error' => 'Preview mode — changes aren\'t saved. Editing goes live once real logins are on.']);
     exit;
 }
 

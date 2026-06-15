@@ -7,8 +7,8 @@ header('Content-Type: application/json');
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
-// Sample-data mode (previewing on bold360.vip) — no database.
-if (!empty(cfg()['demo'])) {
+// Sample dashboard numbers (until Perfex tx / Darwin data is wired in).
+if (sample_dashboard()) {
     echo json_encode([
         'agent'   => ['id' => 1, 'name' => $agent['name']],
         'hasData' => true,
