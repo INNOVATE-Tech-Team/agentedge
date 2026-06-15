@@ -15,6 +15,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $err = 'Invalid email or password.';
 }
+
+// Where "Forgot password?" sends agents. Resets must happen where the password
+// actually lives (the Perfex back office), so the two never get out of sync.
+$reset_url = cfg()['reset_url'] ?? '';
+if ($reset_url === '') $reset_url = 'https://agents.innovateonline.com/admin';
 ?>
 <!doctype html>
 <html lang="en">
@@ -39,6 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <input type="password" name="password" required>
     </label>
     <button type="submit">Sign in</button>
+    <a class="login-forgot" href="<?= htmlspecialchars($reset_url) ?>" target="_blank" rel="noopener">Forgot password?</a>
+    <p class="login-note">Your AgentEdge password is the same as your INNOVATE back-office password.</p>
   </form>
 </body>
 </html>

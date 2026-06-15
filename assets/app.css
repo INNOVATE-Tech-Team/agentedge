@@ -15,6 +15,9 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .login-card input{padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:15px;background:#fafafa}
 .login-card button{margin-top:10px;padding:13px;border:0;border-radius:8px;background:var(--green);color:#111;font-weight:800;font-size:15px;cursor:pointer}
 .login-err{background:#fdecea;color:var(--red);border:1px solid #f5c6c0;border-radius:8px;padding:9px 12px;font-size:13px}
+.login-forgot{display:block;text-align:center;margin-top:12px;color:var(--green-d);text-decoration:none;font-size:13px;font-weight:700}
+.login-forgot:hover{text-decoration:underline}
+.login-note{text-align:center;color:var(--faint);font-size:12px;margin:10px 0 0}
 
 /* App */
 .topbar{display:flex;align-items:center;justify-content:space-between;background:#0e0e0e;color:#fff;padding:12px 20px}

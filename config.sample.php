@@ -33,6 +33,11 @@ return [
     // on bold360.vip (no local Perfex DB) until the Darwin / tx feed is wired.
     'sample_dashboard' => false,
 
+    // Where the login's "Forgot password?" link sends agents. Resets happen in
+    // the Perfex back office (the password's source of truth). Blank = default
+    // to the back-office login at https://agents.innovateonline.com/admin.
+    'reset_url' => '',
+
     // bold360.vip CRM — source of the agent roster + profile editing.
     'crm_base'  => 'https://bold360.vip/api',
     // Shared token that unlocks contact details (email/phone) and lets agents
