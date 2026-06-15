@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Where "Forgot password?" sends agents. Resets must happen where the password
 // actually lives (the Perfex back office), so the two never get out of sync.
 $reset_url = cfg()['reset_url'] ?? '';
-if ($reset_url === '') $reset_url = 'https://agents.innovateonline.com/admin';
+if ($reset_url === '') $reset_url = 'https://agents.innovateonline.com/admin/authentication/forgot_password';
 ?>
 <!doctype html>
 <html lang="en">
