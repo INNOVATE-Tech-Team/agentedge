@@ -12,7 +12,7 @@ if (!$me) { http_response_code(401); echo json_encode(['error' => 'not signed in
 $c     = cfg();
 $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
 $token = $c['crm_token'] ?? '';
-$myEmail = strtolower(trim($me['email'] ?? ''));
+$myEmail = record_email($me['email'] ?? '');
 
 function http_json(string $method, string $url, ?array $body = null): array {
     $opts = ['http' => [

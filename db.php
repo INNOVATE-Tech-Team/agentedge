@@ -36,6 +36,18 @@ function sample_dashboard(): bool {
     return !empty($c['sample_dashboard']) || demo_login();
 }
 
+// Some people log in with a different email than their CRM roster record uses
+// (e.g. a Perfex login that differs from the agent record). Map login -> record
+// email in config 'email_aliases'. Returns the lowercased record email to match.
+function record_email(string $login_email): string {
+    $aliases = cfg()['email_aliases'] ?? [];
+    $e = strtolower(trim($login_email));
+    foreach ($aliases as $from => $to) {
+        if (strtolower(trim($from)) === $e) return strtolower(trim($to));
+    }
+    return $e;
+}
+
 function db(): mysqli {
     static $m = null;
     if ($m === null) {

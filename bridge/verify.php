@@ -14,6 +14,7 @@
 // >>> FILL IN the two secrets below on the server, then save. <<<
 // ---------------------------------------------------------------------------
 
+mysqli_report(MYSQLI_REPORT_OFF);   // PHP 8.1+: return errors instead of throwing
 header('Content-Type: application/json');
 
 $BRIDGE_TOKEN = 'PUT-SHARED-SECRET-HERE';        // must match auth_bridge_token in AgentEdge config.php
@@ -39,7 +40,7 @@ if ($email === '' || $password === '') { echo json_encode(['ok' => false]); exit
 $db = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
 if ($db->connect_errno) {
     http_response_code(500);
-    echo json_encode(['ok' => false, 'error' => 'db']);
+    echo json_encode(['ok' => false, 'error' => 'db', 'detail' => $db->connect_error]);
     exit;
 }
 $db->set_charset('utf8mb4');
@@ -48,6 +49,7 @@ $stmt = $db->prepare(
     "SELECT staffid, email, firstname, lastname, password, active
      FROM tblstaff WHERE email = ? LIMIT 1"
 );
+if (!$stmt) { http_response_code(500); echo json_encode(['ok' => false, 'error' => 'query', 'detail' => $db->error]); exit; }
 $stmt->bind_param('s', $email);
 $stmt->execute();
 $u = $stmt->get_result()->fetch_assoc();
