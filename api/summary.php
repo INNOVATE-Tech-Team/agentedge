@@ -7,6 +7,34 @@ header('Content-Type: application/json');
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
+// Real numbers via the Perfex bridge (same endpoint as login). Reaches the
+// Perfex RE module over HTTPS by staffid; cap stays null until Darwin.
+$c = cfg();
+$bridge = $c['auth_bridge_url'] ?? '';
+$btoken = $c['auth_bridge_token'] ?? '';
+if ($bridge !== '' && $btoken !== '') {
+    $opts = ['http' => [
+        'method'  => 'POST',
+        'timeout' => 15,
+        'header'  => "Content-Type: application/json\r\nAccept: application/json\r\n",
+        'content' => json_encode(['token' => $btoken, 'action' => 'dashboard', 'staffid' => (int)$agent['id']]),
+        'ignore_errors' => true,
+    ]];
+    $raw = @file_get_contents($bridge, false, stream_context_create($opts));
+    $d = $raw === false ? null : json_decode($raw, true);
+    if (is_array($d) && !empty($d['ok'])) {
+        echo json_encode([
+            'agent'   => ['id' => $agent['id'], 'name' => $agent['name']],
+            'hasData' => !empty($d['hasData']),
+            'tiles'   => $d['tiles'] ?? ['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],
+            'cap'     => $d['cap'] ?? null,
+            'network' => $d['network'] ?? [],
+        ]);
+        exit;
+    }
+    // If the bridge call fails, fall through to sample/local below.
+}
+
 // Sample dashboard numbers (until Perfex tx / Darwin data is wired in).
 if (sample_dashboard()) {
     echo json_encode([
