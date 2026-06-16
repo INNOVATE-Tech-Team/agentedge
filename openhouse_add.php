@@ -118,7 +118,7 @@ $pageTitle = $editId ? 'Edit Listing' : 'Add Listing';
             </div>
             <div class="field">
               <label>List Price</label>
-              <input type="number" name="list_price" placeholder="350000" min="0" step="1000"
+              <input type="number" name="list_price" placeholder="350000" min="0" step="1"
                      value="<?= h($listing['list_price'] ?? '') ?>" id="f-price">
             </div>
             <div class="field full">

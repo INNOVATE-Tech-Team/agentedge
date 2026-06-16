@@ -71,8 +71,9 @@ if ($token === '') {
 // ── Query Trestle for the listing ─────────────────────────────────────────────
 // Search by ListingId (the public MLS number) across all entitled feeds.
 $filter = '$filter=' . rawurlencode("ListingId eq '" . str_replace("'", "''", $mls) . "'");
-$select = '$select=' . rawurlencode('ListingId,UnparsedAddress,City,StateOrProvince,PostalCode,PropertyType,ListPrice,ListAgentEmail,ListAgentFullName,Media');
-$url    = "https://api.cotality.com/trestle/odata/Property?{$filter}&{$select}&\$top=1";
+$select = '$select=' . rawurlencode('ListingId,UnparsedAddress,City,StateOrProvince,PostalCode,PropertyType,ListPrice,ListAgentEmail,ListAgentFullName');
+$expand = '$expand=Media';
+$url    = "https://api.cotality.com/trestle/odata/Property?{$filter}&{$select}&{$expand}&\$top=1";
 
 $ctx = stream_context_create(['http' => [
     'method'        => 'GET',
