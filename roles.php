@@ -58,6 +58,7 @@ function current_perms(): array {
     return $_SESSION['perms'];
 }
 
+function is_super_admin(): bool { return !empty(current_perms()['isSuperAdmin']); }
 function is_admin(): bool      { return !empty(current_perms()['isAdmin']); }
 function is_bic(): bool        { return (current_perms()['role'] ?? '') === 'broker_in_charge'; }
 function is_mc_leader(): bool  { return (current_perms()['role'] ?? '') === 'mc_leader'; }

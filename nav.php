@@ -3,25 +3,29 @@
 // everywhere. `external => true` marks an SSO link out to another system.
 // `adminOnly => true` hides the item from non-admins (super/retention admin).
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 
 function nav_items(): array {
-    return [
+    // External links come from the DB (editable by super_admin in admin_links.php).
+    $extLinks = nav_ext_links_all();
+    $ext = array_map(fn($r) => [
+        'key'      => $r['key'],
+        'label'    => $r['label'],
+        'href'     => $r['url'],
+        'external' => true,
+    ], $extLinks);
+
+    return array_merge([
         // ── AgentEdge pages ───────────────────────────────────────────────────
-        ['key' => 'dashboard',    'label' => 'Dashboard',          'href' => 'index.php'],
-        ['key' => 'roster',       'label' => 'Agent Roster',       'href' => 'roster.php'],
-        ['key' => 'onboarding',   'label' => 'Onboarding',         'href' => 'onboarding.php', 'adminOnly' => true],
-        ['key' => 'calendar',     'label' => 'Company Calendar',   'href' => 'calendar.php'],
-        ['key' => 'profile',      'label' => 'My Profile',         'href' => 'profile.php'],
-        // ── External tools (fill in real URLs in href) ────────────────────────
-        // MC-specific links (MLS, state resources, etc.) are injected by
-        // mc-links.js → edit mc_links.php to configure per market center.
-        ['key' => 'transactions', 'label' => 'Transactions',       'href' => '#',                          'external' => true],
-        ['key' => 'maxa',         'label' => 'MAXA Marketing',     'href' => 'https://app.maxa.io',        'external' => true],
-        ['key' => 'swag',         'label' => 'Swag Shop',          'href' => '#',                          'external' => true],
-        ['key' => 'openhouse',    'label' => 'Open House Pool',    'href' => '#',                          'external' => true],
-        ['key' => 'support',      'label' => 'Agent Support',      'href' => '#',                          'external' => true],
-        ['key' => 'kb',           'label' => 'Knowledge Base',     'href' => '#',                          'external' => true],
-    ];
+        ['key' => 'dashboard',   'label' => 'Dashboard',        'href' => 'index.php'],
+        ['key' => 'roster',      'label' => 'Agent Roster',     'href' => 'roster.php'],
+        ['key' => 'onboarding',  'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
+        ['key' => 'calendar',    'label' => 'Company Calendar', 'href' => 'calendar.php'],
+        ['key' => 'profile',     'label' => 'My Profile',       'href' => 'profile.php'],
+    ], $ext, [
+        // ── Super admin only ──────────────────────────────────────────────────
+        ['key' => 'admin_links', 'label' => 'Link Settings',    'href' => 'admin_links.php', 'superOnly' => true],
+    ]);
 }
 
 function render_sidebar(string $current, array $agent): void {
@@ -29,12 +33,14 @@ function render_sidebar(string $current, array $agent): void {
     $admin = !empty($perms['isAdmin']);
     $demo  = !empty(cfg()['demo']);
     echo '<aside class="sidebar"><div class="sb-brand"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></div><nav class="sb-nav">';
+    $superAdmin = !empty($perms['isSuperAdmin']);
     foreach (nav_items() as $it) {
         if (!empty($it['adminOnly']) && !$admin) continue;
+        if (!empty($it['superOnly']) && !$superAdmin) continue;
         $active = $it['key'] === $current ? ' sb-active' : '';
-        $ext = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
-        $arrow = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
-        $badge = !empty($it['adminOnly']) ? ' <span class="sb-admin">Admin</span>' : '';
+        $ext    = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+        $arrow  = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+        $badge  = !empty($it['adminOnly']) ? ' <span class="sb-admin">Admin</span>' : '';
         echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($it['href']) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
     }
     // MC-specific links injected here by mc-links.js
