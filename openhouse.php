@@ -122,7 +122,7 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
               <div class="oh-card-img-placeholder">&#127968;</div>
             <?php endif; ?>
             <?php if ($lst['vacate']): ?>
-              <span class="oh-vacate-badge">Vacate Required</span>
+              <span class="oh-vacate-badge">Vacant</span>
             <?php endif; ?>
             <div class="oh-card-body">
               <div class="oh-card-addr"><?= h($lst['address']) ?>, <?= h($lst['city']) ?>, <?= h($lst['state']) ?><?= $lst['zip'] ? ' '.$lst['zip'] : '' ?></div>

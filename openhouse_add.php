@@ -133,7 +133,7 @@ $pageTitle = $editId ? 'Edit Listing' : 'Add Listing';
           <div style="display:flex;gap:24px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
               <input type="checkbox" name="vacate" value="1" id="f-vacate"<?= !empty($listing['vacate']) ? ' checked' : '' ?>>
-              Vacate required (seller must leave during open house)
+              Vacant (seller will not be present during open house)
             </label>
             <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
               <input type="checkbox" name="visible" value="1" id="f-visible"<?= !isset($listing) || !empty($listing['visible']) ? ' checked' : '' ?>>
