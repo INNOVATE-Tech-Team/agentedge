@@ -1,0 +1,30 @@
+<?php
+// Proxy to the intranet events API. Auth-gated — must be a signed-in agent.
+require __DIR__ . '/../db.php';
+require __DIR__ . '/../auth.php';
+header('Content-Type: application/json');
+
+$agent = current_agent();
+if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
+
+$month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
+
+$c     = cfg();
+$url   = rtrim($c['intranet_events_url'] ?? '', '/');
+$token = $c['intranet_events_token'] ?? '';
+
+if (!$url || !$token) {
+    echo json_encode(['events' => []]);
+    exit;
+}
+
+$ctx = stream_context_create(['http' => [
+    'method'        => 'GET',
+    'timeout'       => 10,
+    'header'        => "Authorization: Bearer $token\r\nAccept: application/json\r\n",
+    'ignore_errors' => true,
+]]);
+$raw = @file_get_contents("$url?month=" . urlencode($month), false, $ctx);
+$d   = $raw !== false ? json_decode($raw, true) : null;
+
+echo json_encode(['events' => is_array($d['events'] ?? null) ? $d['events'] : []]);

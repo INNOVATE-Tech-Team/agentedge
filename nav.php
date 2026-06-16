@@ -9,6 +9,7 @@ function nav_items(): array {
         ['key' => 'dashboard',    'label' => 'Dashboard',          'href' => 'index.php'],
         ['key' => 'roster',       'label' => 'Agent Roster',       'href' => 'roster.php'],
         ['key' => 'onboarding',   'label' => 'Onboarding',         'href' => 'onboarding.php', 'adminOnly' => true],
+        ['key' => 'calendar',     'label' => 'Company Calendar',    'href' => 'calendar.php'],
         ['key' => 'transactions', 'label' => 'My Transactions',    'href' => '#'],
         ['key' => 'commissions',  'label' => 'Commissions & Cap',  'href' => '#'],
         ['key' => 'network',      'label' => 'My Network',         'href' => '#'],

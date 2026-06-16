@@ -38,6 +38,12 @@ return [
     // to the back-office login at https://agents.innovateonline.com/admin.
     'reset_url' => '',
 
+    // Intranet events API — pull org-wide calendar events into AgentEdge.
+    // Set intranet_events_url to https://your-intranet.com/api/events
+    // and intranet_events_token to the same value as AGENTEDGE_EVENTS_TOKEN in the intranet .env.
+    'intranet_events_url'   => '',
+    'intranet_events_token' => '',
+
     // bold360.vip CRM — source of the agent roster + profile editing.
     'crm_base'  => 'https://bold360.vip/api',
     // Shared token that unlocks contact details (email/phone) and lets agents
