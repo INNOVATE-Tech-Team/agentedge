@@ -50,4 +50,11 @@ return [
     // save profile edits. Must match AGENTEDGE_TOKEN in the CRM's environment.
     // Leave blank to show the roster without contact info and disable editing.
     'crm_token' => '',
+
+    // Trestle MLS API — used by the Open House Portal to auto-fill listing
+    // details when an agent enters an MLS number.
+    // Get credentials from: https://trestle.corelogic.com → My Account → API Keys
+    // OAuth2 client credentials flow; tokens are cached automatically.
+    'trestle_client_id'     => '',
+    'trestle_client_secret' => '',
 ];
