@@ -8,7 +8,7 @@ header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error'=>'not signed in']); exit; }
-if (!is_admin()) { http_response_code(403); echo json_encode(['error'=>'admin only']); exit; }
+if (!is_leader()) { http_response_code(403); echo json_encode(['error'=>'leaders only']); exit; }
 
 $email = trim($_GET['email'] ?? '');
 if ($email === '') { http_response_code(400); echo json_encode(['error'=>'email required']); exit; }

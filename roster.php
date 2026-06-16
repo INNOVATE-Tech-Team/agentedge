@@ -11,7 +11,7 @@ $agent = require_login();
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent Roster — AgentEdge</title>
   <link rel="stylesheet" href="assets/app.css">
-  <script>const IS_ADMIN = <?= json_encode(is_admin()) ?>;</script>
+  <script>const IS_ADMIN = <?= json_encode(is_leader()) ?>;</script>
 </head>
 <body>
   <div class="layout">
@@ -30,7 +30,7 @@ $agent = require_login();
               <th data-sort="marketCenter">Market Center</th>
               <th data-sort="email">Contact</th>
               <th class="no-sort">Social</th>
-              <?php if (is_admin()): ?><th class="no-sort">Stats</th><?php endif; ?>
+              <?php if (is_leader()): ?><th class="no-sort">Stats</th><?php endif; ?>
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
