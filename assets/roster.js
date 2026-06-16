@@ -110,7 +110,7 @@ function ensureModal() {
 }
 
 function closeStatsModal() {
-  if (statsModal) statsModal.hidden = true;
+  if (statsModal) statsModal.style.display = 'none';
 }
 
 function fmtMoney(n) {
@@ -152,7 +152,7 @@ function showStats(email, name) {
   const m = ensureModal();
   document.getElementById('stats-agent-name').textContent = name;
   document.getElementById('stats-body').innerHTML = '<p style="text-align:center;padding:1rem;color:#888">Loading…</p>';
-  m.hidden = false;
+  m.style.display = 'flex';
 
   fetch('api/agent_stats.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
