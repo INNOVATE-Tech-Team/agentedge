@@ -47,7 +47,7 @@ function trestle_token(string $clientId, string $secret): string {
         'ignore_errors' => true,
     ]]);
 
-    $raw = @file_get_contents('https://api.trestle.corelogic.com/identity/connect/token', false, $ctx);
+    $raw = @file_get_contents('https://api.cotality.com/trestle/oidc/connect/token', false, $ctx);
     if ($raw === false) return '';
 
     $d = json_decode($raw, true);
@@ -72,7 +72,7 @@ if ($token === '') {
 // Search by ListingId (the public MLS number) across all entitled feeds.
 $filter = '$filter=' . rawurlencode("ListingId eq '" . str_replace("'", "''", $mls) . "'");
 $select = '$select=' . rawurlencode('ListingId,UnparsedAddress,City,StateOrProvince,PostalCode,PropertyType,ListPrice,ListAgentEmail,ListAgentFullName,Media');
-$url    = "https://api.trestle.corelogic.com/platform/odata/v2/Property?{$filter}&{$select}&\$top=1";
+$url    = "https://api.cotality.com/trestle/odata/Property?{$filter}&{$select}&\$top=1";
 
 $ctx = stream_context_create(['http' => [
     'method'        => 'GET',
