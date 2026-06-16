@@ -17,14 +17,25 @@ $agent = require_login();
     <?php render_sidebar('calendar', $agent); ?>
     <div class="content">
       <header class="content-top">
-        <div class="content-title">Company Calendar</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="content-title">Company Calendar</div>
+          <span id="cal-mc-badge" class="cal-mc-badge"></span>
+        </div>
       </header>
       <main class="wrap">
         <section class="card">
-          <div class="cal-header">
-            <button class="btn-cal-nav" id="cal-prev">&#8592; Prev</button>
-            <h2 class="cal-month-label" id="cal-month-label"></h2>
-            <button class="btn-cal-nav" id="cal-next">Next &#8594;</button>
+          <div class="cal-toolbar">
+            <div class="cal-tabs">
+              <button class="cal-tab cal-tab-active" data-filter="all">All <span class="cal-tab-count"></span></button>
+              <button class="cal-tab" data-filter="company">Company <span class="cal-tab-count"></span></button>
+              <button class="cal-tab" data-filter="mc" id="cal-tab-mc">Market Center <span class="cal-tab-count"></span></button>
+              <button class="cal-tab" data-filter="bic">BIC <span class="cal-tab-count"></span></button>
+            </div>
+            <div class="cal-nav">
+              <button class="btn-cal-nav" id="cal-prev">&#8592;</button>
+              <strong class="cal-month-label" id="cal-month-label"></strong>
+              <button class="btn-cal-nav" id="cal-next">&#8594;</button>
+            </div>
           </div>
           <div class="cal-grid" id="cal-grid"></div>
         </section>
