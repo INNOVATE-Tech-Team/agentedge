@@ -6,11 +6,12 @@
 // subdomain folder, reachable at https://agentedge.innovateonline.com/verify.php
 //
 // AgentEdge POSTs JSON {token, ...}:
-//   • {email, password}            -> verifies the login, returns the agent
-//   • {action:"dashboard", staffid}-> returns that agent's Perfex RE numbers
+//   • {email, password}                       -> verify login, return agent
+//   • {action:"dashboard", staffid}           -> agent's own RE numbers
+//   • {action:"dashboard_by_email", email}    -> admin lookup by email
 // Read-only DB user; never returns the password hash.
 //
-// >>> FILL IN the DB password below on the server, then save. <<<
+// >>> FILL IN $BRIDGE_TOKEN and $DB_PASS below on the server, then save. <<<
 // ---------------------------------------------------------------------------
 
 mysqli_report(MYSQLI_REPORT_OFF);   // PHP 8.1+: return errors instead of throwing
@@ -32,29 +33,61 @@ $db->set_charset('utf8mb4');
 
 $action = $in['action'] ?? 'login';
 
-// ---- Dashboard numbers (by staffid) ---------------------------------------
-if ($action === 'dashboard') {
-    $staffid = (string)($in['staffid'] ?? '');
-    if ($staffid === '') { echo json_encode(['ok'=>false]); exit; }
+// ---- Dashboard (own numbers or admin lookup by email) ----------------------
+if ($action === 'dashboard' || $action === 'dashboard_by_email') {
+    if ($action === 'dashboard_by_email') {
+        $email = trim((string)($in['email'] ?? ''));
+        if ($email === '') { echo json_encode(['ok'=>false]); exit; }
+        $su = $db->prepare("SELECT staffid FROM tblstaff WHERE email = ? LIMIT 1");
+        if (!$su) { echo json_encode(['ok'=>false,'error'=>'lookup']); exit; }
+        $su->bind_param('s', $email); $su->execute();
+        $sr = $su->get_result()->fetch_assoc(); $su->close();
+        if (!$sr) {
+            echo json_encode(['ok'=>true,'hasData'=>false,
+                'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],
+                'cap'=>null,'network'=>[]]);
+            exit;
+        }
+        $staffid = (string)$sr['staffid'];
+    } else {
+        $staffid = (string)($in['staffid'] ?? '');
+        if ($staffid === '') { echo json_encode(['ok'=>false]); exit; }
+    }
+
     $out = ['ok'=>true,'hasData'=>false,
             'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],
             'cap'=>null,'network'=>[]];
-    $st = $db->prepare("SELECT id, agent_id, agent_total_sales_volume, agent_total_closed_deals, agent_residual_income_earned FROM tblre_transaction_agents WHERE staffid = ? LIMIT 1");
+
+    $st = $db->prepare("SELECT id, agent_id, agent_total_sales_volume, agent_total_closed_deals, agent_residual_income_earned FROM tblre_transaction_agents WHERE agent_id = ? LIMIT 1");
     if ($st) {
         $st->bind_param('s', $staffid); $st->execute();
-        $me = $st->get_result()->fetch_assoc(); $st->close();
+        $res = $st->get_result();
+        $me  = $res ? $res->fetch_assoc() : null;
+        $st->close();
         if ($me) {
             $out['hasData'] = true;
             $out['tiles']['volume']      = (float)$me['agent_total_sales_volume'];
             $out['tiles']['closedDeals'] = (int)$me['agent_total_closed_deals'];
             $out['tiles']['residual']    = (float)$me['agent_residual_income_earned'];
             $myKey = ($me['agent_id'] !== null && $me['agent_id'] !== '') ? (string)$me['agent_id'] : (string)$me['id'];
-            $dl = $db->prepare("SELECT t.agent_total_sales_volume, t.agent_total_closed_deals, t.agent_residual_income_earned, s.firstname, s.lastname FROM tblre_transaction_agents t LEFT JOIN tblstaff s ON s.staffid = t.staffid WHERE t.recruit_source_agent_id = ? ORDER BY t.agent_total_sales_volume DESC");
+            $dl = $db->prepare(
+                "SELECT t.agent_total_sales_volume, t.agent_total_closed_deals,
+                        t.agent_residual_income_earned, s.firstname, s.lastname
+                 FROM tblre_transaction_agents t
+                 LEFT JOIN tblstaff s ON s.staffid = t.agent_id
+                 WHERE t.recruit_source_agent_id = ?
+                 ORDER BY t.agent_total_sales_volume DESC"
+            );
             if ($dl) {
                 $dl->bind_param('s', $myKey); $dl->execute(); $res = $dl->get_result();
                 while ($row = $res->fetch_assoc()) {
                     $name = trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')) ?: 'Agent';
-                    $out['network'][] = ['name'=>$name,'volume'=>(float)$row['agent_total_sales_volume'],'deals'=>(int)$row['agent_total_closed_deals'],'residual'=>(float)$row['agent_residual_income_earned']];
+                    $out['network'][] = [
+                        'name'     => $name,
+                        'volume'   => (float)$row['agent_total_sales_volume'],
+                        'deals'    => (int)$row['agent_total_closed_deals'],
+                        'residual' => (float)$row['agent_residual_income_earned'],
+                    ];
                 }
                 $dl->close();
             }
