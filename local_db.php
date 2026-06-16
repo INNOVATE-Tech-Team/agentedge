@@ -76,6 +76,35 @@ function local_db(): PDO {
         value TEXT NOT NULL DEFAULT ''
     )");
 
+    // Onboarding queue — one row per agent being onboarded
+    $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_queue (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email   TEXT    NOT NULL,
+        agent_name    TEXT    NOT NULL,
+        market_center TEXT,
+        start_date    TEXT,
+        sponsor       TEXT,
+        role          TEXT    NOT NULL DEFAULT 'agent',
+        added_by      TEXT    NOT NULL,
+        added_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        status        TEXT    NOT NULL DEFAULT 'active',
+        notes         TEXT
+    )");
+
+    // Per-step provisioning status for each queued agent
+    $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_steps (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        queue_id    INTEGER NOT NULL,
+        tool_key    TEXT    NOT NULL,
+        tool_label  TEXT    NOT NULL,
+        is_auto     INTEGER NOT NULL DEFAULT 0,
+        status      TEXT    NOT NULL DEFAULT 'pending',
+        done_by     TEXT,
+        done_at     TEXT,
+        error_msg   TEXT,
+        UNIQUE(queue_id, tool_key)
+    )");
+
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
         $seed = [

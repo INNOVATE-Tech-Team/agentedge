@@ -57,4 +57,12 @@ return [
     // OAuth2 client credentials flow; tokens are cached automatically.
     'trestle_client_id'     => '',
     'trestle_client_secret' => '',
+
+    // Follow Up Boss — auto-provisions new agents. Get key at: FUB → Admin → API
+    'fub_api_key' => '',
+
+    // Constellation1 — agent website platform user provisioning (SOAP API).
+    // Get from Constellation1 support.
+    'c1_api_token' => '',
+    'c1_api_salt'  => '',
 ];
