@@ -6,19 +6,21 @@ require_once __DIR__ . '/roles.php';
 
 function nav_items(): array {
     return [
+        // ── AgentEdge pages ───────────────────────────────────────────────────
         ['key' => 'dashboard',    'label' => 'Dashboard',          'href' => 'index.php'],
         ['key' => 'roster',       'label' => 'Agent Roster',       'href' => 'roster.php'],
         ['key' => 'onboarding',   'label' => 'Onboarding',         'href' => 'onboarding.php', 'adminOnly' => true],
-        ['key' => 'calendar',     'label' => 'Company Calendar',    'href' => 'calendar.php'],
-        ['key' => 'transactions', 'label' => 'My Transactions',    'href' => '#'],
-        ['key' => 'commissions',  'label' => 'Commissions & Cap',  'href' => '#'],
-        ['key' => 'network',      'label' => 'My Network',         'href' => '#'],
-        ['key' => 'training',     'label' => 'Training',           'href' => '#'],
-        ['key' => 'marketing',    'label' => 'Marketing & Social', 'href' => '#'],
-        ['key' => 'openhouse',    'label' => 'Open House Pool',    'href' => '#'],
-        ['key' => 'kb',           'label' => 'Knowledge Base',     'href' => '#'],
-        ['key' => 'support',      'label' => 'Support',            'href' => '#'],
+        ['key' => 'calendar',     'label' => 'Company Calendar',   'href' => 'calendar.php'],
         ['key' => 'profile',      'label' => 'My Profile',         'href' => 'profile.php'],
+        // ── External tools (fill in real URLs in href) ────────────────────────
+        // MC-specific links (MLS, state resources, etc.) are injected by
+        // mc-links.js → edit mc_links.php to configure per market center.
+        ['key' => 'transactions', 'label' => 'Transactions',       'href' => '#',                          'external' => true],
+        ['key' => 'maxa',         'label' => 'MAXA Marketing',     'href' => 'https://app.maxa.io',        'external' => true],
+        ['key' => 'swag',         'label' => 'Swag Shop',          'href' => '#',                          'external' => true],
+        ['key' => 'openhouse',    'label' => 'Open House Pool',    'href' => '#',                          'external' => true],
+        ['key' => 'support',      'label' => 'Agent Support',      'href' => '#',                          'external' => true],
+        ['key' => 'kb',           'label' => 'Knowledge Base',     'href' => '#',                          'external' => true],
     ];
 }
 
@@ -35,6 +37,8 @@ function render_sidebar(string $current, array $agent): void {
         $badge = !empty($it['adminOnly']) ? ' <span class="sb-admin">Admin</span>' : '';
         echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($it['href']) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
     }
+    // MC-specific links injected here by mc-links.js
+    echo '<div id="mc-resources" hidden></div>';
     $who = htmlspecialchars($agent['name'] ?: $agent['email']);
     $role = role_label($perms['role'] ?? 'agent');
     echo '</nav><div class="sb-foot"><div class="sb-who">' . $who . '<span class="sb-role">' . htmlspecialchars($role) . '</span></div>';
@@ -48,4 +52,5 @@ function render_sidebar(string $current, array $agent): void {
         echo '</select>';
     }
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
+    echo '<script src="assets/mc-links.js"></script>';
 }
