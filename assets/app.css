@@ -162,3 +162,33 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-list-meta{font-size:12px;color:var(--faint);margin-top:4px}
 .cal-list-desc{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.45}
 .cal-scope-badge{font-size:10px;font-weight:800;border-radius:12px;padding:3px 9px;white-space:nowrap;letter-spacing:.3px;flex:none}
+
+/* Open House Portal */
+.oh-subnav{display:flex;gap:0;border-bottom:2px solid #E6E7E8;margin-bottom:20px}
+.oh-sub-item{padding:9px 18px;text-decoration:none;font-size:13px;font-weight:700;color:#666;border-bottom:3px solid transparent;margin-bottom:-2px}
+.oh-sub-item:hover{color:#333}
+.oh-sub-active{color:#000;border-bottom-color:#82C112}
+.oh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-top:16px}
+.oh-card{background:white;border:1px solid #E6E7E8;border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.oh-card-img{width:100%;height:160px;object-fit:cover;background:#eee;display:block}
+.oh-card-img-placeholder{width:100%;height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:32px}
+.oh-card-body{padding:12px 14px;flex:1;display:flex;flex-direction:column;gap:6px}
+.oh-card-addr{font-size:13px;font-weight:700;color:#222}
+.oh-card-agent{font-size:12px;color:#666}
+.oh-card-slots{display:flex;flex-direction:column;gap:4px;margin:4px 0}
+.oh-slot-chip{font-size:11px;padding:3px 8px;background:#f5f5f5;border-radius:4px;color:#555;display:flex;justify-content:space-between;align-items:center}
+.oh-vacate-badge{position:absolute;top:8px;right:8px;background:#7c3aed;color:white;font-size:10px;font-weight:800;padding:3px 8px;border-radius:12px;text-transform:uppercase}
+.oh-card-wrap{position:relative}
+.badge-pending{background:#fff4e0;color:#A07221;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px}
+.badge-approved{background:#eef5e8;color:#3a6b1a;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px}
+.badge-declined{background:#fde8e8;color:#c00;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px}
+.badge-cancelled{background:#f0f0f0;color:#888;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px}
+.oh-filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px;align-items:center}
+.oh-filters select{padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;background:white}
+.oh-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;background:#eee;padding:3px;border-radius:8px}
+.oh-cal-cell{background:white;border-radius:4px;min-height:80px;padding:5px 6px;font-size:12px}
+.oh-cal-cell.other-month{background:#fafafa;color:#bbb}
+.oh-cal-cell.today{outline:2px solid #82C112}
+.oh-cal-ev{font-size:10px;padding:2px 4px;border-radius:3px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oh-cal-ev.mine-doing{background:#eef5e8;color:#3a6b1a}
+.oh-cal-ev.mine-listing{background:#e0edf8;color:#1a4a7a}

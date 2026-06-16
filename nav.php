@@ -8,12 +8,20 @@ require_once __DIR__ . '/local_db.php';
 function nav_items(): array {
     // External links come from the DB (editable by super_admin in admin_links.php).
     $extLinks = nav_ext_links_all();
-    $ext = array_map(fn($r) => [
-        'key'      => $r['key'],
-        'label'    => $r['label'],
-        'href'     => $r['url'],
-        'external' => true,
-    ], $extLinks);
+    $ext = array_map(function($r) {
+        $item = [
+            'key'   => $r['key'],
+            'label' => $r['label'],
+            'href'  => $r['url'],
+        ];
+        // Open House Pool is an internal page, not external SSO
+        if ($r['key'] === 'openhouse') {
+            $item['href'] = 'openhouse.php';
+        } else {
+            $item['external'] = true;
+        }
+        return $item;
+    }, $extLinks);
 
     return array_merge([
         // ── AgentEdge pages ───────────────────────────────────────────────────

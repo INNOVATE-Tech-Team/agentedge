@@ -34,6 +34,48 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_slug ON mc_resource_links(mc_slug)");
 
+    // Open House Portal tables
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_listings (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_number          TEXT,
+        address             TEXT    NOT NULL,
+        city                TEXT    NOT NULL,
+        state               TEXT    NOT NULL DEFAULT 'SC',
+        zip                 TEXT,
+        property_type       TEXT    NOT NULL DEFAULT 'Residential',
+        list_price          INTEGER,
+        listing_agent_email TEXT    NOT NULL,
+        listing_agent_name  TEXT,
+        image_url           TEXT,
+        vacate              INTEGER NOT NULL DEFAULT 0,
+        visible             INTEGER NOT NULL DEFAULT 1,
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_slots (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        listing_id  INTEGER NOT NULL,
+        slot_date   TEXT    NOT NULL,
+        start_time  TEXT    NOT NULL,
+        end_time    TEXT    NOT NULL
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_requests (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        slot_id      INTEGER NOT NULL,
+        listing_id   INTEGER NOT NULL,
+        agent_email  TEXT    NOT NULL,
+        agent_name   TEXT,
+        status       TEXT    NOT NULL DEFAULT 'pending',
+        reason       TEXT,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_prefs (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    )");
+
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
         $seed = [
