@@ -200,7 +200,9 @@ function renderTree(tree, totalCount) {
   wrap.innerHTML = '';
 
   if (!tree) {
-    wrap.innerHTML = '<div class="error-msg">No network data found for this agent.</div>';
+    wrap.innerHTML = IS_LEADER
+      ? '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px;border:1px dashed #ddd;border-radius:8px;margin-top:8px">No network data found for this email.<br><span style="font-size:12px">Try a different agent email above.</span></div>'
+      : '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px">No network data on file yet.</div>';
     return;
   }
 
@@ -305,7 +307,14 @@ function loadTree() {
     });
 }
 
-loadTree();
+// Leaders: don't auto-load (their login email may not be in Perfex).
+// Agents: auto-load their own tree.
+if (!IS_LEADER) {
+  loadTree();
+} else {
+  document.getElementById('tree-wrap').innerHTML =
+    '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px;border:1px dashed #ddd;border-radius:8px">Enter an agent\'s email above and click <strong>Load</strong> to view their network.</div>';
+}
 document.getElementById('email-input')?.addEventListener('keydown', e => { if (e.key==='Enter') loadTree(); });
 </script>
 </body>
