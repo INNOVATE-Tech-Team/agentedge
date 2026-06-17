@@ -42,15 +42,15 @@ $roleMap  = [];
 foreach ($roleRows as $r) $roleMap[$r['email']] = $r;
 
 // ── Handle POST ─────────────────────────────────────────────────────────────
-$saved = null;
+$saved  = null;
+$saveError = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($_POST['csrf'] ?? '') !== $csrf) die('Invalid CSRF token.');
 
-    $email   = strtolower(trim($_POST['email'] ?? ''));
-    $role    = preg_replace('/[^a-z_]/', '', $_POST['role'] ?? 'agent');
+    $email = strtolower(trim($_POST['email'] ?? ''));
+    $role  = preg_replace('/[^a-z_]/', '', $_POST['role'] ?? 'agent');
     if (!isset(ROLE_LABELS[$role])) $role = 'agent';
 
-    // MC slugs only make sense for bic / mc_leader.
     $mcs = [];
     if (in_array($role, ['bic', 'mc_leader'], true) && !empty($_POST['mc_slugs'])) {
         foreach ((array)$_POST['mc_slugs'] as $s) {
@@ -61,30 +61,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($email) {
         try {
-        $db   = local_db();
-        $json = json_encode(array_values(array_unique($mcs)));
-        $stmt = $db->prepare(
-            "INSERT INTO agent_roles (email, role, mc_slugs, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, datetime('now'))
-             ON CONFLICT(email) DO UPDATE SET
-               role=excluded.role, mc_slugs=excluded.mc_slugs,
-               updated_by=excluded.updated_by, updated_at=excluded.updated_at"
-        );
-        $stmt->execute([$email, $role, $json, $agent['email']]);
+            $db   = local_db();
+            $json = json_encode(array_values(array_unique($mcs)));
+            $db->prepare(
+                "INSERT INTO agent_roles (email, role, mc_slugs, updated_by, updated_at)
+                 VALUES (?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(email) DO UPDATE SET
+                   role=excluded.role, mc_slugs=excluded.mc_slugs,
+                   updated_by=excluded.updated_by, updated_at=excluded.updated_at"
+            )->execute([$email, $role, $json, $agent['email']]);
+            $roleMap[$email] = ['email' => $email, 'role' => $role, 'mc_slugs' => $json];
+            $saved = $email;
+            if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
         } catch (\Throwable $e) {
-            $saved = 'ERROR: ' . $e->getMessage();
-            goto render;
+            $saveError = $e->getMessage();
         }
-        // Refresh map.
-        $roleMap[$email] = ['email' => $email, 'role' => $role, 'mc_slugs' => $json];
-        $saved = $email;
-        // Bust session cache if editing own account.
-        if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
     }
 }
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
-render:
 ?>
 <!doctype html>
 <html lang="en">
@@ -134,12 +129,10 @@ render:
     </header>
     <main class="wrap">
 
-      <?php if ($saved): ?>
-        <?php if (str_starts_with($saved, 'ERROR:')): ?>
-          <div style="padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px"><?= h($saved) ?></div>
-        <?php else: ?>
-          <div class="flash-ok">Saved role for <strong><?= h($saved) ?></strong>.</div>
-        <?php endif; ?>
+      <?php if ($saveError): ?>
+        <div style="padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px">Save failed: <?= h($saveError) ?></div>
+      <?php elseif ($saved): ?>
+        <div class="flash-ok">Saved role for <strong><?= h($saved) ?></strong>.</div>
       <?php endif; ?>
 
       <div class="card" style="padding:20px 24px">
