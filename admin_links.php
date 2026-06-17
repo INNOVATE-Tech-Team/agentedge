@@ -8,7 +8,6 @@ require __DIR__ . '/nav.php';
 $agent = require_login();
 if (!is_super_admin()) { header('Location: index.php'); exit; }
 
-// CSRF
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
@@ -22,6 +21,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $db     = local_db();
     $action = $_POST['action'] ?? '';
     $tab    = preg_replace('/[^a-z]/', '', $_POST['tab'] ?? 'nav');
+
+    // Reorder actions — return JSON, no redirect
+    if ($action === 'reorder_nav') {
+        $ids = array_values(array_filter(array_map('intval', explode(',', $_POST['ids'] ?? ''))));
+        $st  = $db->prepare("UPDATE nav_ext_links SET sort_ord=? WHERE id=?");
+        foreach ($ids as $i => $id) { if ($id > 0) $st->execute([($i + 1) * 10, $id]); }
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]); exit;
+    }
+    if ($action === 'reorder_mc') {
+        $ids = array_values(array_filter(array_map('intval', explode(',', $_POST['ids'] ?? ''))));
+        $st  = $db->prepare("UPDATE mc_resource_links SET sort_ord=? WHERE id=?");
+        foreach ($ids as $i => $id) { if ($id > 0) $st->execute([($i + 1) * 10, $id]); }
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]); exit;
+    }
 
     if ($action === 'update_nav') {
         $id    = (int)($_POST['id'] ?? 0);
@@ -37,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($key && $label) {
             $max = (int)$db->query("SELECT COALESCE(MAX(sort_ord),0)+10 FROM nav_ext_links")->fetchColumn();
             try { $db->prepare("INSERT INTO nav_ext_links (key,label,url,sort_ord) VALUES (?,?,?,?)")->execute([$key,$label,$url,$max]); }
-            catch (\Exception $e) {} // duplicate key — ignore
+            catch (\Exception $e) {}
         }
     } elseif ($action === 'delete_nav') {
         $id = (int)($_POST['id'] ?? 0);
@@ -92,6 +107,8 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .settings-table th{text-align:left;padding:8px 10px;background:#f5f5f5;border-bottom:2px solid #e0e0e0;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#555}
     .settings-table td{padding:8px 10px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
     .settings-table tr:last-child td{border-bottom:none}
+    .settings-table tr.dragging{opacity:.4}
+    .settings-table tr.drag-over{outline:2px solid #82C112;outline-offset:-2px}
     .inline-form{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .ifield{padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px}
     .ifield-url{width:260px}
@@ -99,19 +116,23 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .ifield-key{width:120px}
     .btn-save{padding:5px 12px;border:none;background:#82C112;color:#000;font-size:12px;font-weight:700;border-radius:4px;cursor:pointer}
     .btn-del{padding:5px 10px;border:1px solid #ddd;background:white;color:#c00;font-size:12px;border-radius:4px;cursor:pointer}
+    .drag-handle{cursor:grab;color:#bbb;font-size:16px;padding:4px 6px;user-select:none;line-height:1}
+    .drag-handle:hover{color:#666}
+    .drag-handle:active{cursor:grabbing}
     .mc-group{margin-bottom:28px}
     .mc-group-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px 6px 0 0;font-weight:700;font-size:13px}
     .mc-group-body{border:1px solid #e6e7e8;border-top:none;border-radius:0 0 6px 6px;overflow:hidden}
-    .mc-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #f3f3f3;font-size:13px}
+    .mc-row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #f3f3f3;font-size:13px;transition:outline 80ms}
     .mc-row:last-child{border-bottom:none}
+    .mc-row.dragging{opacity:.4}
+    .mc-row.drag-over{outline:2px solid #82C112;outline-offset:-2px}
     .mc-row .ifield-label{flex:1;min-width:0}
     .mc-row .ifield-url{flex:2;min-width:0}
-    .url-badge{font-size:11px;padding:2px 6px;border-radius:4px;background:#f0f0f0;color:#666;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-    .url-badge.live{background:#eef5e8;color:#5b8e0d}
     .add-mc-form{padding:10px 12px;background:#fafafa;border:1px solid #e6e7e8;border-radius:6px;margin-top:8px}
     .add-mc-form h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#888}
     .flash-ok{padding:10px 14px;background:#eef5e8;border:1px solid #c3dfa8;border-radius:6px;color:#3a6b1a;font-size:13px;margin-bottom:16px}
   </style>
+  <script>const CSRF='<?= h($csrf) ?>';</script>
 </head>
 <body>
 <div class="layout">
@@ -136,15 +157,17 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <!-- ── TAB: NAV LINKS ─────────────────────────────────────────────── -->
         <div id="tab-nav" class="tab-pane<?= $tab==='nav'?' active':'' ?>">
           <p style="font-size:13px;color:#666;margin:0 0 16px">
-            These links appear in the sidebar for all agents. Set a real URL to activate a link; leave <code>#</code> to hide it.
+            These links appear in the sidebar for all agents. Drag <span style="font-size:16px">⠿</span> to reorder. Set a real URL to activate; leave <code>#</code> to hide.
           </p>
           <table class="settings-table">
             <thead><tr>
+              <th style="width:28px"></th>
               <th>Key</th><th>Label</th><th>URL</th><th></th>
             </tr></thead>
-            <tbody>
+            <tbody id="nav-tbody">
             <?php foreach ($navLinks as $row): ?>
-              <tr>
+              <tr class="nav-row" data-id="<?= $row['id'] ?>">
+                <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                 <td style="color:#888;font-size:11px;font-family:monospace"><?= h($row['key']) ?></td>
                 <td colspan="2">
                   <form method="post" action="admin_links.php" class="inline-form">
@@ -190,7 +213,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <div id="tab-mc" class="tab-pane<?= $tab==='mc'?' active':'' ?>">
           <p style="font-size:13px;color:#666;margin:0 0 16px">
             Agents see the links for their own market center in a <strong>My Resources</strong> sidebar section.
-            Links with URL <code>#</code> are hidden until you set a real URL.
+            Drag <span style="font-size:16px">⠿</span> to reorder within a market center. Links with URL <code>#</code> are hidden.
           </p>
 
           <?php foreach ($bySlug as $slug => $links): ?>
@@ -200,8 +223,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
               <span style="font-size:11px;color:#888;font-weight:400"><?= count($links) ?> link<?= count($links)!==1?'s':'' ?></span>
             </div>
             <div class="mc-group-body">
+              <div class="mc-sortable" data-slug="<?= h($slug) ?>">
               <?php foreach ($links as $r): ?>
-              <div class="mc-row">
+              <div class="mc-row" data-id="<?= $r['id'] ?>">
+                <span class="drag-handle" title="Drag to reorder">⠿</span>
                 <form method="post" action="admin_links.php" class="inline-form" style="flex:1">
                   <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
                   <input type="hidden" name="action" value="update_mc">
@@ -220,6 +245,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
                 </form>
               </div>
               <?php endforeach; ?>
+              </div>
               <!-- Add link to this MC -->
               <div style="padding:8px 12px;background:#fafafa;border-top:1px solid #f0f0f0">
                 <form method="post" action="admin_links.php" class="inline-form">
@@ -264,6 +290,75 @@ function switchTab(t) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + t));
   history.replaceState(null, '', 'admin_links.php?tab=' + t);
 }
+
+// ── Drag-to-reorder ─────────────────────────────────────────────────────────
+function initDragSort(container, rowSelector, reorderAction) {
+  let dragging = null;
+
+  function getRows() { return [...container.querySelectorAll(rowSelector)]; }
+
+  container.addEventListener('dragstart', e => {
+    const row = e.target.closest(rowSelector);
+    if (!row) return;
+    dragging = row;
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', row.dataset.id);
+  });
+
+  container.addEventListener('dragend', e => {
+    const row = e.target.closest(rowSelector);
+    if (!row) return;
+    row.classList.remove('dragging');
+    container.querySelectorAll(rowSelector).forEach(r => r.classList.remove('drag-over'));
+    dragging = null;
+    saveOrder(getRows(), reorderAction);
+  });
+
+  container.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (!dragging) return;
+    const row = e.target.closest(rowSelector);
+    if (!row || row === dragging) return;
+    container.querySelectorAll(rowSelector).forEach(r => r.classList.remove('drag-over'));
+    row.classList.add('drag-over');
+    const rect = row.getBoundingClientRect();
+    const after = e.clientY > rect.top + rect.height / 2;
+    if (after) row.after(dragging); else row.before(dragging);
+  });
+
+  container.addEventListener('drop', e => e.preventDefault());
+
+  // Enable draggable on the rows (toggled on handle mousedown to not block form clicks)
+  container.addEventListener('mousedown', e => {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    const row = handle.closest(rowSelector);
+    if (row) row.setAttribute('draggable', 'true');
+  });
+  container.addEventListener('mouseup', e => {
+    getRows().forEach(r => r.removeAttribute('draggable'));
+  });
+}
+
+function saveOrder(rows, action) {
+  const ids = rows.map(r => r.dataset.id).filter(Boolean).join(',');
+  if (!ids) return;
+  fetch('admin_links.php', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({csrf: CSRF, action, ids}),
+  }).catch(() => {});
+}
+
+// Nav links table
+const navTbody = document.getElementById('nav-tbody');
+if (navTbody) initDragSort(navTbody, 'tr.nav-row', 'reorder_nav');
+
+// MC resource links (one sortable per MC group)
+document.querySelectorAll('.mc-sortable').forEach(wrap => {
+  initDragSort(wrap, '.mc-row', 'reorder_mc');
+});
 </script>
 </body>
 </html>

@@ -29,6 +29,7 @@ function nav_items(): array {
         // ── AgentEdge pages ───────────────────────────────────────────────────
         ['key' => 'dashboard',   'label' => 'Dashboard',        'href' => 'index.php'],
         ['key' => 'roster',      'label' => 'Agent Roster',     'href' => 'roster.php'],
+        ['key' => 'network',     'label' => 'My Network',       'href' => 'network.php'],
         ['key' => 'onboarding',  'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
         ['key' => 'calendar',    'label' => 'Company Calendar', 'href' => 'calendar.php'],
         ['key' => 'profile',     'label' => 'My Profile',       'href' => 'profile.php'],

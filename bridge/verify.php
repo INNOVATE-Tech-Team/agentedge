@@ -97,6 +97,69 @@ if ($action === 'dashboard' || $action === 'dashboard_by_email') {
     echo json_encode($out); exit;
 }
 
+// ---- Network tree (full hierarchy from a root agent) ----------------------
+if ($action === 'network_tree') {
+    $email = trim((string)($in['email'] ?? ''));
+    if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
+
+    // Look up this agent's staffid
+    $su = $db->prepare("SELECT staffid FROM tblstaff WHERE email = ? LIMIT 1");
+    if (!$su) { echo json_encode(['ok'=>false,'error'=>'lookup']); exit; }
+    $su->bind_param('s', $email); $su->execute();
+    $sr = $su->get_result()->fetch_assoc(); $su->close();
+    if (!$sr) { echo json_encode(['ok'=>true,'tree'=>null,'totalCount'=>0]); exit; }
+    $rootId = (string)$sr['staffid'];
+
+    // Load all agent rows in one query — build tree in PHP
+    $res = $db->query(
+        "SELECT t.agent_id, t.recruit_source_agent_id,
+                t.agent_total_sales_volume, t.agent_total_closed_deals,
+                t.agent_residual_income_earned,
+                s.firstname, s.lastname, s.email as agent_email
+         FROM tblre_transaction_agents t
+         LEFT JOIN tblstaff s ON s.staffid = t.agent_id"
+    );
+    $nodes = []; // agent_id => node data
+    $children = []; // agent_id => [child_ids]
+    while ($row = $res->fetch_assoc()) {
+        $id = (string)$row['agent_id'];
+        $nodes[$id] = [
+            'name'     => trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')) ?: 'Agent',
+            'email'    => $row['agent_email'] ?? '',
+            'volume'   => (float)$row['agent_total_sales_volume'],
+            'deals'    => (int)$row['agent_total_closed_deals'],
+            'residual' => (float)$row['agent_residual_income_earned'],
+        ];
+        $parent = (string)($row['recruit_source_agent_id'] ?? '');
+        if ($parent !== '' && $parent !== '0') {
+            $children[$parent][] = $id;
+        }
+    }
+
+    function buildTree(string $id, array &$nodes, array &$children, int $depth): ?array {
+        if ($depth > 6 || !isset($nodes[$id])) return null;
+        $node = $nodes[$id];
+        $node['children'] = [];
+        foreach ($children[$id] ?? [] as $childId) {
+            $child = buildTree($childId, $nodes, $children, $depth + 1);
+            if ($child !== null) $node['children'][] = $child;
+        }
+        usort($node['children'], fn($a,$b) => $b['volume'] <=> $a['volume']);
+        return $node;
+    }
+
+    function countTree(array $node): int {
+        $n = 1;
+        foreach ($node['children'] as $c) $n += countTree($c);
+        return $n;
+    }
+
+    $tree = buildTree($rootId, $nodes, $children, 0);
+    $total = $tree ? countTree($tree) - 1 : 0; // exclude root
+    echo json_encode(['ok'=>true,'tree'=>$tree,'totalCount'=>$total]);
+    exit;
+}
+
 // ---- Login (email + password) ---------------------------------------------
 $email    = trim((string)($in['email'] ?? ''));
 $password = (string)($in['password'] ?? '');
