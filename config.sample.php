@@ -56,6 +56,16 @@ return [
     // Leave blank to show the roster without contact info and disable editing.
     'crm_token' => '',
 
+    // Google OAuth — lets any @innovateonline.com agent sign in with one click.
+    // Setup: console.cloud.google.com → APIs & Services → Credentials → Create OAuth client
+    //   Application type: Web application
+    //   Authorized redirect URI: https://agentedge.bold360.vip/auth_google.php
+    // Copy the Client ID and Secret here. Leave blank to hide the Google button.
+    'google_client_id'     => '',
+    'google_client_secret' => '',
+    // Optional: override the redirect URI if your domain differs.
+    'google_redirect_uri'  => '',
+
     // DotLoop — transaction management. Apply for API access at info.dotloop.com/developers.
     // After approval, register redirect URI: https://agentedge.bold360.vip/dotloop_callback.php
     'dotloop_client_id'     => '',
