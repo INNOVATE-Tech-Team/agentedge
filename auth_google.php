@@ -73,18 +73,28 @@ $photo = $user['picture'] ?? null;
 
 if ($email === '') { header('Location: login.php?err=oauth_token'); exit; }
 
-// Verify this email is in the CRM roster — if not, they don't have access.
-$c      = cfg();
-$base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-$tok    = $c['crm_token'] ?? '';
-$wUrl   = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
-$wRaw   = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
-$whoami = $wRaw ? json_decode($wRaw, true) : null;
-if (!$whoami || empty($whoami['email'])) {
-    header('Location: login.php?err=not_in_roster'); exit;
+// Accept if: (1) email has a role in AgentEdge's own table (covers staff/admins),
+// OR (2) email is in the CRM roster (covers agents).
+require_once __DIR__ . '/local_db.php';
+$inLocalRoles = false;
+if (function_exists('local_db')) {
+    $rs = local_db()->prepare("SELECT role FROM agent_roles WHERE email=?");
+    $rs->execute([$email]);
+    $inLocalRoles = (bool)$rs->fetch();
 }
-// Use CRM display name if available
-if (!empty($whoami['name'])) $name = $whoami['name'];
+
+if (!$inLocalRoles) {
+    $c    = cfg();
+    $base = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+    $tok  = $c['crm_token'] ?? '';
+    $wUrl = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
+    $wRaw = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
+    $whoami = $wRaw ? json_decode($wRaw, true) : null;
+    if (!$whoami || empty($whoami['email'])) {
+        header('Location: login.php?err=not_in_roster'); exit;
+    }
+    if (!empty($whoami['name'])) $name = $whoami['name'];
+}
 
 // Create session — same format as bridge login
 session_regenerate_id(true);
