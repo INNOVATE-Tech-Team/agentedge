@@ -4,7 +4,6 @@
 // Falls back to the CRM /public/whoami when no local row exists.
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
-require_once __DIR__ . '/local_db.php';
 
 const ROLE_LABELS = [
     'super_admin' => 'Super Admin',
@@ -47,6 +46,7 @@ function default_perms(string $role = 'agent'): array {
 
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
+    if (!function_exists('local_db')) return null;
     $stmt = local_db()->prepare("SELECT role, mc_slugs FROM agent_roles WHERE email=?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
