@@ -191,7 +191,7 @@ function selectTier1(idx, children, strip, panel) {
   if (child.children?.length) {
     panel.appendChild(buildDownline(child.children));
   } else {
-    panel.innerHTML += '<div class="no-recruits">No recruits in ' + esc(child.name) + ''s downline yet.</div>';
+    panel.innerHTML += '<div class="no-recruits">No recruits in ' + esc(child.name) + '\'s downline yet.</div>';
   }
 }
 
