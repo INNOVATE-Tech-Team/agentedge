@@ -57,15 +57,21 @@ $agent = require_login();
     .agent-strip::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
 
     /* Agent card in strip */
-    .ag-card{flex-shrink:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;background:white;border:1.5px solid #e6e7e8;border-radius:8px;cursor:pointer;min-width:96px;max-width:116px;text-align:center;transition:border-color 100ms,box-shadow 100ms;position:relative}
+    .ag-card{flex-shrink:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 10px 8px;background:white;border:1.5px solid #e6e7e8;border-radius:8px;cursor:pointer;min-width:108px;max-width:130px;text-align:center;transition:border-color 100ms,box-shadow 100ms;position:relative}
     .ag-card:hover{border-color:#c3dfa8;background:#fafff5}
     .ag-card.selected{border-color:#82C112;background:#f9fdf5;box-shadow:0 2px 8px rgba(130,193,18,.2)}
     .ag-card.no-kids{opacity:.7;cursor:default}
-    .ag-avatar{width:36px;height:36px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+    .ag-avatar{width:34px;height:34px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .ag-card.selected .ag-avatar{background:#82C112;color:#000}
     .ag-name{font-size:11px;font-weight:700;color:#222;line-height:1.2;word-break:break-word}
-    .ag-sub{font-size:10px;color:#aaa;margin-top:1px}
-    .ag-count{font-size:10px;padding:1px 6px;border-radius:8px;background:#fff4e0;color:#a06000;font-weight:700;margin-top:2px}
+    /* Production stats */
+    .ag-vol{font-size:13px;font-weight:800;color:#2d7a00;margin-top:2px}
+    .ag-vol.zero{color:#ccc;font-weight:500}
+    .ag-deals{font-size:10px;color:#888}
+    .ag-deals span{color:#555;font-weight:700}
+    .ag-divider{width:70%;height:1px;background:#f0f0f0;margin:3px 0}
+    .ag-count{font-size:10px;padding:1px 6px;border-radius:8px;background:#fff4e0;color:#a06000;font-weight:700}
+    .ag-no-rec{font-size:10px;color:#ccc}
     /* Arrow indicator */
     .ag-card.selected::after{content:'▼';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);font-size:8px;color:#82C112}
 
@@ -206,13 +212,16 @@ function renderLevels() {
       const isSelected = selectedAtThisLevel && selectedAtThisLevel === kid;
       const vol = fmtMoney(kid.volume);
 
+      const deals = kid.deals || 0;
       const card = document.createElement('div');
       card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!hasKids ? ' no-kids' : '');
       card.innerHTML = `
         <div class="ag-avatar">${esc(initials(kid.name))}</div>
         <div class="ag-name">${esc(kid.name)}</div>
-        ${vol ? `<div class="ag-sub">${esc(vol)}</div>` : ''}
-        ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-sub">no recruits</div>'}`;
+        <div class="ag-vol${vol ? '' : ' zero'}">${vol || '—'}</div>
+        <div class="ag-deals"><span>${deals}</span> deal${deals===1?'':'s'}</div>
+        <div class="ag-divider"></div>
+        ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-no-rec">no recruits</div>'}`;
 
       if (hasKids && lvl < 5) {
         card.addEventListener('click', () => selectAgent(lvl, kid));
@@ -246,7 +255,8 @@ function renderTree(tree, totalCount) {
   path = [null, null, null, null, null];
 
   // Root agent card
-  const vol  = fmtMoney(tree.volume);
+  const vol       = fmtMoney(tree.volume);
+  const rootDeals = tree.deals || 0;
   const root = document.createElement('div');
   root.className = 'root-card';
   root.innerHTML = `
@@ -254,9 +264,12 @@ function renderTree(tree, totalCount) {
     <div class="root-info">
       <div class="root-name">${esc(tree.name)}</div>
       <div class="root-email">${esc(tree.email||'')}</div>
+      <div style="margin-top:4px;display:flex;align-items:baseline;gap:10px">
+        <span style="font-size:16px;font-weight:800;color:${vol?'#2d7a00':'#ccc'}">${vol||'—'}</span>
+        <span style="font-size:11px;color:#888"><b style="color:#555">${rootDeals}</b> deal${rootDeals===1?'':'s'}</span>
+      </div>
     </div>
     <div class="root-chips">
-      ${vol ? `<span class="chip chip-vol">${esc(vol)}</span>` : ''}
       <span class="chip chip-rec">${totalCount} in network</span>
     </div>`;
   wrap.appendChild(root);
