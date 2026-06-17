@@ -60,6 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($email) {
+        try {
         $db   = local_db();
         $json = json_encode(array_values(array_unique($mcs)));
         $stmt = $db->prepare(
@@ -70,6 +71,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                updated_by=excluded.updated_by, updated_at=excluded.updated_at"
         );
         $stmt->execute([$email, $role, $json, $agent['email']]);
+        } catch (\Throwable $e) {
+            $saved = 'ERROR: ' . $e->getMessage();
+            goto render;
+        }
         // Refresh map.
         $roleMap[$email] = ['email' => $email, 'role' => $role, 'mc_slugs' => $json];
         $saved = $email;
@@ -79,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
+render:
 ?>
 <!doctype html>
 <html lang="en">
@@ -129,7 +135,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     <main class="wrap">
 
       <?php if ($saved): ?>
-        <div class="flash-ok">Saved role for <strong><?= h($saved) ?></strong>.</div>
+        <?php if (str_starts_with($saved, 'ERROR:')): ?>
+          <div style="padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px"><?= h($saved) ?></div>
+        <?php else: ?>
+          <div class="flash-ok">Saved role for <strong><?= h($saved) ?></strong>.</div>
+        <?php endif; ?>
       <?php endif; ?>
 
       <div class="card" style="padding:20px 24px">
