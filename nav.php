@@ -14,9 +14,11 @@ function nav_items(): array {
             'label' => $r['label'],
             'href'  => $r['url'],
         ];
-        // Open House Pool is an internal page, not external SSO
+        // Internal pages — not external SSO links
         if ($r['key'] === 'openhouse') {
             $item['href'] = 'openhouse.php';
+        } elseif ($r['key'] === 'transactions') {
+            $item['href'] = 'dotloop.php';
         } else {
             $item['external'] = true;
         }
@@ -32,6 +34,7 @@ function nav_items(): array {
         ['key' => 'profile',     'label' => 'My Profile',       'href' => 'profile.php'],
     ], $ext, [
         // ── Super admin only ──────────────────────────────────────────────────
+        ['key' => 'admin_roles', 'label' => 'Role Assignments',  'href' => 'admin_roles.php', 'superOnly' => true],
         ['key' => 'admin_links', 'label' => 'Link Settings',    'href' => 'admin_links.php', 'superOnly' => true],
     ]);
 }

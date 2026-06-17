@@ -76,6 +76,15 @@ function local_db(): PDO {
         value TEXT NOT NULL DEFAULT ''
     )");
 
+    // DotLoop OAuth tokens — one row per connected agent
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_tokens (
+        agent_email   TEXT PRIMARY KEY,
+        profile_id    TEXT,
+        access_token  TEXT,
+        refresh_token TEXT,
+        expires_at    INTEGER
+    )");
+
     // Onboarding queue — one row per agent being onboarded
     $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_queue (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +112,16 @@ function local_db(): PDO {
         done_at     TEXT,
         error_msg   TEXT,
         UNIQUE(queue_id, tool_key)
+    )");
+
+    // Role assignments — AgentEdge is the source of truth for role + MC scope.
+    // Other apps (intranet, CRM) call /api/permissions.php to read this.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_roles (
+        email      TEXT PRIMARY KEY,
+        role       TEXT NOT NULL DEFAULT 'agent',
+        mc_slugs   TEXT NOT NULL DEFAULT '[]',
+        updated_by TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
 
     // Seed nav_ext_links from defaults

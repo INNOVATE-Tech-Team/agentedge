@@ -44,12 +44,22 @@ return [
     'intranet_events_url'   => '',
     'intranet_events_token' => '',
 
+    // Permissions API token — used by the intranet and other apps to call
+    // /api/permissions.php. Generate with: openssl rand -hex 32
+    // Store the same value as AGENTEDGE_PERMISSIONS_TOKEN in each consumer's .env.
+    'permissions_token' => '',
+
     // bold360.vip CRM — source of the agent roster + profile editing.
     'crm_base'  => 'https://bold360.vip/api',
     // Shared token that unlocks contact details (email/phone) and lets agents
     // save profile edits. Must match AGENTEDGE_TOKEN in the CRM's environment.
     // Leave blank to show the roster without contact info and disable editing.
     'crm_token' => '',
+
+    // DotLoop — transaction management. Apply for API access at info.dotloop.com/developers.
+    // After approval, register redirect URI: https://agentedge.bold360.vip/dotloop_callback.php
+    'dotloop_client_id'     => '',
+    'dotloop_client_secret' => '',
 
     // Trestle MLS API — used by the Open House Portal to auto-fill listing
     // details when an agent enters an MLS number.
