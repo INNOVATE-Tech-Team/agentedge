@@ -26,7 +26,6 @@ if (isset($_GET['start'])) {
         'response_type' => 'code',
         'scope'         => 'openid email profile',
         'state'         => $state,
-        'hd'            => 'innovateonline.com',
         'prompt'        => 'select_account',
     ]);
     header('Location: https://accounts.google.com/o/oauth2/v2/auth?' . $params);
@@ -72,10 +71,20 @@ $email = strtolower(trim($user['email'] ?? ''));
 $name  = $user['name']    ?? $email;
 $photo = $user['picture'] ?? null;
 
-// Must be an INNOVATE Google account
-if ($email === '' || !str_ends_with($email, '@innovateonline.com')) {
-    header('Location: login.php?err=not_innovate'); exit;
+if ($email === '') { header('Location: login.php?err=oauth_token'); exit; }
+
+// Verify this email is in the CRM roster — if not, they don't have access.
+$c      = cfg();
+$base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+$tok    = $c['crm_token'] ?? '';
+$wUrl   = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
+$wRaw   = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
+$whoami = $wRaw ? json_decode($wRaw, true) : null;
+if (!$whoami || empty($whoami['email'])) {
+    header('Location: login.php?err=not_in_roster'); exit;
 }
+// Use CRM display name if available
+if (!empty($whoami['name'])) $name = $whoami['name'];
 
 // Create session — same format as bridge login
 session_regenerate_id(true);

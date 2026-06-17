@@ -8,7 +8,7 @@ $err = null;
 
 // Map OAuth error codes to friendly messages
 $oauthErrors = [
-    'not_innovate'         => 'Please sign in with your @innovateonline.com Google account.',
+    'not_in_roster'        => 'Your Google account is not in the INNOVATE agent roster. Contact your Market Center Leader.',
     'oauth_state'          => 'Sign-in session expired. Please try again.',
     'oauth_token'          => 'Could not complete Google sign-in. Please try again.',
     'google_not_configured'=> 'Google sign-in is not configured yet.',
