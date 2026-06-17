@@ -5,7 +5,6 @@ require __DIR__ . '/roles.php';
 require __DIR__ . '/nav.php';
 
 $agent = require_login();
-$perms = current_perms();
 ?>
 <!doctype html>
 <html lang="en">
@@ -15,81 +14,73 @@ $perms = current_perms();
   <title>My Network — AgentEdge</title>
   <link rel="stylesheet" href="assets/app.css">
   <style>
-    /* ── Admin search ───────────────────────────────────────────────────── */
+    /* Admin search */
     .search-row{display:flex;gap:0;max-width:420px;margin-bottom:20px}
     .search-row input{flex:1;padding:9px 12px;font-size:13px;border:1px solid #ccc;border-radius:6px 0 0 6px;outline:none}
     .search-row input:focus{border-color:#82C112}
     .search-row button{padding:9px 18px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:0 6px 6px 0;cursor:pointer}
 
-    /* ── Root card ──────────────────────────────────────────────────────── */
-    .root-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f9fdf5;border:2px solid #82C112;border-radius:10px}
-    .root-avatar{width:46px;height:46px;border-radius:50%;background:#82C112;color:#000;font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    /* Root card */
+    .root-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f9fdf5;border:2px solid #82C112;border-radius:10px;margin-bottom:20px}
+    .root-avatar{width:44px;height:44px;border-radius:50%;background:#82C112;color:#000;font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .root-info{flex:1;min-width:0}
-    .root-name{font-size:16px;font-weight:800;color:#111}
-    .root-email{font-size:12px;color:#666;margin-top:1px}
-    .root-chips{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+    .root-name{font-size:15px;font-weight:800;color:#111}
+    .root-email{font-size:12px;color:#666}
+    .root-chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
 
-    /* ── Tier-1 filter ──────────────────────────────────────────────────── */
-    .tier1-filter-wrap{margin:16px 0 8px;position:relative}
-    .tier1-filter-wrap input{width:100%;box-sizing:border-box;padding:7px 12px 7px 32px;font-size:12px;border:1px solid #ddd;border-radius:6px;outline:none}
-    .tier1-filter-wrap input:focus{border-color:#82C112}
-    .tier1-filter-wrap::before{content:'🔍';position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;pointer-events:none}
+    /* Line summary bar */
+    .line-summary{display:flex;gap:0;border:1px solid #e6e7e8;border-radius:8px;overflow:hidden;margin-bottom:20px}
+    .line-pill{flex:1;text-align:center;padding:9px 6px;font-size:12px;cursor:pointer;border-right:1px solid #e6e7e8;background:white;transition:background 100ms}
+    .line-pill:last-child{border-right:none}
+    .line-pill:hover{background:#f9fdf5}
+    .line-pill.active{background:#f9fdf5;border-bottom:2px solid #82C112}
+    .line-pill.zero{color:#ccc;cursor:default}
+    .line-pill .lp-count{font-size:16px;font-weight:800;color:#111;display:block}
+    .line-pill.zero .lp-count{color:#ddd}
+    .line-pill .lp-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#888;display:block;margin-top:1px}
 
-    /* ── Tier-1 horizontal strip ────────────────────────────────────────── */
-    .tier1-section{margin:16px 0 0;border-top:2px solid #e6e7e8;padding-top:14px}
-    .tier1-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#aaa;margin-bottom:8px}
-    .tier1-strip{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
-    .tier1-strip::-webkit-scrollbar{height:4px}
-    .tier1-strip::-webkit-scrollbar-track{background:#f5f5f5;border-radius:2px}
-    .tier1-strip::-webkit-scrollbar-thumb{background:#ccc;border-radius:2px}
+    /* Each line level section */
+    .level-section{margin-bottom:16px}
+    .level-header{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+    .level-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;padding:3px 8px;border-radius:10px;color:#fff}
+    .badge-1{background:#82C112}
+    .badge-2{background:#5b8e0d}
+    .badge-3{background:#4a7a0a}
+    .badge-4{background:#3a6307}
+    .badge-5{background:#2b4d04}
+    .level-title{font-size:13px;font-weight:700;color:#333}
+    .level-sub{font-size:11px;color:#aaa;margin-left:auto}
 
-    /* Individual tier-1 card */
-    .t1-card{flex-shrink:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 14px;background:white;border:1.5px solid #e6e7e8;border-radius:8px;cursor:pointer;transition:border-color 100ms,box-shadow 100ms;min-width:90px;max-width:110px;text-align:center}
-    .t1-card:hover{border-color:#c3dfa8;background:#fafff5}
-    .t1-card.selected{border-color:#82C112;background:#f9fdf5;box-shadow:0 2px 8px rgba(130,193,18,.2)}
-    .t1-card.hidden{display:none}
-    .t1-avatar{width:36px;height:36px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
-    .t1-card.selected .t1-avatar{background:#82C112;color:#000}
-    .t1-name{font-size:11px;font-weight:700;color:#222;line-height:1.2;word-break:break-word}
-    .t1-count{font-size:10px;padding:1px 6px;border-radius:8px;background:#fff4e0;color:#a06000;font-weight:700}
-    .t1-nodl{font-size:10px;color:#ccc}
+    /* Horizontal agent strip */
+    .agent-strip{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+    .agent-strip::-webkit-scrollbar{height:4px}
+    .agent-strip::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
 
-    /* ── Sub-tree panel ─────────────────────────────────────────────────── */
-    .subtree-panel{margin-top:16px;border-top:2px solid #e6e7e8;padding-top:16px;min-height:60px}
-    .subtree-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#aaa;margin-bottom:10px}
-    .no-recruits{padding:20px;text-align:center;font-size:13px;color:#aaa;border:1px dashed #ddd;border-radius:8px}
+    /* Agent card in strip */
+    .ag-card{flex-shrink:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;background:white;border:1.5px solid #e6e7e8;border-radius:8px;cursor:pointer;min-width:96px;max-width:116px;text-align:center;transition:border-color 100ms,box-shadow 100ms;position:relative}
+    .ag-card:hover{border-color:#c3dfa8;background:#fafff5}
+    .ag-card.selected{border-color:#82C112;background:#f9fdf5;box-shadow:0 2px 8px rgba(130,193,18,.2)}
+    .ag-card.no-kids{opacity:.7;cursor:default}
+    .ag-avatar{width:36px;height:36px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+    .ag-card.selected .ag-avatar{background:#82C112;color:#000}
+    .ag-name{font-size:11px;font-weight:700;color:#222;line-height:1.2;word-break:break-word}
+    .ag-sub{font-size:10px;color:#aaa;margin-top:1px}
+    .ag-count{font-size:10px;padding:1px 6px;border-radius:8px;background:#fff4e0;color:#a06000;font-weight:700;margin-top:2px}
+    /* Arrow indicator */
+    .ag-card.selected::after{content:'▼';position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);font-size:8px;color:#82C112}
 
-    /* ── Downline connectors ────────────────────────────────────────────── */
-    .downline{position:relative;padding-left:36px}
-    .downline::before{content:'';position:absolute;left:14px;top:0;bottom:20px;width:2px;background:linear-gradient(to bottom,#82C112,#c3dfa8);border-radius:1px}
-    .dl-node{position:relative;margin-top:8px}
-    .dl-node::before{content:'';position:absolute;left:-22px;top:19px;width:22px;height:2px;background:#c3dfa8}
-    .dl-node::after{content:'';position:absolute;left:-23px;top:15px;width:8px;height:8px;border-radius:50%;background:#82C112;border:2px solid white;box-shadow:0 0 0 1px #82C112}
-    .dl-node .downline::before{background:linear-gradient(to bottom,#b8d98a,#daefc0)}
-    .dl-node .dl-node::after{background:#b8d98a;box-shadow:0 0 0 1px #b8d98a}
-    .dl-node .dl-node .downline::before{background:#daefc0}
-    .dl-node .dl-node .dl-node::after{background:#d5eab5;box-shadow:0 0 0 1px #d5eab5}
+    /* Divider between levels */
+    .level-divider{height:2px;background:linear-gradient(to right,#82C112 0%,#e6e7e8 60%);border-radius:1px;margin:4px 0 14px}
 
-    /* Agent card */
-    .agent-card{display:flex;align-items:center;gap:10px;padding:9px 13px;background:white;border:1px solid #e6e7e8;border-radius:7px;cursor:pointer;transition:border-color 100ms;user-select:none}
-    .agent-card:hover{border-color:#c3dfa8}
-    .agent-card.has-children{border-left:3px solid #c3dfa8}
-    .agent-card.open{border-color:#82C112;border-left-color:#82C112}
-    .agent-avatar{width:32px;height:32px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-    .agent-info{flex:1;min-width:0}
-    .agent-name{font-size:13px;font-weight:700;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .agent-email{font-size:11px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .agent-stats{display:flex;gap:4px;flex-shrink:0;align-items:center}
+    /* Empty / loading */
+    .empty-prompt{padding:28px;text-align:center;color:#bbb;font-size:13px;border:1px dashed #e0e0e0;border-radius:8px}
+    .loading-msg{padding:28px;text-align:center;color:#888;font-size:13px}
+    .error-msg{padding:14px 18px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-top:8px}
+
+    /* Chips */
     .chip{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap}
     .chip-vol{background:#f0f5e8;color:#5b8e0d}
-    .chip-deals{background:#eef0ff;color:#4444cc}
     .chip-rec{background:#fff4e0;color:#a06000}
-    .caret{font-size:10px;color:#aaa;margin-left:4px;transition:transform 150ms;flex-shrink:0}
-    .open .caret{transform:rotate(90deg)}
-
-    .loading-msg{padding:24px;text-align:center;color:#888;font-size:13px}
-    .error-msg{padding:14px 18px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-top:12px}
-    .net-summary{font-size:12px;color:#888;margin-top:10px}
   </style>
 </head>
 <body>
@@ -110,7 +101,9 @@ $perms = current_perms();
         </div>
         <?php endif; ?>
 
-        <div id="tree-wrap"></div>
+        <div id="tree-wrap">
+          <div class="empty-prompt">Enter an agent&rsquo;s email above and click <strong>Load</strong> to view their network.</div>
+        </div>
 
       </div>
     </main>
@@ -119,79 +112,122 @@ $perms = current_perms();
 <script>
 const MY_EMAIL  = <?= json_encode($agent['email']) ?>;
 const IS_LEADER = <?= json_encode(is_leader()) ?>;
+const LINE_NAMES = ['','1st Line','2nd Line','3rd Line','4th Line','5th Line'];
 
-function esc(s) {
-  return String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-}
-function initials(name) {
-  const p = name.trim().split(/\s+/);
-  return p.length >= 2 ? (p[0][0]+p[p.length-1][0]).toUpperCase() : p[0].slice(0,2).toUpperCase();
-}
-function fmtMoney(n) {
-  if (!n) return null;
-  if (n >= 1000000) return '$'+(n/1000000).toFixed(1).replace(/\.0$/,'')+' M';
-  if (n >= 1000) return '$'+Math.round(n/1000)+'k';
-  return '$'+Math.round(n);
-}
-function chips(node) {
-  const vol = fmtMoney(node.volume);
-  return [
-    vol ? `<span class="chip chip-vol">${esc(vol)}</span>` : '',
-    node.deals > 0 ? `<span class="chip chip-deals">${node.deals} deal${node.deals===1?'':'s'}</span>` : '',
-    node.children?.length ? `<span class="chip chip-rec">${node.children.length} recruit${node.children.length===1?'':'s'}</span>` : '',
-  ].join('');
+function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function initials(n){ const p=n.trim().split(/\s+/); return p.length>=2?(p[0][0]+p[p.length-1][0]).toUpperCase():p[0].slice(0,2).toUpperCase(); }
+function fmtMoney(n){ if(!n)return null; if(n>=1000000)return '$'+(n/1000000).toFixed(1).replace(/\.0$/,'')+' M'; if(n>=1000)return '$'+Math.round(n/1000)+'k'; return '$'+Math.round(n); }
+
+// Count agents at each depth level (1-5) from a root node
+function countByLevel(node, depth) {
+  const counts = [0,0,0,0,0]; // index 0=1st line ... 4=5th line
+  function walk(n, d) {
+    if (!n.children) return;
+    n.children.forEach(c => {
+      if (d >= 1 && d <= 5) counts[d-1]++;
+      if (d < 5) walk(c, d+1);
+    });
+  }
+  walk(node, depth);
+  return counts;
 }
 
-// Build a subtree (level 2+) with connectors
-function buildDownline(children) {
-  const dl = document.createElement('div');
-  dl.className = 'downline';
-  children.forEach(child => {
-    const node = document.createElement('div');
-    node.className = 'dl-node';
-    const hasKids = child.children?.length > 0;
-    const card = document.createElement('div');
-    card.className = 'agent-card' + (hasKids ? ' has-children' : '');
-    card.innerHTML = `
-      <div class="agent-avatar">${esc(initials(child.name))}</div>
-      <div class="agent-info">
-        <div class="agent-name">${esc(child.name)}</div>
-        <div class="agent-email">${esc(child.email||'')}</div>
-      </div>
-      <div class="agent-stats">${chips(child)}${hasKids?'<span class="caret">▶</span>':''}</div>`;
-    node.appendChild(card);
-    if (hasKids) {
-      const sub = buildDownline(child.children);
-      sub.style.display = 'none';
-      node.appendChild(sub);
-      card.addEventListener('click', () => {
-        const open = sub.style.display !== 'none';
-        sub.style.display = open ? 'none' : '';
-        card.classList.toggle('open', !open);
-      });
+// Flatten all nodes at a given depth
+function nodesAtDepth(root, target) {
+  const out = [];
+  function walk(n, d) {
+    if (d === target) { out.push(n); return; }
+    (n.children||[]).forEach(c => walk(c, d+1));
+  }
+  walk(root, 0);
+  return out;
+}
+
+// State: selected agent at each line level
+let ROOT    = null;
+let path    = [null, null, null, null, null]; // path[0]=selected 1st-line agent, etc.
+
+function selectAgent(level, agent) {
+  // level: 1-5 (which line we clicked in)
+  path[level-1] = agent;
+  // Clear selections deeper than this level
+  for (let i = level; i < 5; i++) path[i] = null;
+  renderLevels();
+}
+
+function renderLevels() {
+  const wrap = document.getElementById('levels-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  // Build each level section
+  for (let lvl = 1; lvl <= 5; lvl++) {
+    // The parent at this level: for lvl=1 it's root, for lvl=2 it's path[0], etc.
+    const parent = lvl === 1 ? ROOT : path[lvl-2];
+    if (!parent) break; // no selection at previous level → stop
+
+    const kids = parent.children || [];
+    if (kids.length === 0 && lvl > 1) {
+      // Show no-recruits message for selected agent
+      const msg = document.createElement('div');
+      msg.className = 'empty-prompt';
+      msg.style.marginTop = '8px';
+      msg.textContent = (parent.name||'This agent') + ' has no recruits yet.';
+      wrap.appendChild(msg);
+      break;
     }
-    dl.appendChild(node);
-  });
-  return dl;
-}
+    if (kids.length === 0) break;
 
-// Select a tier-1 card and show their downline
-let currentT1 = -1;
-function selectTier1(idx, children, strip, panel) {
-  currentT1 = idx;
-  strip.querySelectorAll('.t1-card').forEach((c,i) => c.classList.toggle('selected', i === idx));
+    const section = document.createElement('div');
+    section.className = 'level-section';
 
-  panel.innerHTML = '';
-  const child = children[idx];
-  const label = document.createElement('div');
-  label.className = 'subtree-label';
-  label.textContent = child.name + "'s downline";
-  panel.appendChild(label);
+    // Divider (not for first level)
+    if (lvl > 1) {
+      const div = document.createElement('div');
+      div.className = 'level-divider';
+      section.appendChild(div);
+    }
 
-  if (child.children?.length) {
-    panel.appendChild(buildDownline(child.children));
-  } else {
-    panel.innerHTML += '<div class="no-recruits">No recruits in ' + esc(child.name) + '\'s downline yet.</div>';
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'level-header';
+    hdr.innerHTML = `
+      <span class="level-badge badge-${lvl}">${LINE_NAMES[lvl]}</span>
+      <span class="level-title">${esc(kids.length)} recruit${kids.length===1?'':'s'}${lvl>1?' of '+esc(parent.name):''}</span>`;
+    section.appendChild(hdr);
+
+    // Strip
+    const strip = document.createElement('div');
+    strip.className = 'agent-strip';
+    const selectedAtThisLevel = path[lvl-1];
+
+    kids.forEach(kid => {
+      const hasKids = (kid.children||[]).length > 0;
+      const isSelected = selectedAtThisLevel && selectedAtThisLevel === kid;
+      const vol = fmtMoney(kid.volume);
+
+      const card = document.createElement('div');
+      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!hasKids ? ' no-kids' : '');
+      card.innerHTML = `
+        <div class="ag-avatar">${esc(initials(kid.name))}</div>
+        <div class="ag-name">${esc(kid.name)}</div>
+        ${vol ? `<div class="ag-sub">${esc(vol)}</div>` : ''}
+        ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-sub">no recruits</div>'}`;
+
+      if (hasKids && lvl < 5) {
+        card.addEventListener('click', () => selectAgent(lvl, kid));
+      }
+      strip.appendChild(card);
+
+      // Scroll selected card into view
+      if (isSelected) requestAnimationFrame(() => card.scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'}));
+    });
+
+    section.appendChild(strip);
+    wrap.appendChild(section);
+
+    // Stop rendering further levels if nothing selected at this level
+    if (!path[lvl-1]) break;
   }
 }
 
@@ -201,92 +237,57 @@ function renderTree(tree, totalCount) {
 
   if (!tree) {
     wrap.innerHTML = IS_LEADER
-      ? '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px;border:1px dashed #ddd;border-radius:8px;margin-top:8px">No network data found for this email.<br><span style="font-size:12px">Try a different agent email above.</span></div>'
-      : '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px">No network data on file yet.</div>';
+      ? '<div class="empty-prompt">No network data found.<br><span style="font-size:12px">Try a different agent email.</span></div>'
+      : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
   }
 
-  const children = tree.children || [];
+  ROOT = tree;
+  path = [null, null, null, null, null];
 
-  // Root card
-  const rootEl = document.createElement('div');
-  rootEl.className = 'root-card';
-  rootEl.innerHTML = `
+  // Root agent card
+  const vol  = fmtMoney(tree.volume);
+  const root = document.createElement('div');
+  root.className = 'root-card';
+  root.innerHTML = `
     <div class="root-avatar">${esc(initials(tree.name))}</div>
     <div class="root-info">
       <div class="root-name">${esc(tree.name)}</div>
       <div class="root-email">${esc(tree.email||'')}</div>
     </div>
-    <div class="root-chips">${chips(tree)}</div>`;
-  wrap.appendChild(rootEl);
+    <div class="root-chips">
+      ${vol ? `<span class="chip chip-vol">${esc(vol)}</span>` : ''}
+      <span class="chip chip-rec">${totalCount} in network</span>
+    </div>`;
+  wrap.appendChild(root);
 
-  if (!children.length) {
-    wrap.innerHTML += '<div class="no-recruits" style="margin-top:16px">No recruits yet.</div>';
-    return;
-  }
-
-  // Summary
-  const summary = document.createElement('div');
-  summary.className = 'net-summary';
-  summary.textContent = `${children.length} direct recruit${children.length===1?'':'s'} · ${totalCount} total in downline`;
-  wrap.appendChild(summary);
-
-  // Tier-1 section
-  const section = document.createElement('div');
-  section.className = 'tier1-section';
-
-  const topLabel = document.createElement('div');
-  topLabel.className = 'tier1-label';
-  topLabel.textContent = 'Direct Recruits';
-  section.appendChild(topLabel);
-
-  // Filter input (only if 6+ direct recruits)
-  if (children.length >= 6) {
-    const filterWrap = document.createElement('div');
-    filterWrap.className = 'tier1-filter-wrap';
-    const filterInput = document.createElement('input');
-    filterInput.type = 'text';
-    filterInput.placeholder = 'Filter recruits…';
-    filterInput.addEventListener('input', () => {
-      const q = filterInput.value.trim().toLowerCase();
-      strip.querySelectorAll('.t1-card').forEach(card => {
-        const name = card.dataset.name || '';
-        card.classList.toggle('hidden', q !== '' && !name.includes(q));
+  // Line-count summary bar (1st–5th)
+  const lineCounts = countByLevel(tree, 1);
+  const bar = document.createElement('div');
+  bar.className = 'line-summary';
+  LINE_NAMES.slice(1).forEach((name, i) => {
+    const n   = lineCounts[i];
+    const pill = document.createElement('div');
+    pill.className = 'line-pill' + (n === 0 ? ' zero' : '');
+    pill.innerHTML = `<span class="lp-count">${n}</span><span class="lp-label">${name}</span>`;
+    if (n > 0) {
+      pill.title = `Jump to ${name}`;
+      pill.addEventListener('click', () => {
+        // Scroll to that level section in the levels-wrap
+        const sections = document.querySelectorAll('.level-section');
+        if (sections[i]) sections[i].scrollIntoView({behavior:'smooth',block:'start'});
       });
-    });
-    filterWrap.appendChild(filterInput);
-    section.appendChild(filterWrap);
-  }
-
-  // Tier-1 strip
-  const strip = document.createElement('div');
-  strip.className = 'tier1-strip';
-
-  children.forEach((child, i) => {
-    const card = document.createElement('div');
-    card.className = 't1-card';
-    card.dataset.name = child.name.toLowerCase();
-    const hasKids = child.children?.length > 0;
-    card.innerHTML = `
-      <div class="t1-avatar">${esc(initials(child.name))}</div>
-      <div class="t1-name">${esc(child.name)}</div>
-      ${hasKids ? `<div class="t1-count">${child.children.length} recruit${child.children.length===1?'':'s'}</div>` : '<div class="t1-nodl">—</div>'}`;
-    card.addEventListener('click', () => selectTier1(i, children, strip, panel));
-    strip.appendChild(card);
+    }
+    bar.appendChild(pill);
   });
-  section.appendChild(strip);
+  wrap.appendChild(bar);
 
-  // Sub-tree panel
-  const panel = document.createElement('div');
-  panel.className = 'subtree-panel';
-  panel.id = 'subtree-panel';
-  section.appendChild(panel);
+  // Levels container
+  const lvlWrap = document.createElement('div');
+  lvlWrap.id = 'levels-wrap';
+  wrap.appendChild(lvlWrap);
 
-  wrap.appendChild(section);
-
-  // Auto-select first recruit that has children, else just the first
-  const firstWithKids = children.findIndex(c => c.children?.length > 0);
-  selectTier1(firstWithKids >= 0 ? firstWithKids : 0, children, strip, panel);
+  renderLevels();
 }
 
 function loadTree() {
@@ -299,22 +300,15 @@ function loadTree() {
   fetch('api/network_tree.php?email=' + encodeURIComponent(email), {credentials:'same-origin'})
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => {
-      if (d.error) { wrap.innerHTML = '<div class="error-msg">'+esc(d.error)+'</div>'; return; }
-      renderTree(d.tree, d.totalCount || 0);
+      if (d.error) { wrap.innerHTML = '<div class="error-msg">' + esc(d.error) + '</div>'; return; }
+      renderTree(d.tree, d.totalCount||0);
     })
     .catch(() => {
       wrap.innerHTML = '<div class="error-msg">Could not load network data. Check bridge configuration.</div>';
     });
 }
 
-// Leaders: don't auto-load (their login email may not be in Perfex).
-// Agents: auto-load their own tree.
-if (!IS_LEADER) {
-  loadTree();
-} else {
-  document.getElementById('tree-wrap').innerHTML =
-    '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px;border:1px dashed #ddd;border-radius:8px">Enter an agent\'s email above and click <strong>Load</strong> to view their network.</div>';
-}
+if (!IS_LEADER) loadTree();
 document.getElementById('email-input')?.addEventListener('keydown', e => { if (e.key==='Enter') loadTree(); });
 </script>
 </body>
