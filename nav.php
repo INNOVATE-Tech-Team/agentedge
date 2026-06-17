@@ -35,8 +35,9 @@ function nav_items(): array {
         ['key' => 'profile',     'label' => 'My Profile',       'href' => 'profile.php'],
     ], $ext, [
         // ── Super admin only ──────────────────────────────────────────────────
-        ['key' => 'admin_roles', 'label' => 'Role Assignments',  'href' => 'admin_roles.php', 'superOnly' => true],
-        ['key' => 'admin_links', 'label' => 'Link Settings',    'href' => 'admin_links.php', 'superOnly' => true],
+        ['key' => 'admin_roles',  'label' => 'Role Assignments', 'href' => 'admin_roles.php',  'superOnly' => true],
+        ['key' => 'admin_import','label' => 'Import Agents',   'href' => 'admin_import.php', 'adminOnly' => true],
+        ['key' => 'admin_links', 'label' => 'Link Settings',   'href' => 'admin_links.php',  'superOnly' => true],
     ]);
 }
 

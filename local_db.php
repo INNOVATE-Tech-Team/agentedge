@@ -126,6 +126,17 @@ function local_db(): PDO {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // Agents imported via CSV upload (not yet in CRM).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS imported_agents (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL DEFAULT '',
+        email       TEXT    UNIQUE NOT NULL,
+        phone       TEXT    NOT NULL DEFAULT '',
+        mc_slug     TEXT    NOT NULL DEFAULT '',
+        imported_by TEXT    NOT NULL DEFAULT '',
+        imported_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
         $seed = [

@@ -85,7 +85,12 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     <div class="content">
       <header class="content-top">
         <div class="content-title">Agent Roster</div>
-        <input id="roster-search" class="search" type="search" placeholder="Search by name, email, location…">
+        <div style="display:flex;align-items:center;gap:10px">
+          <input id="roster-search" class="search" type="search" placeholder="Search by name, email, location…">
+          <?php if (is_admin()): ?>
+          <a href="admin_import.php" style="flex-shrink:0;padding:8px 14px;background:#82C112;color:#000;font-size:12px;font-weight:800;border-radius:6px;text-decoration:none;white-space:nowrap">+ Import CSV</a>
+          <?php endif; ?>
+        </div>
       </header>
       <main class="wrap">
         <section class="card">
