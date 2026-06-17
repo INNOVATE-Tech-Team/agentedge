@@ -30,6 +30,12 @@ function contactCell(a) {
   return bits.length ? bits.join('<br>') : '<span class="muted">—</span>';
 }
 
+function roleBadge(email) {
+  const cur = (typeof ROLE_BY_EMAIL !== 'undefined') ? ROLE_BY_EMAIL[email.toLowerCase()] : null;
+  if (!cur || cur.role === 'agent') return '';
+  return `<span class="role-badge-sm role-${esc(cur.role)}">${esc((typeof ROLE_LABELS !== 'undefined' ? ROLE_LABELS[cur.role] : null) || cur.role)}</span> `;
+}
+
 function render(rows) {
   const table = document.getElementById('roster-table');
   const empty = document.getElementById('roster-empty');
@@ -43,13 +49,22 @@ function render(rows) {
     <td>${esc(a.marketCenter) || '—'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>
-    ${IS_ADMIN ? `<td><button class="btn-stats" data-email="${esc(a.email)}" data-name="${esc(a.name)}">Stats</button></td>` : ''}
+    ${IS_ADMIN ? `<td style="white-space:nowrap">
+      ${roleBadge(a.email)}
+      <button class="btn-stats" data-email="${esc(a.email)}" data-name="${esc(a.name)}">Stats</button>
+      ${(typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>` : ''}
+    </td>` : ''}
   </tr>`).join('');
 
   if (IS_ADMIN) {
     body.querySelectorAll('.btn-stats').forEach(btn => {
       btn.addEventListener('click', () => showStats(btn.dataset.email, btn.dataset.name));
     });
+    if (typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) {
+      body.querySelectorAll('.btn-assign').forEach(btn => {
+        btn.addEventListener('click', () => openRoleModal(btn.dataset.email, btn.dataset.name, btn.dataset.mc));
+      });
+    }
   }
 }
 

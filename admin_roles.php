@@ -12,70 +12,83 @@ if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
 // ── Fetch roster + known MCs from CRM ──────────────────────────────────────
-$c      = cfg();
-$base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-$token  = $c['crm_token'] ?? '';
-$url    = $base . '/public/retention-roster' . ($token ? '?token=' . urlencode($token) : '');
-$ctx    = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
-$raw    = @file_get_contents($url, false, $ctx);
+$c     = cfg();
+$base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+$token = $c['crm_token'] ?? '';
+$url   = $base . '/public/retention-roster' . ($token ? '?token=' . urlencode($token) : '');
+$ctx   = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
+$raw   = @file_get_contents($url, false, $ctx);
 $roster = ($raw !== false) ? (json_decode($raw, true) ?? []) : [];
 
-$agents  = [];
-$mc_opts = []; // slug => name
+$rosterByEmail = []; // lowercase email => agent row
+$mc_opts       = []; // slug => display name
 foreach ($roster as $a) {
-    $mc = $a['marketCenter'] ?? '';
-    if ($mc === '' && !empty($a['marketCenters'])) {
-        $mc = $a['marketCenters'][0]['name'] ?? '';
-    }
-    $email = trim($a['email'] ?? '');
+    $mc    = $a['marketCenter'] ?? '';
+    if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
+    $email = strtolower(trim($a['email'] ?? ''));
     if (!$email) continue;
-    $slug = slugify_mc($mc);
+    $slug  = slugify_mc($mc);
     if ($mc && $slug && !isset($mc_opts[$slug])) $mc_opts[$slug] = $mc;
-    $agents[] = ['email' => $email, 'name' => $a['fullName'] ?? $email, 'mc' => $mc, 'mc_slug' => $slug];
+    $rosterByEmail[$email] = [
+        'email' => $email,
+        'name'  => $a['fullName'] ?? $email,
+        'mc'    => $mc,
+    ];
 }
-usort($agents, fn($a, $b) => strcmp($a['name'], $b['name']));
 ksort($mc_opts);
 
-// Load all existing role rows from local DB.
-$roleRows = local_db()->query("SELECT email, role, mc_slugs FROM agent_roles")->fetchAll(PDO::FETCH_ASSOC);
-$roleMap  = [];
-foreach ($roleRows as $r) $roleMap[$r['email']] = $r;
+// Load all assigned (non-agent) roles from local DB — keyed by lowercase email.
+$roleRows = local_db()->query(
+    "SELECT email, role, mc_slugs, updated_at FROM agent_roles WHERE role != 'agent' ORDER BY email"
+)->fetchAll(PDO::FETCH_ASSOC);
+$assigned = [];
+foreach ($roleRows as $r) $assigned[strtolower($r['email'])] = $r;
 
 // ── Handle POST ─────────────────────────────────────────────────────────────
-$saved  = null;
+$saved     = null;
 $saveError = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($_POST['csrf'] ?? '') !== $csrf) die('Invalid CSRF token.');
 
-    $email = strtolower(trim($_POST['email'] ?? ''));
-    $role  = preg_replace('/[^a-z_]/', '', $_POST['role'] ?? 'agent');
-    if (!isset(ROLE_LABELS[$role])) $role = 'agent';
+    $action = $_POST['action'] ?? 'save';
+    $email  = strtolower(trim($_POST['email'] ?? ''));
 
-    $mcs = [];
-    if (in_array($role, ['bic', 'mc_leader'], true) && !empty($_POST['mc_slugs'])) {
-        foreach ((array)$_POST['mc_slugs'] as $s) {
-            $s = preg_replace('/[^a-z0-9\-]/', '', $s);
-            if ($s) $mcs[] = $s;
-        }
-    }
-
-    if ($email) {
+    if ($action === 'remove' && $email) {
         try {
-            $db   = local_db();
+            local_db()->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
+            unset($assigned[$email]);
+            $saved = 'removed';
+        } catch (\Throwable $e) { $saveError = $e->getMessage(); }
+    } elseif ($email) {
+        $role = preg_replace('/[^a-z_]/', '', $_POST['role'] ?? 'agent');
+        if (!isset(ROLE_LABELS[$role])) $role = 'agent';
+
+        $mcs = [];
+        if (in_array($role, ['bic', 'mc_leader'], true) && !empty($_POST['mc_slugs'])) {
+            foreach ((array)$_POST['mc_slugs'] as $s) {
+                $s = preg_replace('/[^a-z0-9\-]/', '', $s);
+                if ($s) $mcs[] = $s;
+            }
+        }
+
+        try {
             $json = json_encode(array_values(array_unique($mcs)));
-            $db->prepare(
+            local_db()->prepare(
                 "INSERT INTO agent_roles (email, role, mc_slugs, updated_by, updated_at)
                  VALUES (?, ?, ?, ?, datetime('now'))
                  ON CONFLICT(email) DO UPDATE SET
                    role=excluded.role, mc_slugs=excluded.mc_slugs,
                    updated_by=excluded.updated_by, updated_at=excluded.updated_at"
-            )->execute([$email, $role, $json, $agent['email']]);
-            $roleMap[$email] = ['email' => $email, 'role' => $role, 'mc_slugs' => $json];
+            )->execute([$email, $role, $json, strtolower($agent['email'])]);
+
+            if ($role === 'agent') {
+                unset($assigned[$email]);
+            } else {
+                $assigned[$email] = ['email' => $email, 'role' => $role, 'mc_slugs' => $json, 'updated_at' => date('Y-m-d H:i:s')];
+            }
             $saved = $email;
             if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
-        } catch (\Throwable $e) {
-            $saveError = $e->getMessage();
-        }
+        } catch (\Throwable $e) { $saveError = $e->getMessage(); }
     }
 }
 
@@ -89,13 +102,6 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
   <title>Role Assignments — AgentEdge</title>
   <link rel="stylesheet" href="assets/app.css">
   <style>
-    .search-bar{display:flex;gap:8px;margin-bottom:20px}
-    .search-bar input{flex:1;padding:8px 12px;font-size:13px;border:1px solid #ccc;border-radius:6px}
-    .agent-table{width:100%;border-collapse:collapse;font-size:13px}
-    .agent-table th{text-align:left;padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #e0e0e0;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#555;white-space:nowrap}
-    .agent-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
-    .agent-table tr:last-child td{border-bottom:none}
-    .agent-table tr.edit-row td{padding:0;background:#f9fdf5;border-bottom:2px solid #82C112}
     .role-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
     .role-agent{background:#f0f0f0;color:#666}
     .role-mc_leader{background:#eef5e8;color:#5b8e0d}
@@ -104,6 +110,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .role-super_admin{background:#000;color:#82C112}
     .mc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
     .mc-chip{font-size:10px;padding:2px 6px;border-radius:3px;background:#eef5e8;color:#5b8e0d;font-weight:600}
+    .assign-table{width:100%;border-collapse:collapse;font-size:13px}
+    .assign-table th{text-align:left;padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #e0e0e0;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#555}
+    .assign-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+    .assign-table tr:last-child td{border-bottom:none}
+    .assign-table tr.edit-row td{padding:0;background:#f9fdf5;border-bottom:2px solid #82C112}
     .edit-panel{padding:16px 20px}
     .edit-panel h4{margin:0 0 12px;font-size:13px;font-weight:700}
     .edit-grid{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start}
@@ -114,10 +125,25 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .mc-check input{accent-color:#82C112}
     .btn-save{padding:8px 18px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:4px;cursor:pointer}
     .btn-cancel{padding:8px 14px;border:1px solid #ccc;background:white;color:#555;font-size:13px;border-radius:4px;cursor:pointer;margin-left:6px}
+    .btn-remove{padding:5px 10px;border:1px solid #ddd;background:white;color:#c00;font-size:12px;border-radius:4px;cursor:pointer}
+    .btn-edit{padding:5px 10px;border:1px solid #ddd;background:white;color:#333;font-size:12px;border-radius:4px;cursor:pointer}
+    .mc-section{display:none}.mc-section.visible{display:block}
     .flash-ok{padding:10px 14px;background:#eef5e8;border:1px solid #c3dfa8;border-radius:6px;color:#3a6b1a;font-size:13px;margin-bottom:16px}
-    .mc-section{display:none}
-    .mc-section.visible{display:block}
-    tr.hidden-row{display:none}
+    .flash-err{padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px}
+    /* Assign search */
+    .assign-search{display:flex;gap:0;margin-bottom:4px}
+    .assign-search input{flex:1;padding:9px 12px;font-size:13px;border:1px solid #ccc;border-radius:6px 0 0 6px;outline:none}
+    .assign-search input:focus{border-color:#82C112}
+    .search-results{border:1px solid #e0e0e0;border-top:none;border-radius:0 0 6px 6px;max-height:220px;overflow-y:auto;display:none;background:white;margin-bottom:20px}
+    .search-result-row{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid #f3f3f3;font-size:13px;cursor:pointer}
+    .search-result-row:last-child{border-bottom:none}
+    .search-result-row:hover{background:#f9fdf5}
+    .sr-name{font-weight:600}
+    .sr-meta{font-size:11px;color:#888}
+    .sr-assign{padding:4px 12px;border:none;background:#82C112;color:#000;font-size:12px;font-weight:700;border-radius:4px;cursor:pointer}
+    .assign-form-panel{background:#f9fdf5;border:1px solid #c3dfa8;border-radius:8px;padding:16px 20px;margin-bottom:20px;display:none}
+    .assign-form-panel h4{margin:0 0 4px;font-size:14px;font-weight:700}
+    .assign-form-panel .sub{font-size:12px;color:#666;margin-bottom:14px}
   </style>
 </head>
 <body>
@@ -130,43 +156,81 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     <main class="wrap">
 
       <?php if ($saveError): ?>
-        <div style="padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px">Save failed: <?= h($saveError) ?></div>
+        <div class="flash-err">Save failed: <?= h($saveError) ?></div>
+      <?php elseif ($saved === 'removed'): ?>
+        <div class="flash-ok">Role removed — agent reverts to default.</div>
       <?php elseif ($saved): ?>
         <div class="flash-ok">Saved role for <strong><?= h($saved) ?></strong>.</div>
       <?php endif; ?>
 
       <div class="card" style="padding:20px 24px">
         <p style="font-size:13px;color:#555;margin:0 0 16px">
-          Assign roles and market center access here. Changes take effect on the agent's next login.
-          Agents not listed default to <strong>Agent</strong>.
+          Only agents with a special role appear here. Everyone else defaults to <strong>Agent</strong>. Changes take effect within 5 minutes (or immediately after the agent logs out and back in).
         </p>
 
-        <div class="search-bar">
-          <input type="text" id="search" placeholder="Search by name, email, or market center…" oninput="filterTable(this.value)">
+        <!-- ── SEARCH TO ASSIGN ─────────────────────────────────────────── -->
+        <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">Assign a role to an agent</div>
+        <div class="assign-search">
+          <input type="text" id="agent-search" placeholder="Search roster by name, email, or market center…" autocomplete="off" oninput="searchAgents(this.value)">
+        </div>
+        <div class="search-results" id="search-results"></div>
+
+        <!-- ── ASSIGN FORM (shown when agent selected) ─────────────────── -->
+        <div class="assign-form-panel" id="assign-panel">
+          <h4 id="assign-name"></h4>
+          <div class="sub" id="assign-sub"></div>
+          <form method="post" action="admin_roles.php" id="assign-form">
+            <input type="hidden" name="csrf"  value="<?= h($csrf) ?>">
+            <input type="hidden" name="email" id="assign-email" value="">
+            <div class="edit-grid">
+              <div>
+                <div class="field-label">Role</div>
+                <select name="role" id="assign-role" class="role-select" onchange="toggleMc(this,'assign-mc')">
+                  <?php foreach (ROLE_LABELS as $k => $lbl): ?>
+                    <option value="<?= h($k) ?>"><?= h($lbl) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div id="assign-mc" class="mc-section">
+                <div class="field-label">Market Centers</div>
+                <div class="mc-checks">
+                  <?php foreach ($mc_opts as $slug => $name): ?>
+                    <label class="mc-check">
+                      <input type="checkbox" name="mc_slugs[]" value="<?= h($slug) ?>">
+                      <?= h($name) ?>
+                    </label>
+                  <?php endforeach; ?>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:14px">
+              <button class="btn-save" type="submit">Save</button>
+              <button class="btn-cancel" type="button" onclick="closeAssign()">Cancel</button>
+            </div>
+          </form>
         </div>
 
-        <table class="agent-table" id="agent-table">
+        <!-- ── ASSIGNED ROLES TABLE ─────────────────────────────────────── -->
+        <?php if (empty($assigned)): ?>
+          <div style="padding:20px;text-align:center;color:#888;font-size:13px;border:1px dashed #ccc;border-radius:8px">
+            No roles assigned yet. Search above to assign BIC, Staff, or MC Leader access.
+          </div>
+        <?php else: ?>
+        <table class="assign-table">
           <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Market Center</th>
-              <th>Role</th>
-              <th></th>
-            </tr>
+            <tr><th>Name</th><th>Email</th><th>Market Center</th><th>Role</th><th></th></tr>
           </thead>
           <tbody>
-          <?php foreach ($agents as $a):
-            $email   = $a['email'];
-            $row     = $roleMap[$email] ?? null;
-            $role    = canonical_role($row['role'] ?? 'agent');
-            $mcs     = $row ? (json_decode($row['mc_slugs'], true) ?? []) : [];
-            $rowId   = 'edit-' . md5($email);
+          <?php foreach ($assigned as $lcemail => $r):
+            $info = $rosterByEmail[$lcemail] ?? null;
+            $role = canonical_role($r['role']);
+            $mcs  = json_decode($r['mc_slugs'] ?? '[]', true) ?: [];
+            $rowId = 'edit-' . md5($lcemail);
           ?>
-            <tr class="agent-row" data-search="<?= h(strtolower($a['name'] . ' ' . $email . ' ' . $a['mc'])) ?>">
-              <td style="font-weight:600"><?= h($a['name']) ?></td>
-              <td style="color:#555;font-size:12px"><?= h($email) ?></td>
-              <td style="color:#555;font-size:12px"><?= h($a['mc']) ?></td>
+            <tr class="agent-row">
+              <td style="font-weight:600"><?= h($info['name'] ?? $lcemail) ?></td>
+              <td style="font-size:12px;color:#555"><?= h($lcemail) ?></td>
+              <td style="font-size:12px;color:#555"><?= h($info['mc'] ?? '') ?></td>
               <td>
                 <span class="role-badge role-<?= h($role) ?>"><?= h(role_label($role)) ?></span>
                 <?php if ($mcs): ?>
@@ -177,34 +241,39 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
                   </div>
                 <?php endif; ?>
               </td>
-              <td style="text-align:right">
-                <button class="btn-cancel" style="font-size:11px;padding:4px 10px"
-                  onclick="toggleEdit('<?= h($rowId) ?>', this)">Edit</button>
+              <td style="text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end">
+                <button class="btn-edit" onclick="openEdit('<?= h($rowId) ?>', this)">Edit</button>
+                <form method="post" action="admin_roles.php" style="margin:0" onsubmit="return confirm('Remove role for <?= h(addslashes($info['name'] ?? $lcemail)) ?>?')">
+                  <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
+                  <input type="hidden" name="action" value="remove">
+                  <input type="hidden" name="email"  value="<?= h($lcemail) ?>">
+                  <button class="btn-remove" type="submit">Remove</button>
+                </form>
               </td>
             </tr>
             <tr id="<?= h($rowId) ?>" class="edit-row" style="display:none">
               <td colspan="5">
                 <div class="edit-panel">
-                  <h4>Edit <?= h($a['name']) ?></h4>
+                  <h4>Edit <?= h($info['name'] ?? $lcemail) ?></h4>
                   <form method="post" action="admin_roles.php">
                     <input type="hidden" name="csrf"  value="<?= h($csrf) ?>">
-                    <input type="hidden" name="email" value="<?= h($email) ?>">
+                    <input type="hidden" name="email" value="<?= h($lcemail) ?>">
                     <div class="edit-grid">
                       <div>
                         <div class="field-label">Role</div>
-                        <select name="role" class="role-select" onchange="toggleMcSection(this)">
+                        <select name="role" class="role-select" onchange="toggleMc(this,'mc-<?= h($rowId) ?>')">
                           <?php foreach (ROLE_LABELS as $k => $lbl): ?>
-                            <option value="<?= h($k) ?>"<?= $role === $k ? ' selected' : '' ?>><?= h($lbl) ?></option>
+                            <option value="<?= h($k) ?>"<?= $role===$k?' selected':'' ?>><?= h($lbl) ?></option>
                           <?php endforeach; ?>
                         </select>
                       </div>
-                      <div class="mc-section<?= in_array($role, ['bic','mc_leader']) ? ' visible' : '' ?>">
+                      <div id="mc-<?= h($rowId) ?>" class="mc-section<?= in_array($role,['bic','mc_leader'])?' visible':'' ?>">
                         <div class="field-label">Market Centers</div>
                         <div class="mc-checks">
                           <?php foreach ($mc_opts as $slug => $name): ?>
                             <label class="mc-check">
                               <input type="checkbox" name="mc_slugs[]" value="<?= h($slug) ?>"
-                                <?= in_array($slug, $mcs) ? 'checked' : '' ?>>
+                                <?= in_array($slug,$mcs)?'checked':'' ?>>
                               <?= h($name) ?>
                             </label>
                           <?php endforeach; ?>
@@ -213,8 +282,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
                     </div>
                     <div style="margin-top:14px">
                       <button class="btn-save" type="submit">Save</button>
-                      <button class="btn-cancel" type="button"
-                        onclick="toggleEdit('<?= h($rowId) ?>', document.querySelector('[onclick*=\'<?= h($rowId) ?>\']'))">Cancel</button>
+                      <button class="btn-cancel" type="button" onclick="closeEdit('<?= h($rowId) ?>')">Cancel</button>
                     </div>
                   </form>
                 </div>
@@ -223,48 +291,73 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <?php endforeach; ?>
           </tbody>
         </table>
-
-        <?php if (empty($agents)): ?>
-          <div style="padding:20px;text-align:center;color:#888;font-size:13px">
-            Could not load the agent roster from the CRM. Check <code>crm_token</code> in config.php.
-          </div>
         <?php endif; ?>
-      </div>
 
+      </div>
     </main>
   </div>
 </div>
 <script>
-function toggleEdit(rowId, btn) {
-  const row = document.getElementById(rowId);
-  const open = row.style.display !== 'none';
-  // Close all open edit rows first.
+// Full roster passed to JS for search.
+const ROSTER = <?= json_encode(array_values($rosterByEmail)) ?>;
+
+function searchAgents(q) {
+  const res = document.getElementById('search-results');
+  q = q.trim().toLowerCase();
+  if (!q) { res.style.display = 'none'; res.innerHTML = ''; return; }
+  const hits = ROSTER.filter(a =>
+    a.name.toLowerCase().includes(q) || a.email.includes(q) || a.mc.toLowerCase().includes(q)
+  ).slice(0, 12);
+  if (!hits.length) { res.style.display = 'none'; return; }
+  res.innerHTML = hits.map(a => `
+    <div class="search-result-row" onclick="selectAgent(${JSON.stringify(a)})">
+      <div><div class="sr-name">${esc(a.name)}</div><div class="sr-meta">${esc(a.email)} · ${esc(a.mc)}</div></div>
+      <button class="sr-assign" type="button">Assign Role</button>
+    </div>`).join('');
+  res.style.display = 'block';
+}
+
+function selectAgent(a) {
+  document.getElementById('search-results').style.display = 'none';
+  document.getElementById('agent-search').value = a.name;
+  document.getElementById('assign-email').value = a.email;
+  document.getElementById('assign-name').textContent = a.name;
+  document.getElementById('assign-sub').textContent = a.email + (a.mc ? ' · ' + a.mc : '');
+  // Uncheck all MC boxes
+  document.querySelectorAll('#assign-form input[type=checkbox]').forEach(c => c.checked = false);
+  document.getElementById('assign-role').value = 'agent';
+  toggleMc(document.getElementById('assign-role'), 'assign-mc');
+  document.getElementById('assign-panel').style.display = 'block';
+}
+
+function closeAssign() {
+  document.getElementById('assign-panel').style.display = 'none';
+  document.getElementById('agent-search').value = '';
+}
+
+function openEdit(rowId, btn) {
   document.querySelectorAll('.edit-row').forEach(r => r.style.display = 'none');
-  document.querySelectorAll('.agent-row button').forEach(b => b.textContent = 'Edit');
-  if (!open) {
-    row.style.display = '';
-    if (btn) btn.textContent = 'Cancel';
-  }
+  document.querySelectorAll('.btn-edit').forEach(b => b.textContent = 'Edit');
+  document.getElementById(rowId).style.display = '';
+  btn.textContent = 'Cancel';
+  btn.onclick = () => closeEdit(rowId);
+}
+function closeEdit(rowId) {
+  document.getElementById(rowId).style.display = 'none';
+  document.querySelectorAll('.btn-edit').forEach(b => { b.textContent = 'Edit'; b.onclick = function(){ openEdit(rowId, this); }; });
 }
 
-function toggleMcSection(select) {
-  const section = select.closest('.edit-grid').querySelector('.mc-section');
-  section.classList.toggle('visible', ['bic','mc_leader'].includes(select.value));
+function toggleMc(select, sectionId) {
+  const s = document.getElementById(sectionId);
+  if (s) s.classList.toggle('visible', ['bic','mc_leader'].includes(select.value));
 }
 
-function filterTable(q) {
-  q = q.toLowerCase();
-  document.querySelectorAll('.agent-row').forEach(row => {
-    const match = !q || row.dataset.search.includes(q);
-    row.style.display = match ? '' : 'none';
-    // Also hide associated edit row when filtering.
-    const editId = row.querySelector('button[onclick]')?.getAttribute('onclick').match(/'(edit-[^']+)'/)?.[1];
-    if (editId) {
-      const er = document.getElementById(editId);
-      if (er) er.style.display = 'none';
-    }
-  });
-}
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+document.addEventListener('click', e => {
+  const res = document.getElementById('search-results');
+  if (!res.contains(e.target) && e.target.id !== 'agent-search') res.style.display = 'none';
+});
 </script>
 </body>
 </html>
