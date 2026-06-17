@@ -1,6 +1,8 @@
 <?php
 // AgentEdge-owned SQLite database — settings, link configs, agent notes, etc.
 // Stored at data/agentedge.db (protected by data/.htaccess; never web-served).
+if (defined('AGENTEDGE_LOCAL_DB_LOADED')) return;
+define('AGENTEDGE_LOCAL_DB_LOADED', true);
 
 function local_db(): PDO {
     static $pdo = null;
