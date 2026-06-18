@@ -259,10 +259,12 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .btn-loginas{padding:4px 10px;border:1px solid #c9a8f5;background:#f3e8ff;color:#6b21a8;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em}
 .btn-loginas:hover{background:#e9d5ff}
 
-/* Masquerade banner */
-.masq-bar{width:100%;background:#f59e0b;color:#000;font-size:13px;font-weight:700;padding:8px 20px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100}
+/* Masquerade banner — fixed across top so it doesn't join the flex layout */
+.masq-bar{position:fixed;top:0;left:0;right:0;background:#f59e0b;color:#000;font-size:13px;font-weight:700;padding:7px 20px;display:flex;align-items:center;gap:10px;z-index:500}
+.masq-bar ~ * {margin-top:36px} /* push layout down when bar is present */
 .masq-back{background:#000;color:#f59e0b;border:none;border-radius:5px;padding:4px 12px;font-size:12px;font-weight:800;cursor:pointer}
 .masq-back:hover{background:#222}
+body.masquerading .layout{margin-top:36px}
 
 /* DotLoop Transactions */
 .dl-tabs{display:flex;gap:0;border-bottom:2px solid #E6E7E8;margin-bottom:20px}

@@ -82,4 +82,8 @@ function render_sidebar(string $current, array $agent): void {
     echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
     echo '<script src="assets/mc-links.js"></script>';
+    echo '<script src="assets/global.js"></script>';
+    if (function_exists('is_masquerading') && is_masquerading()) {
+        echo '<script>document.body.classList.add("masquerading")</script>';
+    }
 }
