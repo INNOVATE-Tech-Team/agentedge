@@ -10,10 +10,10 @@ function nav_items(): array {
     $extLinks = nav_ext_links_all();
     $ext = array_map(function($r) {
         $item = [
-            'key'   => $r['key'],
-            'label' => $r['label'],
-            'href'  => $r['url'],
-            'group' => 'links',
+            'key'         => $r['key'],
+            'label'       => $r['label'],
+            'href'        => $r['url'],
+            'group_label' => $r['group_label'] ?? '',
         ];
         // Internal pages — not external SSO links
         if ($r['key'] === 'openhouse') {
@@ -56,20 +56,21 @@ function render_sidebar(string $current, array $agent): void {
     }
 
     echo '<aside class="sidebar"><div class="sb-brand"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></div><nav class="sb-nav">';
-    $superAdmin = !empty($perms['isSuperAdmin']);
-    $inLinksGroup = false;
+    $superAdmin   = !empty($perms['isSuperAdmin']);
+    $currentGroup = '';
     foreach (nav_items() as $it) {
         if (!empty($it['adminOnly']) && !$admin) continue;
         if (!empty($it['superOnly']) && !$superAdmin) continue;
-        $isLink = ($it['group'] ?? '') === 'links';
-        if ($isLink && !$inLinksGroup) {
-            echo '<button class="sb-links-toggle" onclick="toggleSbLinks(this)" aria-expanded="true">'
-               . 'Links <span class="sb-links-arrow">&#9660;</span></button>';
-            echo '<div class="sb-links-sub">';
-            $inLinksGroup = true;
-        } elseif (!$isLink && $inLinksGroup) {
-            echo '</div>';
-            $inLinksGroup = false;
+        $gl = $it['group_label'] ?? '';
+        if ($gl !== $currentGroup) {
+            if ($currentGroup !== '') echo '</div>';
+            $currentGroup = $gl;
+            if ($gl !== '') {
+                $sg = htmlspecialchars($gl);
+                echo '<button class="sb-links-toggle" data-group="' . $sg . '" onclick="toggleSbLinks(this)" aria-expanded="true">'
+                   . $sg . ' <span class="sb-links-arrow">&#9660;</span></button>';
+                echo '<div class="sb-links-sub">';
+            }
         }
         $active = $it['key'] === $current ? ' sb-active' : '';
         $ext    = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
@@ -77,7 +78,7 @@ function render_sidebar(string $current, array $agent): void {
         $badge  = !empty($it['adminOnly']) ? ' <span class="sb-admin">Admin</span>' : '';
         echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($it['href']) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
     }
-    if ($inLinksGroup) echo '</div>';
+    if ($currentGroup !== '') echo '</div>';
     // MC-specific links injected here by mc-links.js
     echo '<div id="mc-resources" hidden></div>';
     $who = htmlspecialchars($agent['name'] ?: $agent['email']);

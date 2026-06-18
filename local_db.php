@@ -17,13 +17,16 @@ function local_db(): PDO {
 
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
-        id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        key      TEXT    UNIQUE NOT NULL,
-        label    TEXT    NOT NULL,
-        url      TEXT    NOT NULL DEFAULT '#',
-        sort_ord INTEGER NOT NULL DEFAULT 0,
-        enabled  INTEGER NOT NULL DEFAULT 1
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        key         TEXT    UNIQUE NOT NULL,
+        label       TEXT    NOT NULL,
+        url         TEXT    NOT NULL DEFAULT '#',
+        sort_ord    INTEGER NOT NULL DEFAULT 0,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        group_label TEXT    NOT NULL DEFAULT 'Links'
     )");
+    // Migrate existing installs that predate the group_label column
+    try { $pdo->exec("ALTER TABLE nav_ext_links ADD COLUMN group_label TEXT NOT NULL DEFAULT 'Links'"); } catch (\Exception $e) {}
 
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (

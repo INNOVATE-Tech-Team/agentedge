@@ -39,19 +39,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'update_nav') {
-        $id    = (int)($_POST['id'] ?? 0);
-        $label = trim($_POST['label'] ?? '');
-        $url   = trim($_POST['url'] ?? '') ?: '#';
+        $id         = (int)($_POST['id'] ?? 0);
+        $label      = trim($_POST['label'] ?? '');
+        $url        = trim($_POST['url'] ?? '') ?: '#';
+        $groupLabel = trim($_POST['group_label'] ?? '');
         if ($id && $label) {
-            $db->prepare("UPDATE nav_ext_links SET label=?,url=? WHERE id=?")->execute([$label,$url,$id]);
+            $db->prepare("UPDATE nav_ext_links SET label=?,url=?,group_label=? WHERE id=?")->execute([$label,$url,$groupLabel,$id]);
         }
     } elseif ($action === 'add_nav') {
-        $key   = preg_replace('/[^a-z0-9_]/', '', strtolower(trim($_POST['key'] ?? '')));
-        $label = trim($_POST['label'] ?? '');
-        $url   = trim($_POST['url'] ?? '') ?: '#';
+        $key        = preg_replace('/[^a-z0-9_]/', '', strtolower(trim($_POST['key'] ?? '')));
+        $label      = trim($_POST['label'] ?? '');
+        $url        = trim($_POST['url'] ?? '') ?: '#';
+        $groupLabel = trim($_POST['group_label'] ?? '');
         if ($key && $label) {
             $max = (int)$db->query("SELECT COALESCE(MAX(sort_ord),0)+10 FROM nav_ext_links")->fetchColumn();
-            try { $db->prepare("INSERT INTO nav_ext_links (key,label,url,sort_ord) VALUES (?,?,?,?)")->execute([$key,$label,$url,$max]); }
+            try { $db->prepare("INSERT INTO nav_ext_links (key,label,url,sort_ord,group_label) VALUES (?,?,?,?,?)")->execute([$key,$label,$url,$max,$groupLabel]); }
             catch (\Exception $e) {}
         }
     } elseif ($action === 'delete_nav') {
@@ -111,9 +113,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .settings-table tr.drag-over{outline:2px solid #82C112;outline-offset:-2px}
     .inline-form{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .ifield{padding:5px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px}
-    .ifield-url{width:260px}
-    .ifield-label{width:160px}
-    .ifield-key{width:120px}
+    .ifield-url{width:220px}
+    .ifield-label{width:140px}
+    .ifield-key{width:110px}
+    .ifield-group{width:100px}
     .btn-save{padding:5px 12px;border:none;background:#82C112;color:#000;font-size:12px;font-weight:700;border-radius:4px;cursor:pointer}
     .btn-del{padding:5px 10px;border:1px solid #ddd;background:white;color:#c00;font-size:12px;border-radius:4px;cursor:pointer}
     .drag-handle{cursor:grab;color:#bbb;font-size:16px;padding:4px 6px;user-select:none;line-height:1}
@@ -162,21 +165,22 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <table class="settings-table">
             <thead><tr>
               <th style="width:28px"></th>
-              <th>Key</th><th>Label</th><th>URL</th><th></th>
+              <th>Key</th><th>Label</th><th>URL</th><th>Sub-menu</th><th></th>
             </tr></thead>
             <tbody id="nav-tbody">
             <?php foreach ($navLinks as $row): ?>
               <tr class="nav-row" data-id="<?= $row['id'] ?>">
                 <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
                 <td style="color:#888;font-size:11px;font-family:monospace"><?= h($row['key']) ?></td>
-                <td colspan="2">
+                <td colspan="3">
                   <form method="post" action="admin_links.php" class="inline-form">
                     <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
                     <input type="hidden" name="action" value="update_nav">
                     <input type="hidden" name="id"     value="<?= $row['id'] ?>">
                     <input type="hidden" name="tab"    value="nav">
-                    <input class="ifield ifield-label" name="label" value="<?= h($row['label']) ?>" required>
-                    <input class="ifield ifield-url"   name="url"   value="<?= h($row['url']) ?>" placeholder="https://...">
+                    <input class="ifield ifield-label" name="label"       value="<?= h($row['label']) ?>" required>
+                    <input class="ifield ifield-url"   name="url"         value="<?= h($row['url']) ?>"   placeholder="https://...">
+                    <input class="ifield ifield-group" name="group_label" value="<?= h($row['group_label'] ?? '') ?>" placeholder="Sub-menu (blank = top-level)">
                     <button class="btn-save" type="submit">Save</button>
                   </form>
                 </td>
@@ -198,12 +202,13 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <div style="margin-top:20px;padding:14px;background:#fafafa;border:1px solid #e6e7e8;border-radius:6px">
             <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">Add nav link</div>
             <form method="post" action="admin_links.php" class="inline-form">
-              <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
-              <input type="hidden" name="action" value="add_nav">
-              <input type="hidden" name="tab"    value="nav">
-              <input class="ifield ifield-key"   name="key"   placeholder="unique-key" required>
-              <input class="ifield ifield-label" name="label" placeholder="Label"       required>
-              <input class="ifield ifield-url"   name="url"   placeholder="https://...">
+              <input type="hidden" name="csrf"        value="<?= h($csrf) ?>">
+              <input type="hidden" name="action"      value="add_nav">
+              <input type="hidden" name="tab"         value="nav">
+              <input class="ifield ifield-key"        name="key"         placeholder="unique-key" required>
+              <input class="ifield ifield-label"      name="label"       placeholder="Label"       required>
+              <input class="ifield ifield-url"        name="url"         placeholder="https://...">
+              <input class="ifield ifield-group"      name="group_label" placeholder="Sub-menu" value="Links">
               <button class="btn-save" type="submit">Add</button>
             </form>
           </div>

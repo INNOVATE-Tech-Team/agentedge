@@ -8,19 +8,21 @@ function toggleSbLinks(btn) {
   const open = btn.getAttribute('aria-expanded') === 'true';
   btn.setAttribute('aria-expanded', String(!open));
   sub.hidden = open;
-  try { localStorage.setItem('ae_links_open', String(!open)); } catch(e) {}
+  try { localStorage.setItem('ae_links_' + (btn.dataset.group || ''), String(!open)); } catch(e) {}
 }
 
 (function() {
   document.addEventListener('DOMContentLoaded', function() {
-    try {
-      const stored = localStorage.getItem('ae_links_open');
-      if (stored === 'false') {
-        const btn = document.querySelector('.sb-links-toggle');
-        const sub = btn && btn.nextElementSibling;
-        if (btn && sub) { btn.setAttribute('aria-expanded', 'false'); sub.hidden = true; }
-      }
-    } catch(e) {}
+    document.querySelectorAll('.sb-links-toggle').forEach(function(btn) {
+      const sub = btn.nextElementSibling;
+      if (!sub) return;
+      try {
+        if (localStorage.getItem('ae_links_' + (btn.dataset.group || '')) === 'false') {
+          btn.setAttribute('aria-expanded', 'false');
+          sub.hidden = true;
+        }
+      } catch(e) {}
+    });
   });
 })();
 
