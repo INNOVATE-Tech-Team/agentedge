@@ -1,0 +1,56 @@
+<?php
+// Admin impersonation — super_admin only.
+// POST { action: 'start', email, name } — log in as another agent.
+// POST { action: 'stop' }              — return to original admin session.
+require __DIR__ . '/../db.php';
+require __DIR__ . '/../auth.php';
+require __DIR__ . '/../roles.php';
+header('Content-Type: application/json');
+
+$me = current_agent();
+if (!$me) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405); echo json_encode(['error' => 'POST only']); exit;
+}
+
+$in     = json_decode(file_get_contents('php://input'), true) ?: [];
+$action = $in['action'] ?? 'start';
+
+if ($action === 'stop') {
+    stop_masquerade();
+    echo json_encode(['ok' => true, 'redirect' => 'roster.php']);
+    exit;
+}
+
+// Start masquerade: must be a real (non-masquerading) super_admin
+if (is_masquerading()) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Stop current masquerade before starting another.']);
+    exit;
+}
+
+$perms = current_perms();
+if (empty($perms['isSuperAdmin'])) {
+    http_response_code(403);
+    echo json_encode(['error' => 'Super admin access required.']);
+    exit;
+}
+
+$email = trim($in['email'] ?? '');
+$name  = trim($in['name']  ?? $email);
+if (!$email) {
+    http_response_code(400); echo json_encode(['error' => 'email required']); exit;
+}
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400); echo json_encode(['error' => 'invalid email']); exit;
+}
+
+// Don't masquerade as yourself
+if (strtolower($email) === strtolower($me['email'] ?? '')) {
+    http_response_code(400); echo json_encode(['error' => 'Cannot masquerade as yourself.']); exit;
+}
+
+$target = ['id' => 0, 'email' => $email, 'name' => $name ?: $email, 'photo' => null];
+start_masquerade($target);
+echo json_encode(['ok' => true, 'redirect' => 'index.php']);

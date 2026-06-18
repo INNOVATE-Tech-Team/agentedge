@@ -10,6 +10,30 @@ function current_agent(): ?array {
     return $_SESSION['agent'] ?? null;
 }
 
+// ── Masquerade (super_admin Log in as agent) ───────────────────────────────
+
+function is_masquerading(): bool {
+    return isset($_SESSION['original_admin']);
+}
+
+function original_admin(): ?array {
+    return $_SESSION['original_admin'] ?? null;
+}
+
+function start_masquerade(array $target): void {
+    $_SESSION['original_admin'] = $_SESSION['agent'];
+    $_SESSION['agent']  = $target;
+    unset($_SESSION['perms']); // force permission re-fetch for new identity
+}
+
+function stop_masquerade(): void {
+    if (isset($_SESSION['original_admin'])) {
+        $_SESSION['agent'] = $_SESSION['original_admin'];
+        unset($_SESSION['original_admin']);
+        unset($_SESSION['perms']); // restore admin permissions
+    }
+}
+
 function require_login(): array {
     $a = current_agent();
     if (!$a) {

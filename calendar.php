@@ -30,6 +30,7 @@ $agent = require_login();
               <button class="cal-tab" data-filter="company">Company <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="mc" id="cal-tab-mc">Market Center <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="bic">BIC <span class="cal-tab-count"></span></button>
+              <button class="cal-tab" data-filter="dotloop" id="cal-tab-tx">My Transactions <span class="cal-tab-count"></span></button>
             </div>
             <div class="cal-nav">
               <button class="btn-cal-nav" id="cal-prev">&#8592;</button>

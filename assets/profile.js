@@ -1,5 +1,6 @@
 // My Profile — load the agent's record, let them edit contact + social links.
 const SOCIAL_KEYS = ['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'website', 'blog'];
+const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal'];
 const FIELDS = ['fullName', 'email', 'phone', 'marketCenter', 'brokerage', ...SOCIAL_KEYS];
 
 function set(id, v) { const el = document.getElementById('f-' + id); if (el) el.value = v || ''; }
@@ -23,39 +24,60 @@ function fill(p) {
   SOCIAL_KEYS.forEach(k => set(k, s[k]));
 }
 
-fetch('api/profile.php', { credentials: 'same-origin' })
-  .then(r => r.json())
-  .then(d => {
-    if (d.profile) fill(d.profile);
-    const btn = document.getElementById('save-btn');
-    if (d.editable) {
-      btn.disabled = false;
-      if (d.matched) note('');
-    } else {
-      // Read-only: lock every input and explain why.
-      FIELDS.forEach(k => { const el = document.getElementById('f-' + k); if (el) el.disabled = true; });
-      btn.disabled = true;
-      note(d.reason || (d.demo ? 'Preview mode — you can see the form, but changes aren\'t saved until this runs on the production server.' : 'Editing is unavailable right now.'));
-    }
-  })
-  .catch(() => note('Could not load your profile.'));
+// Load CRM profile + local extra fields in parallel
+Promise.allSettled([
+  fetch('api/profile.php', { credentials: 'same-origin' }).then(r => r.json()),
+  fetch('api/agent_extra.php', { credentials: 'same-origin' }).then(r => r.json()),
+]).then(([crmRes, extraRes]) => {
+  const d = crmRes.status === 'fulfilled' ? crmRes.value : {};
+  const x = extraRes.status === 'fulfilled' ? extraRes.value : {};
+
+  if (d.profile) fill(d.profile);
+  EXTRA_KEYS.forEach(k => { const el = document.getElementById('f-' + k); if (el) el.value = x[k] || ''; });
+
+  const btn = document.getElementById('save-btn');
+  if (d.editable) {
+    btn.disabled = false;
+    if (d.matched) note('');
+  } else {
+    FIELDS.forEach(k => { const el = document.getElementById('f-' + k); if (el) el.disabled = true; });
+    btn.disabled = false; // extra fields are always editable locally
+    note(d.reason || (d.demo ? 'Preview mode — CRM fields are read-only, but dates are saved locally.' : 'CRM editing is unavailable — dates are still saved locally.'));
+  }
+}).catch(() => note('Could not load your profile.'));
 
 document.getElementById('profile-form').addEventListener('submit', e => {
   e.preventDefault();
   const btn = document.getElementById('save-btn');
   btn.disabled = true; msg('Saving…', true);
-  const body = {};
-  FIELDS.forEach(k => { body[k] = get(k); });
-  fetch('api/profile.php', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-    .then(r => r.json())
-    .then(d => {
-      if (d.ok) { msg('Saved ✓', true); }
-      else { msg(d.error || 'Save failed.', false); }
-      btn.disabled = false;
-    })
-    .catch(() => { msg('Save failed — please try again.', false); btn.disabled = false; });
+
+  const crmBody = {};
+  FIELDS.forEach(k => { crmBody[k] = get(k); });
+
+  const extraBody = {};
+  EXTRA_KEYS.forEach(k => { extraBody[k] = (document.getElementById('f-' + k)?.value || '').trim(); });
+
+  Promise.allSettled([
+    fetch('api/profile.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(crmBody),
+    }).then(r => r.json()),
+    fetch('api/agent_extra.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(extraBody),
+    }).then(r => r.json()),
+  ]).then(([crmRes, extraRes]) => {
+    const crmOk   = crmRes.status   === 'fulfilled' && (crmRes.value.ok   || crmRes.value.demo);
+    const extraOk = extraRes.status === 'fulfilled' && extraRes.value.ok;
+    if (crmOk || extraOk) { msg('Saved ✓', true); }
+    else {
+      const err = (crmRes.status === 'fulfilled' ? crmRes.value.error : null)
+               || (extraRes.status === 'fulfilled' ? extraRes.value.error : null)
+               || 'Save failed.';
+      msg(err, false);
+    }
+    btn.disabled = false;
+  }).catch(() => { msg('Save failed — please try again.', false); btn.disabled = false; });
 });

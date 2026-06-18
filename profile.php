@@ -34,6 +34,11 @@ $agent = require_login();
               <div class="field"><label>Market Center</label><input id="f-marketCenter" type="text" disabled></div>
               <div class="field full"><label>Brokerage</label><input id="f-brokerage" type="text" disabled></div>
 
+              <div class="section-h">Important Dates</div>
+              <div class="field"><label>Birthday <small style="font-weight:400;color:#999">(MM-DD, shown on BIC calendar)</small></label><input id="f-birthday" type="text" placeholder="06-15" maxlength="5" pattern="\d{2}-\d{2}"></div>
+              <div class="field"><label>Start Date <small style="font-weight:400;color:#999">(YYYY-MM-DD, for work anniversary)</small></label><input id="f-hire_date" type="date"></div>
+              <div class="field"><label>License Renewal <small style="font-weight:400;color:#999">(MM-DD, annual reminder)</small></label><input id="f-license_renewal" type="text" placeholder="03-31" maxlength="5" pattern="\d{2}-\d{2}"></div>
+
               <div class="section-h">Social Media</div>
               <div class="field"><label>Facebook</label><input id="f-facebook" type="url" placeholder="https://facebook.com/…"></div>
               <div class="field"><label>Instagram</label><input id="f-instagram" type="url" placeholder="https://instagram.com/…"></div>

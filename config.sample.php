@@ -38,6 +38,13 @@ return [
     // to the back-office login at https://agents.innovateonline.com/admin.
     'reset_url' => '',
 
+    // Intranet ticket API — "Get Support" button in AgentEdge submits tickets to
+    // everythinginnovate.com. Set intranet_ticket_url to the intranet base URL
+    // and intranet_ticket_token to the same value as AGENTEDGE_TICKET_TOKEN in
+    // the intranet's .env file.
+    'intranet_ticket_url'   => '',   // e.g. https://everythinginnovate.com
+    'intranet_ticket_token' => '',
+
     // Intranet events API — pull org-wide calendar events into AgentEdge.
     // Set intranet_events_url to https://your-intranet.com/api/events
     // and intranet_events_token to the same value as AGENTEDGE_EVENTS_TOKEN in the intranet .env.

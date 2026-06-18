@@ -1,3 +1,125 @@
+// ── Get Support modal ─────────────────────────────────────────────────────────
+
+let supportOverlay = null;
+
+function openSupportModal() {
+  if (!supportOverlay) {
+    supportOverlay = document.createElement('div');
+    supportOverlay.className = 'support-overlay';
+    supportOverlay.innerHTML = `
+      <div class="support-modal" role="dialog" aria-modal="true" aria-labelledby="support-title">
+        <button class="support-close" onclick="closeSupportModal()" aria-label="Close">&times;</button>
+        <h3 id="support-title">Get Support</h3>
+        <p class="support-sub">Submit a request and the right team will respond in the ticket thread.</p>
+        <div id="support-form-wrap">
+          <div class="support-field">
+            <label for="sup-title">Title</label>
+            <input id="sup-title" type="text" placeholder="e.g., MLS access not working" maxlength="200">
+          </div>
+          <div class="support-field">
+            <label for="sup-dept">Route to department</label>
+            <select id="sup-dept"><option value="">— pick a department —</option></select>
+          </div>
+          <div class="support-field">
+            <label for="sup-body">Describe the issue</label>
+            <textarea id="sup-body" placeholder="What's happening? When did it start?" maxlength="4000"></textarea>
+          </div>
+          <div class="support-actions">
+            <button class="support-submit" id="sup-submit" onclick="submitSupportTicket()">Submit ticket</button>
+            <button class="support-cancel" onclick="closeSupportModal()">Cancel</button>
+            <span class="support-msg" id="sup-msg"></span>
+          </div>
+        </div>
+      </div>`;
+    supportOverlay.addEventListener('click', e => { if (e.target === supportOverlay) closeSupportModal(); });
+    document.body.appendChild(supportOverlay);
+  }
+
+  supportOverlay.classList.add('open');
+  document.getElementById('sup-msg').textContent = '';
+  document.getElementById('sup-title').value = '';
+  document.getElementById('sup-body').value = '';
+  document.getElementById('sup-dept').value = '';
+  document.getElementById('sup-submit').disabled = false;
+
+  // Load department list
+  const sel = document.getElementById('sup-dept');
+  if (sel.options.length <= 1) {
+    fetch('api/support_departments.php', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        (d.departments || []).forEach(dept => {
+          const opt = document.createElement('option');
+          opt.value = dept.slug; opt.textContent = dept.name;
+          sel.appendChild(opt);
+        });
+        if (sel.options.length <= 1) {
+          sel.innerHTML = '<option value="">No departments configured yet</option>';
+        }
+      })
+      .catch(() => {
+        sel.innerHTML = '<option value="">Could not load departments</option>';
+      });
+  }
+}
+
+function closeSupportModal() {
+  if (supportOverlay) supportOverlay.classList.remove('open');
+}
+
+function submitSupportTicket() {
+  const title    = (document.getElementById('sup-title').value || '').trim();
+  const deptSlug = document.getElementById('sup-dept').value;
+  const body     = (document.getElementById('sup-body').value || '').trim();
+  const msg      = document.getElementById('sup-msg');
+  const btn      = document.getElementById('sup-submit');
+
+  if (!title)    { msg.textContent = 'Please enter a title.';           msg.className = 'support-msg err'; return; }
+  if (!deptSlug) { msg.textContent = 'Please select a department.';     msg.className = 'support-msg err'; return; }
+  if (!body)     { msg.textContent = 'Please describe the issue.';      msg.className = 'support-msg err'; return; }
+
+  btn.disabled = true;
+  msg.textContent = 'Submitting…'; msg.className = 'support-msg ok';
+
+  fetch('api/support_ticket.php', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, departmentSlug: deptSlug, body }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        msg.textContent = 'Ticket submitted! The team will follow up in the support portal.';
+        msg.className = 'support-msg ok';
+        setTimeout(closeSupportModal, 2500);
+      } else {
+        msg.textContent = d.error || 'Submit failed — please try again.';
+        msg.className = 'support-msg err';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      msg.textContent = 'Network error — please try again.';
+      msg.className = 'support-msg err';
+      btn.disabled = false;
+    });
+}
+
+// ── Masquerade stop ───────────────────────────────────────────────────────────
+
+function stopMasquerade() {
+  fetch('api/masquerade.php', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stop' }),
+  })
+    .then(r => r.json())
+    .then(d => { if (d.redirect) location.href = d.redirect; else location.reload(); })
+    .catch(() => location.reload());
+}
+
 // AgentEdge dashboard — pulls the signed-in agent's numbers from
 // api/summary.php (Perfex RE module) and paints the tiles, cap wheel,
 // and recruiting network.

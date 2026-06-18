@@ -52,7 +52,8 @@ function render(rows) {
     ${IS_ADMIN ? `<td style="white-space:nowrap">
       ${roleBadge(a.email)}
       <button class="btn-stats" data-email="${esc(a.email)}" data-name="${esc(a.name)}">Stats</button>
-      ${(typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>` : ''}
+      ${(typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>
+      <button class="btn-loginas" data-email="${esc(a.email)}" data-name="${esc(a.name)}" style="margin-left:4px">Log in as</button>` : ''}
     </td>` : ''}
   </tr>`).join('');
 
@@ -63,6 +64,9 @@ function render(rows) {
     if (typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) {
       body.querySelectorAll('.btn-assign').forEach(btn => {
         btn.addEventListener('click', () => openRoleModal(btn.dataset.email, btn.dataset.name, btn.dataset.mc));
+      });
+      body.querySelectorAll('.btn-loginas').forEach(btn => {
+        btn.addEventListener('click', () => loginAsAgent(btn.dataset.email, btn.dataset.name));
       });
     }
   }
@@ -161,6 +165,19 @@ function renderStatsBody(d) {
     </tbody></table>`;
   }
   return html;
+}
+
+function loginAsAgent(email, name) {
+  if (!confirm(`Log in as ${name} (${email})?\n\nYou'll see AgentEdge from their perspective. A banner will let you return to your admin account.`)) return;
+  fetch('api/masquerade.php', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'start', email, name }),
+  })
+    .then(r => r.json())
+    .then(d => { if (d.redirect) location.href = d.redirect; else if (d.error) alert(d.error); })
+    .catch(() => alert('Could not switch agent — please try again.'));
 }
 
 function showStats(email, name) {
