@@ -68,6 +68,13 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .sb-roleswitch{width:100%;margin:0 0 10px;padding:6px 8px;border-radius:6px;border:1px solid #333;background:#171717;color:#cfcfcf;font-size:12px}
 .sb-signout{color:var(--green);text-decoration:none;font-weight:700;font-size:13px}
 .sb-section{padding:12px 18px 4px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#555;border-top:1px solid #1e1e1e;margin-top:4px}
+.sb-links-toggle{display:block;width:100%;padding:11px 18px;color:#cfcfcf;background:none;border:none;border-left:3px solid transparent;font-size:14px;font-weight:600;text-align:left;cursor:pointer;line-height:1.4;border-top:1px solid #1e1e1e;margin-top:2px}
+.sb-links-toggle:hover{background:#1a1a1a;color:#fff}
+.sb-links-toggle[aria-expanded="true"]{color:#fff}
+.sb-links-arrow{float:right;font-size:10px;opacity:.5;margin-top:2px;transition:transform .2s}
+.sb-links-toggle[aria-expanded="false"] .sb-links-arrow{transform:rotate(-90deg)}
+.sb-links-sub{overflow:hidden}
+.sb-links-sub .sb-item{padding-left:28px;font-size:13px}
 .content{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
 .content-top{padding:14px 24px;border-bottom:1px solid var(--border);background:#fff;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .content-title{font-size:18px;font-weight:800}
