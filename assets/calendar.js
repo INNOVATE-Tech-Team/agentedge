@@ -15,6 +15,8 @@ const SCOPES = {
   company:        { bg: '#82C112', text: '#111' },
   'market-center':{ bg: '#2C9CC9', text: '#fff' },
   bic:            { bg: '#A07221', text: '#fff' },
+  dotloop:        { bg: '#7c3aed', text: '#fff' },
+  personal:       { bg: '#e91e8c', text: '#fff' },
 };
 
 function calEsc(s) {
@@ -49,17 +51,32 @@ async function loadEvents(key) {
   if (evCache[key]) return evCache[key];
   const params = new URLSearchParams({ month: key });
   if (agentMCSlug) params.set('dept', agentMCSlug);
-  try {
-    const r = await fetch('api/events.php?' + params, { credentials: 'same-origin' });
-    const d = r.ok ? await r.json() : { events: [] };
-    evCache[key] = Array.isArray(d.events) ? d.events : [];
-  } catch { evCache[key] = []; }
+
+  const [companyRes, txRes, bicRes] = await Promise.allSettled([
+    fetch('api/events.php?' + params, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
+    fetch('api/dotloop_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
+    fetch('api/bic_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
+  ]);
+
+  const company = companyRes.status === 'fulfilled' ? (companyRes.value.events ?? []) : [];
+  const tx      = txRes.status      === 'fulfilled' ? (txRes.value.events      ?? []) : [];
+  const bic     = bicRes.status     === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
+
+  evCache[key] = [...company, ...tx, ...bic].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 
 function filtered(evs) {
   if (calFilter === 'all') return evs;
   if (calFilter === 'mc')  return evs.filter(e => e.scope === 'market-center');
+  // 'dotloop' tab shows both dotloop events and personal (birthday, license renewal)
+  if (calFilter === 'dotloop') return evs.filter(e => e.scope === 'dotloop' || e.scope === 'personal');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -106,6 +123,8 @@ function renderGrid(evs) {
 function scopeLabel(scope) {
   if (scope === 'market-center') return agentMC || 'Market Center';
   if (scope === 'bic')           return 'BIC';
+  if (scope === 'dotloop')       return 'Transaction';
+  if (scope === 'personal')      return 'Personal';
   return 'Company';
 }
 
@@ -137,11 +156,12 @@ function renderList(evs) {
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, bic: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, bic: 0, dotloop: 0 };
   evs.forEach(e => {
-    if      (e.scope === 'company')        counts.company++;
-    else if (e.scope === 'market-center')  counts.mc++;
-    else if (e.scope === 'bic')            counts.bic++;
+    if      (e.scope === 'company')       counts.company++;
+    else if (e.scope === 'market-center') counts.mc++;
+    else if (e.scope === 'bic')           counts.bic++;
+    else if (e.scope === 'dotloop' || e.scope === 'personal') counts.dotloop++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;

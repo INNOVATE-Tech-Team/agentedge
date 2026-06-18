@@ -45,6 +45,15 @@ function render_sidebar(string $current, array $agent): void {
     $perms = current_perms();
     $admin = !empty($perms['isAdmin']);
     $demo  = !empty(cfg()['demo']);
+
+    // Masquerade banner — shown when a super_admin is logged in as another agent.
+    if (function_exists('is_masquerading') && is_masquerading()) {
+        $orig = original_admin();
+        $viewing = htmlspecialchars($agent['name'] ?: $agent['email']);
+        echo '<div class="masq-bar">Viewing as <strong>' . $viewing . '</strong> &mdash; '
+           . '<button class="masq-back" onclick="stopMasquerade()">Back to Admin</button></div>';
+    }
+
     echo '<aside class="sidebar"><div class="sb-brand"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></div><nav class="sb-nav">';
     $superAdmin = !empty($perms['isSuperAdmin']);
     foreach (nav_items() as $it) {
@@ -70,6 +79,7 @@ function render_sidebar(string $current, array $agent): void {
         }
         echo '</select>';
     }
+    echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
     echo '<script src="assets/mc-links.js"></script>';
 }

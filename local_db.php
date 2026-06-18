@@ -126,6 +126,16 @@ function local_db(): PDO {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // Per-agent extra fields: birthday, hire date, license renewal.
+    // birthday and license_renewal are stored as MM-DD so they recur every year.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_extra (
+        email            TEXT PRIMARY KEY,
+        birthday         TEXT NOT NULL DEFAULT '',   -- MM-DD (e.g. 06-15)
+        hire_date        TEXT NOT NULL DEFAULT '',   -- YYYY-MM-DD (start / work anniversary)
+        license_renewal  TEXT NOT NULL DEFAULT '',   -- MM-DD (annual renewal reminder)
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
     // Agents imported via CSV upload (not yet in CRM).
     $pdo->exec("CREATE TABLE IF NOT EXISTS imported_agents (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
