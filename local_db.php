@@ -28,6 +28,18 @@ function local_db(): PDO {
     // Migrate existing installs that predate the group_label column
     try { $pdo->exec("ALTER TABLE nav_ext_links ADD COLUMN group_label TEXT NOT NULL DEFAULT 'Links'"); } catch (\Exception $e) {}
 
+    // Sort order for the hardcoded core pages (Dashboard, Roster, etc.)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS nav_core_order (
+        key      TEXT    PRIMARY KEY,
+        sort_ord INTEGER NOT NULL DEFAULT 0
+    )");
+    if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
+        $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
+        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60]] as $r) {
+            $ins->execute($r);
+        }
+    }
+
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (
         id       INTEGER PRIMARY KEY AUTOINCREMENT,

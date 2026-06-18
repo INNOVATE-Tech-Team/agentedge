@@ -37,6 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Content-Type: application/json');
         echo json_encode(['ok' => true]); exit;
     }
+    if ($action === 'reorder_core') {
+        $keys = array_filter(array_map(fn($k) => preg_replace('/[^a-z0-9_]/','',$k), explode(',', $_POST['keys'] ?? '')));
+        $st   = $db->prepare("INSERT OR REPLACE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
+        foreach (array_values($keys) as $i => $k) { if ($k) $st->execute([$k, ($i + 1) * 10]); }
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => true]); exit;
+    }
 
     if ($action === 'update_nav') {
         $id         = (int)($_POST['id'] ?? 0);
@@ -85,11 +92,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ── Load data ──────────────────────────────────────────────────────────────────
-$navLinks = local_db()->query("SELECT * FROM nav_ext_links ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
-$mcRows   = local_db()->query("SELECT * FROM mc_resource_links ORDER BY mc_slug,sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
-$bySlug   = [];
+$navLinks  = local_db()->query("SELECT * FROM nav_ext_links ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
+$mcRows    = local_db()->query("SELECT * FROM mc_resource_links ORDER BY mc_slug,sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
+$coreOrder = local_db()->query("SELECT * FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_ASSOC);
+$bySlug    = [];
 foreach ($mcRows as $r) $bySlug[$r['mc_slug']][] = $r;
 ksort($bySlug);
+
+$coreLabels = [
+    'dashboard'  => ['label' => 'Dashboard',        'access' => 'All agents'],
+    'roster'     => ['label' => 'Agent Roster',      'access' => 'All agents'],
+    'network'    => ['label' => 'My Network',        'access' => 'All agents'],
+    'onboarding' => ['label' => 'Onboarding',        'access' => 'Admin only'],
+    'calendar'   => ['label' => 'Company Calendar',  'access' => 'All agents'],
+    'profile'    => ['label' => 'My Profile',        'access' => 'All agents'],
+];
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 ?>
@@ -212,6 +229,30 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
               <button class="btn-save" type="submit">Add</button>
             </form>
           </div>
+
+          <!-- Core page order -->
+          <div style="margin-top:28px;padding-top:20px;border-top:2px solid #e6e7e8">
+            <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">Core Page Order</div>
+            <p style="font-size:12px;color:#888;margin:0 0 12px">Drag to change the order these built-in pages appear in the sidebar. Labels and destinations are fixed.</p>
+            <table class="settings-table">
+              <thead><tr>
+                <th style="width:28px"></th>
+                <th>Page</th>
+                <th>Visible to</th>
+              </tr></thead>
+              <tbody id="core-tbody">
+              <?php foreach ($coreOrder as $row):
+                  $info = $coreLabels[$row['key']] ?? ['label' => $row['key'], 'access' => '—'];
+              ?>
+                <tr class="core-row" data-key="<?= h($row['key']) ?>">
+                  <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+                  <td style="font-weight:600"><?= h($info['label']) ?></td>
+                  <td style="font-size:12px;color:#888"><?= h($info['access']) ?></td>
+                </tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- ── TAB: MC RESOURCE LINKS ────────────────────────────────────── -->
@@ -297,7 +338,7 @@ function switchTab(t) {
 }
 
 // ── Drag-to-reorder ─────────────────────────────────────────────────────────
-function initDragSort(container, rowSelector, reorderAction) {
+function initDragSort(container, rowSelector, onSave) {
   let dragging = null;
 
   function getRows() { return [...container.querySelectorAll(rowSelector)]; }
@@ -308,7 +349,7 @@ function initDragSort(container, rowSelector, reorderAction) {
     dragging = row;
     row.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', row.dataset.id);
+    e.dataTransfer.setData('text/plain', row.dataset.id || row.dataset.key || '');
   });
 
   container.addEventListener('dragend', e => {
@@ -317,7 +358,7 @@ function initDragSort(container, rowSelector, reorderAction) {
     row.classList.remove('dragging');
     container.querySelectorAll(rowSelector).forEach(r => r.classList.remove('drag-over'));
     dragging = null;
-    saveOrder(getRows(), reorderAction);
+    onSave(getRows());
   });
 
   container.addEventListener('dragover', e => {
@@ -334,7 +375,6 @@ function initDragSort(container, rowSelector, reorderAction) {
 
   container.addEventListener('drop', e => e.preventDefault());
 
-  // Enable draggable on the rows (toggled on handle mousedown to not block form clicks)
   container.addEventListener('mousedown', e => {
     const handle = e.target.closest('.drag-handle');
     if (!handle) return;
@@ -346,23 +386,34 @@ function initDragSort(container, rowSelector, reorderAction) {
   });
 }
 
-function saveOrder(rows, action) {
-  const ids = rows.map(r => r.dataset.id).filter(Boolean).join(',');
-  if (!ids) return;
+function postOrder(params) {
   fetch('admin_links.php', {
     method: 'POST',
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: new URLSearchParams({csrf: CSRF, action, ids}),
+    body: new URLSearchParams({csrf: CSRF, ...params}),
   }).catch(() => {});
 }
 
 // Nav links table
 const navTbody = document.getElementById('nav-tbody');
-if (navTbody) initDragSort(navTbody, 'tr.nav-row', 'reorder_nav');
+if (navTbody) initDragSort(navTbody, 'tr.nav-row', rows => {
+  const ids = rows.map(r => r.dataset.id).filter(Boolean).join(',');
+  if (ids) postOrder({action: 'reorder_nav', ids});
+});
 
 // MC resource links (one sortable per MC group)
 document.querySelectorAll('.mc-sortable').forEach(wrap => {
-  initDragSort(wrap, '.mc-row', 'reorder_mc');
+  initDragSort(wrap, '.mc-row', rows => {
+    const ids = rows.map(r => r.dataset.id).filter(Boolean).join(',');
+    if (ids) postOrder({action: 'reorder_mc', ids});
+  });
+});
+
+// Core page order
+const coreTbody = document.getElementById('core-tbody');
+if (coreTbody) initDragSort(coreTbody, 'tr.core-row', rows => {
+  const keys = rows.map(r => r.dataset.key).filter(Boolean).join(',');
+  if (keys) postOrder({action: 'reorder_core', keys});
 });
 </script>
 </body>

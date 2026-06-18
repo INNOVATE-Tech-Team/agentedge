@@ -26,15 +26,25 @@ function nav_items(): array {
         return $item;
     }, $extLinks);
 
-    return array_merge([
-        // ── AgentEdge pages ───────────────────────────────────────────────────
-        ['key' => 'dashboard',   'label' => 'Dashboard',        'href' => 'index.php'],
-        ['key' => 'roster',      'label' => 'Agent Roster',     'href' => 'roster.php'],
-        ['key' => 'network',     'label' => 'My Network',       'href' => 'network.php'],
-        ['key' => 'onboarding',  'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
-        ['key' => 'calendar',    'label' => 'Company Calendar', 'href' => 'calendar.php'],
-        ['key' => 'profile',     'label' => 'My Profile',       'href' => 'profile.php'],
-    ], $ext, [
+    // Core pages — sorted by nav_core_order if set
+    $coreMap = [
+        'dashboard'  => ['key' => 'dashboard',  'label' => 'Dashboard',        'href' => 'index.php'],
+        'roster'     => ['key' => 'roster',     'label' => 'Agent Roster',     'href' => 'roster.php'],
+        'network'    => ['key' => 'network',    'label' => 'My Network',       'href' => 'network.php'],
+        'onboarding' => ['key' => 'onboarding', 'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
+        'calendar'   => ['key' => 'calendar',   'label' => 'Company Calendar', 'href' => 'calendar.php'],
+        'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
+    ];
+    try {
+        $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
+        $core = [];
+        foreach ($orderedKeys as $k) { if (isset($coreMap[$k])) $core[] = $coreMap[$k]; }
+        foreach ($coreMap as $k => $item) { if (!in_array($k, $orderedKeys)) $core[] = $item; }
+    } catch (\Exception $e) {
+        $core = array_values($coreMap);
+    }
+
+    return array_merge($core, $ext, [
         // ── Super admin only ──────────────────────────────────────────────────
         ['key' => 'admin_roles',  'label' => 'Role Assignments', 'href' => 'admin_roles.php',  'superOnly' => true],
         ['key' => 'admin_import','label' => 'Import Agents',   'href' => 'admin_import.php', 'adminOnly' => true],
