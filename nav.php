@@ -62,8 +62,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
         ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
         ['key' => 'bo_workflows',     'label' => 'Workflows',        'href' => 'backoffice_workflows.php'],
-        ['key' => 'backoffice_state_rosters', 'label' => 'State Rosters', 'href' => 'backoffice_state_rosters.php'],
-        ['key' => 'backoffice_roster',        'label' => 'Agent Roster',  'href' => 'backoffice_roster.php'],
+        ['key' => 'backoffice_state_rosters',  'label' => 'State Rosters',   'href' => 'backoffice_state_rosters.php'],
+        ['key' => 'backoffice_roster',         'label' => 'Agent Roster',   'href' => 'backoffice_roster.php'],
+        ['key' => 'backoffice_roster_changes', 'label' => 'Roster Changes', 'href' => 'backoffice_roster_changes.php'],
     ];
     foreach (backoffice_items_all() as $r) {
         $item = ['key' => 'bo_' . $r['id'], 'label' => $r['label'], 'href' => $r['url']];

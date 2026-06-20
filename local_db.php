@@ -332,6 +332,25 @@ function local_db(): PDO {
         $ri = $pdo->prepare("INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp) VALUES (?,?,?,?)");
         foreach (_innovate_roster_seed() as $r) $ri->execute($r);
     }
+    // Migration: add tracking columns to existing installs (no-op if already present)
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN active     INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN added_at   TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN added_by   TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN removed_at TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN removed_by TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Roster change log — every add/remove writes a row here for weekly reports.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS roster_changes (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_name    TEXT    NOT NULL,
+        state_code    TEXT    NOT NULL,
+        market_center TEXT    NOT NULL DEFAULT '',
+        license_exp   TEXT    NOT NULL DEFAULT '',
+        action        TEXT    NOT NULL,
+        changed_by    TEXT    NOT NULL DEFAULT '',
+        changed_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_roster_chg_at ON roster_changes(changed_at)");
 
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
