@@ -11,8 +11,8 @@ if (!$me) { http_response_code(401); echo json_encode(['error'=>'not signed in']
 
 $email = trim($_GET['email'] ?? '');
 
-// Non-leaders can only see their own tree
-if (!is_leader()) $email = $me['email'];
+// Only super_admin, staff, and recruiters can view other agents' networks
+if (!can_search_network()) $email = $me['email'];
 if ($email === '') $email = $me['email'];
 
 $c      = cfg();
@@ -36,4 +36,4 @@ if (!is_array($d) || empty($d['ok'])) {
     echo json_encode(['tree'=>null,'totalCount'=>0,'error'=>'bridge error']);
     exit;
 }
-echo json_encode(['tree'=>$d['tree'],'totalCount'=>$d['totalCount']??0]);
+echo json_encode(['tree'=>$d['tree'],'totalCount'=>$d['totalCount']??0,'sponsor'=>$d['sponsor']??null]);

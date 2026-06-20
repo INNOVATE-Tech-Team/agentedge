@@ -83,6 +83,17 @@ $agent = require_login();
     .loading-msg{padding:28px;text-align:center;color:#888;font-size:13px}
     .error-msg{padding:14px 18px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-top:8px}
 
+    /* Sponsor card (one level above root) */
+    .sponsor-card{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;margin-bottom:8px}
+    .sponsor-avatar{width:34px;height:34px;border-radius:50%;background:#ddd;color:#555;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .sponsor-info{flex:1;min-width:0}
+    .sponsor-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-bottom:1px}
+    .sponsor-name{font-size:13px;font-weight:700;color:#333}
+    .sponsor-email{font-size:11px;color:#999}
+    .sponsor-link{font-size:11px;font-weight:700;color:#5b8e0d;text-decoration:none;white-space:nowrap;flex-shrink:0}
+    .sponsor-link:hover{text-decoration:underline}
+    .sponsor-connector{text-align:center;font-size:14px;color:#ccc;line-height:1;margin-bottom:4px;margin-top:-4px}
+
     /* Chips */
     .chip{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap}
     .chip-vol{background:#f0f5e8;color:#5b8e0d}
@@ -99,7 +110,7 @@ $agent = require_login();
     <main class="wrap">
       <div class="card" style="padding:20px 24px">
 
-        <?php if (is_leader()): ?>
+        <?php if (can_search_network()): ?>
         <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">View agent network</div>
         <div class="search-row">
           <input type="email" id="email-input" placeholder="agent@email.com" value="<?= htmlspecialchars($agent['email']) ?>">
@@ -116,8 +127,8 @@ $agent = require_login();
   </div>
 </div>
 <script>
-const MY_EMAIL  = <?= json_encode($agent['email']) ?>;
-const IS_LEADER = <?= json_encode(is_leader()) ?>;
+const MY_EMAIL   = <?= json_encode($agent['email']) ?>;
+const CAN_SEARCH = <?= json_encode(can_search_network()) ?>;
 const LINE_NAMES = ['','1st Line','2nd Line','3rd Line','4th Line','5th Line'];
 
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -240,12 +251,12 @@ function renderLevels() {
   }
 }
 
-function renderTree(tree, totalCount) {
+function renderTree(tree, totalCount, sponsor) {
   const wrap = document.getElementById('tree-wrap');
   wrap.innerHTML = '';
 
   if (!tree) {
-    wrap.innerHTML = IS_LEADER
+    wrap.innerHTML = CAN_SEARCH
       ? '<div class="empty-prompt">No network data found.<br><span style="font-size:12px">Try a different agent email.</span></div>'
       : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
@@ -253,6 +264,29 @@ function renderTree(tree, totalCount) {
 
   ROOT = tree;
   path = [null, null, null, null, null];
+
+  // Sponsor card — the agent one level above the root
+  if (sponsor) {
+    const sponsorEl = document.createElement('div');
+    const sVol = fmtMoney(sponsor.volume);
+    const viewLink = CAN_SEARCH
+      ? `<a class="sponsor-link" href="#" onclick="event.preventDefault();document.getElementById('email-input')&&(document.getElementById('email-input').value='${esc(sponsor.email)}');loadTree()">View network →</a>`
+      : '';
+    sponsorEl.className = 'sponsor-card';
+    sponsorEl.innerHTML = `
+      <div class="sponsor-avatar">${esc(initials(sponsor.name))}</div>
+      <div class="sponsor-info">
+        <div class="sponsor-label">↑ Sponsored by</div>
+        <div class="sponsor-name">${esc(sponsor.name)}</div>
+        <div class="sponsor-email">${esc(sponsor.email||'')}${sVol ? ' · ' + sVol : ''}</div>
+      </div>
+      ${viewLink}`;
+    wrap.appendChild(sponsorEl);
+    const connector = document.createElement('div');
+    connector.className = 'sponsor-connector';
+    connector.textContent = '│';
+    wrap.appendChild(connector);
+  }
 
   // Root agent card
   const vol       = fmtMoney(tree.volume);
@@ -304,7 +338,7 @@ function renderTree(tree, totalCount) {
 }
 
 function loadTree() {
-  const email = IS_LEADER
+  const email = CAN_SEARCH
     ? (document.getElementById('email-input')?.value.trim() || MY_EMAIL)
     : MY_EMAIL;
   const wrap = document.getElementById('tree-wrap');
@@ -314,7 +348,7 @@ function loadTree() {
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => {
       if (d.error) { wrap.innerHTML = '<div class="error-msg">' + esc(d.error) + '</div>'; return; }
-      renderTree(d.tree, d.totalCount||0);
+      renderTree(d.tree, d.totalCount||0, d.sponsor||null);
     })
     .catch(() => {
       wrap.innerHTML = '<div class="error-msg">Could not load network data. Check bridge configuration.</div>';

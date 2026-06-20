@@ -107,6 +107,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .role-mc_leader{background:#eef5e8;color:#5b8e0d}
     .role-bic{background:#fff4e0;color:#a07221}
     .role-staff{background:#e8f0ff;color:#2255cc}
+    .role-recruiter{background:#f5e8ff;color:#7a22cc}
     .role-super_admin{background:#000;color:#82C112}
     .mc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
     .mc-chip{font-size:10px;padding:2px 6px;border-radius:3px;background:#eef5e8;color:#5b8e0d;font-weight:600}

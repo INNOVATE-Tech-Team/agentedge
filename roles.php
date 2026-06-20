@@ -8,6 +8,7 @@ require_once __DIR__ . '/auth.php';
 const ROLE_LABELS = [
     'super_admin' => 'Super Admin',
     'staff'       => 'Staff',
+    'recruiter'   => 'Recruiter',
     'bic'         => 'Broker in Charge',
     'mc_leader'   => 'Market Center Leader',
     'agent'       => 'Agent',
@@ -17,7 +18,6 @@ const ROLE_LABELS = [
 const ROLE_ALIASES = [
     'retention_admin'  => 'staff',
     'broker_in_charge' => 'bic',
-    'recruiter'        => 'staff',
 ];
 
 function role_label(string $role): string {
@@ -104,12 +104,15 @@ function my_mc_slugs(): array {
     return current_perms()['mc_slugs'] ?? [];
 }
 
-function is_super_admin(): bool { return !empty(current_perms()['isSuperAdmin']); }
-function is_admin(): bool       { return !empty(current_perms()['isAdmin']); }
-function is_bic(): bool         { return (current_perms()['role'] ?? '') === 'bic'; }
-function is_mc_leader(): bool   { return (current_perms()['role'] ?? '') === 'mc_leader'; }
-function is_leader(): bool      { return is_admin() || is_bic() || is_mc_leader(); }
-function my_role(): string      { return current_perms()['role'] ?? 'agent'; }
+function is_super_admin(): bool    { return !empty(current_perms()['isSuperAdmin']); }
+function is_admin(): bool          { return !empty(current_perms()['isAdmin']); }
+function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
+function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
+function is_recruiter(): bool      { return (current_perms()['role'] ?? '') === 'recruiter'; }
+function is_leader(): bool         { return is_admin() || is_bic() || is_mc_leader(); }
+// Can search / view other agents' networks (super_admin, staff, recruiter)
+function can_search_network(): bool { return is_admin() || is_recruiter(); }
+function my_role(): string         { return current_perms()['role'] ?? 'agent'; }
 
 function require_admin_page(): void {
     if (!is_admin()) { header('Location: index.php'); exit; }
