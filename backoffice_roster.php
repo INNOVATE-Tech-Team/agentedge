@@ -8,7 +8,7 @@ if (empty($perms['isAdmin'])) {
     header('Location: index.php'); exit;
 }
 
-$today = date('Y-m-d');
+$today  = date('Y-m-d');
 $warn60 = date('Y-m-d', strtotime('+60 days'));
 
 // Pull all roster rows, group by state then market_center.
@@ -23,18 +23,32 @@ foreach ($rows as $r) {
     $byState[$st][$mc][] = $r;
 }
 
-// Summary counts per state.
+// Unique agent count (agents in multiple states count once).
+$uniqueTotal = (int)local_db()
+    ->query("SELECT COUNT(DISTINCT agent_name) FROM innovate_roster")
+    ->fetchColumn();
+
+// Summary counts per state (use unique-per-state since no intra-state dups).
 $stateMeta = [];
 foreach ($byState as $st => $mcs) {
     $total = 0; $exp = 0; $warn = 0;
+    $seen = [];
     foreach ($mcs as $mc => $agents) {
         foreach ($agents as $a) {
+            $key = strtolower($a['agent_name']);
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
             $total++;
             if ($a['license_exp'] && $a['license_exp'] <= $today) $exp++;
             elseif ($a['license_exp'] && $a['license_exp'] <= $warn60) $warn++;
         }
     }
-    $stateMeta[$st] = ['total' => $total, 'mc_count' => count($mcs), 'expired' => $exp, 'expiring' => $warn];
+    $stateMeta[$st] = [
+        'total'    => $total,
+        'mc_count' => count($mcs),
+        'expired'  => $exp,
+        'expiring' => $warn,
+    ];
 }
 
 $stateNames = [
@@ -49,14 +63,11 @@ $stateTiers = [
     'NC'=>2,'GA'=>2,'PA'=>2,
     'SC'=>3,'MD'=>3,'TN'=>3,'NJ'=>3,'MA'=>3,
 ];
-$tierLabel = [1=>'Auto','2='=>'Purchase','2'=>'Purchase','3'=>'FOIA'];
+$tierLabel = [1=>'Auto','2'=>'Purchase','3'=>'FOIA'];
 $tierClass = [1=>'tier1','2'=>'tier2','3'=>'tier3'];
 
-// Which state tab is active?
 $activeState = $_GET['state'] ?? (array_key_first($byState) ?: 'SC');
 if (!isset($byState[$activeState])) $activeState = array_key_first($byState) ?: 'SC';
-
-$grandTotal = array_sum(array_column($stateMeta, 'total'));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -75,8 +86,10 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
 .rs-tile .rs-num { font-size:26px; font-weight:800; line-height:1.1; }
 .rs-tile .rs-lbl { font-size:11px; color:var(--faint); font-weight:700; text-transform:uppercase;
                    letter-spacing:.05em; margin-top:2px; }
-.rs-tile.red  .rs-num { color:var(--red,#c0392b); }
+.rs-tile.red   .rs-num { color:var(--red,#c0392b); }
 .rs-tile.amber .rs-num { color:#c87800; }
+.rs-tile.green .rs-num { color:var(--green-d,#5b8e0d); }
+#prod-loading { font-size:11px; color:var(--faint); font-style:italic; align-self:center; }
 
 /* State card grid */
 .state-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-bottom:24px; }
@@ -108,7 +121,6 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
 .detail-sub    { font-size:12px; color:var(--faint); }
 
 /* MC group */
-.mc-group { }
 .mc-heading { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
               color:var(--faint); padding:10px 18px 6px; border-top:1px solid var(--border);
               background:#fafbfa; }
@@ -124,6 +136,11 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
 .exp-badge.expiring { background:#fff3e0; color:#c87800; }
 .exp-badge.ok       { background:#e8f5e9; color:#2e7d32; }
 .exp-badge.none     { background:#f0f0f0; color:#999; font-weight:400; }
+
+/* Production cells */
+.prod-vol  { font-weight:700; color:#111; white-space:nowrap; }
+.prod-deals { font-size:11px; color:var(--muted); white-space:nowrap; }
+.prod-none { color:var(--faint); font-size:11px; }
 </style>
 </head>
 <body>
@@ -135,15 +152,15 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
       <div class="bo-eyebrow">Back Office</div>
       <div class="content-title">Agent Roster</div>
     </div>
-    <div class="content-hello"><?= $grandTotal ?> agents across <?= count($byState) ?> states</div>
+    <div class="content-hello"><?= $uniqueTotal ?> unique agents across <?= count($byState) ?> states</div>
   </div>
   <div class="wrap">
 
     <!-- Summary bar -->
-    <div class="roster-summary">
+    <div class="roster-summary" id="summaryBar">
       <div class="rs-tile">
-        <div class="rs-num"><?= $grandTotal ?></div>
-        <div class="rs-lbl">Total Agents</div>
+        <div class="rs-num"><?= $uniqueTotal ?></div>
+        <div class="rs-lbl">Unique Agents</div>
       </div>
       <div class="rs-tile">
         <div class="rs-num"><?= count($byState) ?></div>
@@ -165,6 +182,16 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
         <div class="rs-lbl">Expiring &lt;60 Days</div>
       </div>
       <?php endif; ?>
+      <!-- Production tiles injected by JS -->
+      <span id="prod-loading">Loading production…</span>
+      <div class="rs-tile green" id="prod-vol-tile" style="display:none">
+        <div class="rs-num" id="prod-vol-num">—</div>
+        <div class="rs-lbl">LTM Volume</div>
+      </div>
+      <div class="rs-tile" id="prod-deals-tile" style="display:none">
+        <div class="rs-num" id="prod-deals-num">—</div>
+        <div class="rs-lbl">LTM Deals</div>
+      </div>
     </div>
 
     <!-- State cards -->
@@ -224,12 +251,14 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
       </div>
 
       <?php foreach ($byState[$activeState] as $mc => $agents): ?>
-      <div class="mc-group">
+      <div>
         <div class="mc-heading"><?= htmlspecialchars($mc) ?> — <?= count($agents) ?> agent<?= count($agents) !== 1 ? 's' : '' ?></div>
         <table class="agent-table" aria-label="Agents in <?= htmlspecialchars($mc) ?>">
           <thead>
             <tr>
               <th>Name</th>
+              <th>Volume</th>
+              <th>Deals</th>
               <?php if ($activeState === 'SC'): ?>
               <th>License Expires</th>
               <?php endif; ?>
@@ -237,8 +266,10 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
           </thead>
           <tbody>
             <?php foreach ($agents as $a): ?>
-            <tr>
+            <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>">
               <td><?= htmlspecialchars($a['agent_name']) ?></td>
+              <td class="prod-cell-vol"><span class="prod-none">—</span></td>
+              <td class="prod-cell-deals"><span class="prod-none">—</span></td>
               <?php if ($activeState === 'SC'): ?>
               <td>
                 <?php
@@ -267,5 +298,83 @@ $grandTotal = array_sum(array_column($stateMeta, 'total'));
   </div><!-- /wrap -->
 </div><!-- /content -->
 </div><!-- /layout -->
+
+<script>
+// Normalize a name for fuzzy matching against the CRM map.
+function normName(n) {
+    return (n || '').toLowerCase()
+        .replace(/[^a-z ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Try to find production data for a roster agent name in the CRM map.
+// Tries: exact, strip middle initials, first+last only.
+function lookupProd(name, map) {
+    const n = normName(name);
+    if (map[n]) return map[n];
+    // Strip single-letter middle parts (e.g. "darren s woodard" → "darren woodard")
+    const parts = n.split(' ').filter(p => p.length > 1);
+    if (parts.length > 1) {
+        const noMid = parts.join(' ');
+        if (map[noMid]) return map[noMid];
+    }
+    // First word + last word only
+    const words = n.split(' ').filter(p => p.length > 0);
+    if (words.length > 2) {
+        const firstLast = words[0] + ' ' + words[words.length - 1];
+        if (map[firstLast]) return map[firstLast];
+    }
+    return null;
+}
+
+function fmtVol(v) {
+    if (!v || v < 1000) return '—';
+    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
+    return '$' + Math.round(v).toLocaleString();
+}
+
+fetch('api/backoffice_production.php', {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(d => {
+        const loading = document.getElementById('prod-loading');
+        if (loading) loading.style.display = 'none';
+
+        if (!d.ok) return;
+
+        // Summary tiles
+        if (d.total_volume > 0) {
+            document.getElementById('prod-vol-num').textContent   = fmtVol(d.total_volume);
+            document.getElementById('prod-vol-tile').style.display = '';
+        }
+        if (d.total_deals > 0) {
+            document.getElementById('prod-deals-num').textContent   = d.total_deals.toLocaleString();
+            document.getElementById('prod-deals-tile').style.display = '';
+        }
+
+        // Per-agent rows in the detail panel
+        const map = d.agents || {};
+        document.querySelectorAll('tr[data-agent]').forEach(row => {
+            const name  = row.dataset.agent;
+            const prod  = lookupProd(name, map);
+            const volTd = row.querySelector('.prod-cell-vol');
+            const dlTd  = row.querySelector('.prod-cell-deals');
+            if (!volTd || !dlTd) return;
+            if (prod && (prod.volume > 0 || prod.deals > 0)) {
+                volTd.innerHTML  = '<span class="prod-vol">'   + fmtVol(prod.volume) + '</span>';
+                dlTd.innerHTML   = '<span class="prod-deals">' + (prod.deals || 0)   + '</span>';
+            } else {
+                volTd.innerHTML  = '<span class="prod-none">—</span>';
+                dlTd.innerHTML   = '<span class="prod-none">—</span>';
+            }
+        });
+    })
+    .catch(() => {
+        const loading = document.getElementById('prod-loading');
+        if (loading) loading.style.display = 'none';
+    });
+</script>
 </body>
 </html>
