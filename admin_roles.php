@@ -128,6 +128,8 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .btn-cancel{padding:8px 14px;border:1px solid #ccc;background:white;color:#555;font-size:13px;border-radius:4px;cursor:pointer;margin-left:6px}
     .btn-remove{padding:5px 10px;border:1px solid #ddd;background:white;color:#c00;font-size:12px;border-radius:4px;cursor:pointer}
     .btn-edit{padding:5px 10px;border:1px solid #ddd;background:white;color:#333;font-size:12px;border-radius:4px;cursor:pointer}
+    .btn-loginas{padding:5px 10px;border:1px solid #82C112;background:white;color:#5b8e0d;font-size:12px;font-weight:700;border-radius:4px;cursor:pointer}
+    .btn-loginas:hover{background:#f9fdf5}
     .mc-section{display:none}.mc-section.visible{display:block}
     .flash-ok{padding:10px 14px;background:#eef5e8;border:1px solid #c3dfa8;border-radius:6px;color:#3a6b1a;font-size:13px;margin-bottom:16px}
     .flash-err{padding:10px 14px;background:#fff0f0;border:1px solid #f5c6c6;border-radius:6px;color:#c00;font-size:13px;margin-bottom:16px}
@@ -243,6 +245,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
                 <?php endif; ?>
               </td>
               <td style="text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end">
+                <button class="btn-loginas" onclick="loginAs('<?= h(addslashes($lcemail)) ?>')">Login as</button>
                 <button class="btn-edit" onclick="openEdit('<?= h($rowId) ?>', this)">Edit</button>
                 <form method="post" action="admin_roles.php" style="margin:0" onsubmit="return confirm('Remove role for <?= h(addslashes($info['name'] ?? $lcemail)) ?>?')">
                   <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
@@ -354,6 +357,21 @@ function toggleMc(select, sectionId) {
 }
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function loginAs(email) {
+  if (!confirm('Log in as ' + email + '?\n\nYou will see AgentEdge as this agent. Click "Back to Admin" in the yellow bar to return.')) return;
+  fetch('api/masquerade.php', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'start', email: email }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) { location.href = d.redirect || 'index.php'; }
+      else { alert('Error: ' + (d.error || 'unknown')); }
+    })
+    .catch(() => alert('Network error — please try again.'));
+}
 
 document.addEventListener('click', e => {
   const res = document.getElementById('search-results');

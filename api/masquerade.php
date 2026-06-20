@@ -19,7 +19,7 @@ $action = $in['action'] ?? 'start';
 
 if ($action === 'stop') {
     stop_masquerade();
-    echo json_encode(['ok' => true, 'redirect' => 'roster.php']);
+    echo json_encode(['ok' => true, 'redirect' => 'admin_roles.php']);
     exit;
 }
 
@@ -38,7 +38,6 @@ if (empty($perms['isSuperAdmin'])) {
 }
 
 $email = trim($in['email'] ?? '');
-$name  = trim($in['name']  ?? $email);
 if (!$email) {
     http_response_code(400); echo json_encode(['error' => 'email required']); exit;
 }
@@ -51,6 +50,30 @@ if (strtolower($email) === strtolower($me['email'] ?? '')) {
     http_response_code(400); echo json_encode(['error' => 'Cannot masquerade as yourself.']); exit;
 }
 
-$target = ['id' => 0, 'email' => $email, 'name' => $name ?: $email, 'photo' => null];
+// Look up the agent via bridge to get real staffid
+$c      = cfg();
+$bridge = $c['auth_bridge_url'] ?? '';
+$btoken = $c['auth_bridge_token'] ?? '';
+$target = ['id' => 0, 'email' => $email, 'name' => $email, 'photo' => null];
+if ($bridge && $btoken) {
+    $opts = ['http' => [
+        'method'        => 'POST',
+        'timeout'       => 10,
+        'header'        => "Content-Type: application/json\r\nAccept: application/json\r\n",
+        'content'       => json_encode(['token' => $btoken, 'action' => 'agent_lookup', 'email' => $email]),
+        'ignore_errors' => true,
+    ]];
+    $raw = @file_get_contents($bridge, false, stream_context_create($opts));
+    $d   = $raw ? json_decode($raw, true) : null;
+    if (is_array($d) && !empty($d['ok'])) {
+        $target = [
+            'id'    => (int)($d['staffid'] ?? 0),
+            'email' => $d['email'] ?? $email,
+            'name'  => $d['name'] ?? $email,
+            'photo' => $d['photo'] ?? null,
+        ];
+    }
+}
+
 start_masquerade($target);
 echo json_encode(['ok' => true, 'redirect' => 'index.php']);
