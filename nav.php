@@ -34,6 +34,7 @@ function nav_items(): array {
         'onboarding' => ['key' => 'onboarding', 'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
         'calendar'   => ['key' => 'calendar',   'label' => 'Company Calendar', 'href' => 'calendar.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
+        'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);

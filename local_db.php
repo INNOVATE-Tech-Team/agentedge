@@ -35,7 +35,7 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70]] as $r) {
             $ins->execute($r);
         }
     }
@@ -150,6 +150,32 @@ function local_db(): PDO {
         license_renewal  TEXT NOT NULL DEFAULT '',   -- MM-DD (annual renewal reminder)
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     )");
+
+    // HUD & Check document submissions
+    $pdo->exec("CREATE TABLE IF NOT EXISTS hud_submissions (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email      TEXT    NOT NULL,
+        agent_name       TEXT    NOT NULL,
+        loop_id          TEXT    NOT NULL,
+        loop_name        TEXT    NOT NULL,
+        hud_original     TEXT,
+        check_original   TEXT,
+        hud_stored       TEXT,
+        check_stored     TEXT,
+        dl_hud_doc_id    TEXT,
+        dl_check_doc_id  TEXT,
+        dl_folder_id     TEXT,
+        dotloop_ok       INTEGER NOT NULL DEFAULT 0,
+        email_sent       INTEGER NOT NULL DEFAULT 0,
+        notes            TEXT,
+        submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Ensure upload directory exists and is protected
+    $uploadDir = __DIR__ . '/data/hud_uploads';
+    if (!is_dir($uploadDir)) @mkdir($uploadDir, 0750, true);
+    $htaccess = $uploadDir . '/.htaccess';
+    if (!file_exists($htaccess)) @file_put_contents($htaccess, "Deny from all\n");
 
     // Agents imported via CSV upload (not yet in CRM).
     $pdo->exec("CREATE TABLE IF NOT EXISTS imported_agents (
