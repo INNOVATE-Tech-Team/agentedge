@@ -12,6 +12,17 @@ $agent = require_login();
   <title>AgentEdge</title>
   <link rel="stylesheet" href="assets/app.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .ann-panel{margin-bottom:20px}
+    .ann-panel h2{margin:0 0 10px;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
+    .ann-panel h2 a{font-size:11px;font-weight:700;color:#5b8e0d;text-decoration:none;margin-left:auto}
+    .ann-panel h2 a:hover{text-decoration:underline}
+    .ann-item{padding:10px 14px;border-left:3px solid #82C112;background:#f9fdf5;border-radius:0 6px 6px 0;margin-bottom:8px}
+    .ann-item.pinned{border-color:#f59e0b;background:#fffbeb}
+    .ann-item-title{font-size:13px;font-weight:700;color:#111;margin-bottom:2px}
+    .ann-item-body{font-size:12px;color:#555;white-space:pre-wrap;max-height:48px;overflow:hidden}
+    .ann-item-meta{font-size:10px;color:#aaa;margin-top:4px}
+  </style>
 </head>
 <body>
   <div class="layout">
@@ -33,6 +44,11 @@ $agent = require_login();
           <div class="tile tile-amber"><div class="tile-val" id="t-residual">—</div><div class="tile-lbl">Residual Income</div></div>
           <div class="tile tile-red"><div class="tile-val" id="t-recruits">—</div><div class="tile-lbl">Recruits</div></div>
         </section>
+
+        <div id="ann-panel" class="card ann-panel" style="display:none">
+          <h2>Announcements <a href="backoffice_announcements.php" id="ann-manage-link" style="display:none">Manage →</a></h2>
+          <div id="ann-list"></div>
+        </div>
 
         <div class="grid2">
           <section class="card">
@@ -67,5 +83,27 @@ $agent = require_login();
   </div>
 
   <script src="assets/app.js"></script>
+  <script>
+  (function(){
+    fetch('api/announcements.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+      const items=d.items||[];
+      if(!items.length)return;
+      const panel=document.getElementById('ann-panel');
+      const list=document.getElementById('ann-list');
+      panel.style.display='';
+      list.innerHTML=items.slice(0,5).map(a=>`
+        <div class="ann-item${a.pinned?' pinned':''}">
+          <div class="ann-item-title">${a.title.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}</div>
+          <div class="ann-item-body">${a.body.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}</div>
+          <div class="ann-item-meta">${new Date(a.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
+        </div>`).join('');
+    }).catch(()=>{});
+    // Show manage link for admins — we check via the whoami endpoint if available, but simplest: always show if the user sees admin nav
+    // We use PHP to inject the isAdmin flag
+    <?php if (is_admin()): ?>
+    document.getElementById('ann-manage-link').style.display='';
+    <?php endif; ?>
+  })();
+  </script>
 </body>
 </html>

@@ -35,7 +35,7 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['tickets',90]] as $r) {
             $ins->execute($r);
         }
     }
@@ -198,7 +198,113 @@ function local_db(): PDO {
         enabled  INTEGER NOT NULL DEFAULT 1
     )");
 
-    // Per-state automation status for the State Rosters page.
+    // ── Announcements ─────────────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS announcements (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        title      TEXT    NOT NULL,
+        body       TEXT    NOT NULL,
+        author     TEXT    NOT NULL,
+        audience   TEXT    NOT NULL DEFAULT 'all',  -- all | admin
+        pinned     INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT
+    )");
+
+    // ── Document Library ──────────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_id  INTEGER,
+        name       TEXT    NOT NULL,
+        visibility TEXT    NOT NULL DEFAULT 'all',  -- all | admin
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS doc_files (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_id   INTEGER,
+        name        TEXT    NOT NULL,
+        orig_name   TEXT    NOT NULL,
+        mime_type   TEXT,
+        size_bytes  INTEGER,
+        storage_key TEXT    NOT NULL,
+        uploaded_by TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $docsDir = __DIR__ . '/data/docs';
+    if (!is_dir($docsDir)) @mkdir($docsDir, 0750, true);
+    $docsHt = $docsDir . '/.htaccess';
+    if (!file_exists($docsHt)) @file_put_contents($docsHt, "Deny from all\n");
+
+    // ── Support Tickets ───────────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_departments (
+        slug TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+    )");
+    $seedDepts = [['tech','Tech Support'],['onboarding','Onboarding'],['finance','Finance'],['general','General']];
+    $di = $pdo->prepare("INSERT OR IGNORE INTO support_departments (slug,name) VALUES (?,?)");
+    foreach ($seedDepts as $d) $di->execute($d);
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_tickets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        title       TEXT    NOT NULL,
+        body        TEXT    NOT NULL,
+        status      TEXT    NOT NULL DEFAULT 'open',  -- open | in_progress | closed
+        dept_slug   TEXT,
+        agent_email TEXT    NOT NULL,
+        agent_name  TEXT    NOT NULL DEFAULT '',
+        assigned_to TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tkt_agent ON support_tickets(agent_email)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tkt_status ON support_tickets(status)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_messages (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id INTEGER NOT NULL,
+        author    TEXT    NOT NULL,
+        is_staff  INTEGER NOT NULL DEFAULT 0,
+        body      TEXT    NOT NULL,
+        created_at TEXT   NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktmsg_tid ON support_ticket_messages(ticket_id)");
+
+    // ── Workflow Boards (Kanban) ───────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wf_boards (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        description TEXT,
+        created_by  TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wf_stages (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        board_id INTEGER NOT NULL,
+        name     TEXT    NOT NULL,
+        sort_ord INTEGER NOT NULL DEFAULT 0,
+        color    TEXT    NOT NULL DEFAULT '#e0e0e0'
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wfstage_bid ON wf_stages(board_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wf_items (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        stage_id    INTEGER NOT NULL,
+        board_id    INTEGER NOT NULL,
+        title       TEXT    NOT NULL,
+        description TEXT,
+        assigned_to TEXT,
+        due_date    TEXT,
+        sort_ord    INTEGER NOT NULL DEFAULT 0,
+        created_by  TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wfitem_sid ON wf_items(stage_id)");
+
+    // ── Per-state automation status for the State Rosters page.
     $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
         state_code TEXT PRIMARY KEY,
         status     TEXT NOT NULL DEFAULT 'pending',
@@ -210,6 +316,21 @@ function local_db(): PDO {
     $seedSt = $pdo->prepare("INSERT OR IGNORE INTO state_roster_status (state_code) VALUES (?)");
     foreach (['FL','VA','DE','RI','NH','OH','NC','GA','PA','SC','MD','TN','NJ','MA'] as $sc) {
         $seedSt->execute([$sc]);
+    }
+
+    // INNOVATE agent roster — organized by state + market center, with license expiry where known.
+    // agent_name, state_code, market_center, license_exp (YYYY-MM-DD or empty)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS innovate_roster (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_name    TEXT    NOT NULL,
+        state_code    TEXT    NOT NULL,
+        market_center TEXT    NOT NULL DEFAULT '',
+        license_exp   TEXT    NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_roster_state ON innovate_roster(state_code)");
+    if ($pdo->query("SELECT COUNT(*) FROM innovate_roster")->fetchColumn() == 0) {
+        $ri = $pdo->prepare("INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp) VALUES (?,?,?,?)");
+        foreach (_innovate_roster_seed() as $r) $ri->execute($r);
     }
 
     // Seed nav_ext_links from defaults
@@ -279,4 +400,421 @@ function mc_resource_links_for(string $slug): array {
     );
     $s->execute([$slug]);
     return $s->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Static seed data for the innovate_roster table.
+// Returns array of [agent_name, state_code, market_center, license_exp].
+// license_exp is YYYY-MM-DD for SC agents where known, '' otherwise.
+function _innovate_roster_seed(): array {
+    return [
+        // TN — Knoxville
+        ['Josh Anderson',        'TN','Knoxville',''],
+        ['Paulinus Onwo',        'TN','Knoxville',''],
+        ['Faleria De Robertis',  'TN','Knoxville',''],
+        ['Crystal Griffith',     'TN','Knoxville',''],
+        ['Andrew Heath',         'TN','Knoxville',''],
+        ['Robert McLeay',        'TN','Knoxville',''],
+        ['Duyet Bui',            'TN','Knoxville',''],
+        ['Maggie Scott',         'TN','Knoxville',''],
+        ['Will Tomb',            'TN','Knoxville',''],
+        ['Brenda Brewster',      'TN','Knoxville',''],
+        // TN — Nashville
+        ['Monique Westbrooks',   'TN','Nashville',''],
+        ['Janis Rittersbeek',    'TN','Nashville',''],
+        // OH
+        ['Joe Tupta',            'OH','',''],
+        // VA
+        ['Amy Adams',            'VA','',''],
+        ['Jason Adams',          'VA','',''],
+        ['Kelly Blumenthal',     'VA','',''],
+        ['Kenneth Hamblin',      'VA','',''],
+        ['Jessica Urdiano',      'VA','',''],
+        ['Tabatha Urf',          'VA','',''],
+        ['Greg Williams',        'VA','',''],
+        ['Kathleen Wood',        'VA','',''],
+        // RI
+        ['Manny Menezes',        'RI','',''],
+        ['Scott Egersheim',      'RI','',''],
+        ['John Pachecho',        'RI','',''],
+        ['Filomena Silva',       'RI','',''],
+        // FL
+        ['Brie Bender',          'FL','',''],
+        ['Joan Covell-Tocci',    'FL','',''],
+        ['Danielle Dustman',     'FL','',''],
+        ['George Dustman',       'FL','',''],
+        ['Gina Ewan',            'FL','',''],
+        ['Nick Huffman',         'FL','',''],
+        ['Gina Lollo',           'FL','',''],
+        ['Joanna Lupa',          'FL','',''],
+        ['Trina Maguire',        'FL','',''],
+        ['Heather Panek',        'FL','',''],
+        ['Dana Pangelinan',      'FL','',''],
+        ['Lynne-Ann Rose',       'FL','',''],
+        ['Susan Schleicher',     'FL','',''],
+        ['Heidi Smithers',       'FL','',''],
+        ['Alysia Stern',         'FL','',''],
+        ['Lindsey Van Deilen',   'FL','',''],
+        ['Jennifer Rose Young',  'FL','',''],
+        // NC
+        ['Carrie Nicholson Kinney', 'NC','NC',''],
+        ['Antonia Alini',           'NC','NC',''],
+        ['Tonya Mills Allen',       'NC','NC',''],
+        ['Caitlyn Seastrunk Bair',  'NC','NC',''],
+        ['James Dustin Batten',     'NC','NC',''],
+        ['Brittany Amille Booker',  'NC','NC',''],
+        ['Daniel Hawkins Brown',    'NC','NC',''],
+        ['Jonathan Blake Butler',   'NC','NC',''],
+        ['Shawn Paul Carter',       'NC','NC',''],
+        ['Robin Haddock Chestnutt', 'NC','NC',''],
+        ['Diane Cleland',           'NC','NC',''],
+        ['Sheri Anita Cole Smith',  'NC','NC',''],
+        ['April Campbell Coutsos',  'NC','NC',''],
+        ['Christine Cox',           'NC','NC',''],
+        ['Nicole Marie Cummings',   'NC','NC',''],
+        ['Juliann Beth Deforrest',  'NC','NC',''],
+        ['Jaclyn Suzanne Edwards',  'NC','NC',''],
+        ['Gina Marie Ewan',         'NC','NC',''],
+        ['Kristie Sue Gaither',     'NC','NC',''],
+        ['Gerard Raymond Gilbert',  'NC','NC',''],
+        ['Rosemarie Lisa Heldmann', 'NC','NC',''],
+        ['Ronald Mark Hyman',       'NC','NC',''],
+        ["D'Ambrah Patricia Rose King",'NC','NC',''],
+        ['Elizabeth Lewis Kozar',   'NC','NC',''],
+        ['Stephanie Graham Lilly',  'NC','NC',''],
+        ['Patricia Nicole Manning', 'NC','NC',''],
+        ['Kathleen Ann Margeson',   'NC','NC',''],
+        ['Kristina McGeathy',       'NC','NC',''],
+        ['John Mills',              'NC','NC',''],
+        ['Cathy Nourse',            'NC','NC',''],
+        ["Richard Thomas O'Donnell Jr.", 'NC','NC',''],
+        ['Kayla Beth Parrinello',   'NC','NC',''],
+        ['Nick Ruppe',              'NC','NC',''],
+        ['Sarah Seastrunk',         'NC','NC',''],
+        ['Terry Sechrist',          'NC','NC',''],
+        ['Inna Semenova Arbolino',  'NC','NC',''],
+        ['Eric Allen Shenberger',   'NC','NC',''],
+        ['Lisa Felica Smith',       'NC','NC',''],
+        ['Justin Tomas Thompson',   'NC','NC',''],
+        ['Jason James Whedon',      'NC','NC',''],
+        // DE
+        ['Monica Peterson',      'DE','',''],
+        ['Quinton Gaines',       'DE','',''],
+        ['Vernell Wynn',         'DE','',''],
+        ['Carolyn Parrish',      'DE','',''],
+        ['Sean Brooks',          'DE','',''],
+        ['Evie Ross',            'DE','',''],
+        ['Tiffany Fuller',       'DE','',''],
+        ['Evette Cabreja',       'DE','',''],
+        // MD
+        ['James Davis',          'MD','',''],
+        // PA — Bucks County
+        ['Melanie Henderson',    'PA','Bucks County',''],
+        ['Lauren Adam',          'PA','Bucks County',''],
+        ['Diane Cleland',        'PA','Bucks County',''],
+        ['Ed Valentine',         'PA','Bucks County',''],
+        ['Donna Frei',           'PA','Bucks County',''],
+        ['Kevin Daly',           'PA','Bucks County',''],
+        ['Dan Smith',            'PA','Bucks County',''],
+        ['Sandy Horan',          'PA','Bucks County',''],
+        ['Chris Hennessy',       'PA','Bucks County',''],
+        ['Kimbery Picciotti',    'PA','Bucks County',''],
+        ['Chris Cleland',        'PA','Bucks County',''],
+        ['Tracey Hill',          'PA','Bucks County',''],
+        ['William Kelly',        'PA','Bucks County',''],
+        ['Edward Brun',          'PA','Bucks County',''],
+        ['Lindsay Martin',       'PA','Bucks County',''],
+        ['Amy Eves Walder',      'PA','Bucks County',''],
+        ['Cheryl Smith',         'PA','Bucks County',''],
+        ['Kandece Henning',      'PA','Bucks County',''],
+        ['William Lowe',         'PA','Bucks County',''],
+        ['Jared Moyer',          'PA','Bucks County',''],
+        ['Heather Buckley',      'PA','Bucks County',''],
+        ['Jessica Kooker',       'PA','Bucks County',''],
+        ['Jason Musselman',      'PA','Bucks County',''],
+        ['Amanda Moeser',        'PA','Bucks County',''],
+        ['Earl Caffrey',         'PA','Bucks County',''],
+        ['Renee Rhine',          'PA','Bucks County',''],
+        ['Theres Wydan',         'PA','Bucks County',''],
+        ['Darren Taylor',        'PA','Bucks County',''],
+        ['Kevin Illg',           'PA','Bucks County',''],
+        ['John Walder',          'PA','Bucks County',''],
+        ['Carolyn Powers',       'PA','Bucks County',''],
+        ['Christi Myers',        'PA','Bucks County',''],
+        ['Alicia Rodgers',       'PA','Bucks County',''],
+        ['Brandon Hill',         'PA','Bucks County',''],
+        ['Jeff Powers',          'PA','Bucks County',''],
+        ['Elizabeth Wydan Capece','PA','Bucks County',''],
+        ['Jaselyn Ramos',        'PA','Bucks County',''],
+        ['Nicole Mikula',        'PA','Bucks County',''],
+        ['Jordan Wehr Faikish',  'PA','Bucks County',''],
+        ['Linda McGlinn',        'PA','Bucks County',''],
+        ['Patricia Murphy',      'PA','Bucks County',''],
+        ['Joshua Forker',        'PA','Bucks County',''],
+        ['Robert Moesser',       'PA','Bucks County',''],
+        ['Randall Cuthbert',     'PA','Bucks County',''],
+        ['Donald Hunter',        'PA','Bucks County',''],
+        ['Ronald Monroe',        'PA','Bucks County',''],
+        ['Susan Testani',        'PA','Bucks County',''],
+        ['Mandee Hammerstein',   'PA','Bucks County',''],
+        ['Shawn Gentile',        'PA','Bucks County',''],
+        ['Elisha Cook',          'PA','Bucks County',''],
+        ['Malisha Leach',        'PA','Bucks County',''],
+        ['Brent Moser',          'PA','Bucks County',''],
+        ['Reece Souder',         'PA','Bucks County',''],
+        // PA — Multi-State (also licensed in DE)
+        ['Monica Peterson',      'PA','Multi-State',''],
+        ['Tiffany Fuller',       'PA','Multi-State',''],
+        ['Vernell Wynn',         'PA','Multi-State',''],
+        // NJ
+        ['Amy Eves Walder',      'NJ','',''],
+        ['Rosemarie Heldmann',   'NJ','',''],
+        ['Brandon Hill',         'NJ','',''],
+        ['Nicole Larue',         'NJ','',''],
+        ['Kim Loizzi',           'NJ','',''],
+        ['Nick Loizzi',          'NJ','',''],
+        ['Monica Peterson',      'NJ','',''],
+        ['Susan Testani',        'NJ','',''],
+        // SC — Myrtle Beach (Professional Drive)
+        ['Sean Matthew Brooks',          'SC','Myrtle Beach','2025-06-30'],
+        ['Gracelyn Fay Alexander',       'SC','Myrtle Beach','2027-06-30'],
+        ['Katherine Staples Arrigo',     'SC','Myrtle Beach','2027-06-30'],
+        ['Fernanda Silva Azevedo',       'SC','Myrtle Beach','2028-06-30'],
+        ['Carolyn Jean Barnes',          'SC','Myrtle Beach','2026-06-30'],
+        ['David I Barr',                 'SC','Myrtle Beach','2026-06-30'],
+        ['Daniel C Baxley',              'SC','Myrtle Beach','2025-06-30'],
+        ['Stacy Lynn Belue',             'SC','Myrtle Beach','2026-06-30'],
+        ['Melissa A Bills',              'SC','Myrtle Beach','2026-06-30'],
+        ['Sandra K Bishop',              'SC','Myrtle Beach','2027-06-30'],
+        ['James Bodner',                 'SC','Myrtle Beach','2026-06-30'],
+        ['Chasitie Lynne Borders',       'SC','Myrtle Beach','2026-06-30'],
+        ['Edward P Boyd',                'SC','Myrtle Beach','2025-06-30'],
+        ['Gregory Ryan Brastow',         'SC','Myrtle Beach','2026-06-30'],
+        ['Lisa Marie Brinkley',          'SC','Myrtle Beach','2025-06-30'],
+        ['Andrew Jacob Brock',           'SC','Myrtle Beach','2026-06-30'],
+        ['Kate Brooks',                  'SC','Myrtle Beach',''],
+        ['Ethan Rasheem Brown',          'SC','Myrtle Beach','2026-06-30'],
+        ['Dorri C Brown',                'SC','Myrtle Beach','2027-06-30'],
+        ['Margaret J Burris',            'SC','Myrtle Beach','2025-06-30'],
+        ['Brandon M Bushaw',             'SC','Myrtle Beach','2025-06-30'],
+        ['Peter Justin Candela',         'SC','Myrtle Beach','2026-06-30'],
+        ['Michael Carpenter',            'SC','Myrtle Beach','2027-06-30'],
+        ['Deanna Marie Casanova',        'SC','Myrtle Beach','2026-06-30'],
+        ['Maria L Caspento',             'SC','Myrtle Beach','2025-06-30'],
+        ['Jeffrey J Casterline',         'SC','Myrtle Beach','2027-06-30'],
+        ['Caryn Marie Casterline',       'SC','Myrtle Beach','2026-06-30'],
+        ['Sean M Collins',               'SC','Myrtle Beach','2025-06-30'],
+        ['Cannon Leigh Collins',         'SC','Myrtle Beach','2026-06-30'],
+        ['Haley Morris Corbett',         'SC','Myrtle Beach','2026-06-30'],
+        ['Serita Patricia Cotton',       'SC','Myrtle Beach','2026-06-30'],
+        ['Jordan Lee Cummins',           'SC','Myrtle Beach','2026-06-30'],
+        ['Marshall Barton Deforrest',    'SC','Myrtle Beach','2026-06-30'],
+        ['Juliann B Deforrest',          'SC','Myrtle Beach','2027-06-30'],
+        ['Larisa Esmat',                 'SC','Myrtle Beach','2026-06-30'],
+        ['Kevin Michael Field',          'SC','Myrtle Beach','2028-06-30'],
+        ['Bret A French',                'SC','Myrtle Beach','2025-06-30'],
+        ['James Scott Furr',             'SC','Myrtle Beach','2026-06-30'],
+        ['Courtney Graham',              'SC','Myrtle Beach','2027-06-30'],
+        ['Eric S Graham',                'SC','Myrtle Beach','2027-06-30'],
+        ['Joseph Michael Guerriero',     'SC','Myrtle Beach','2028-06-30'],
+        ['Yvonne Lynn Guthrie',          'SC','Myrtle Beach','2025-06-30'],
+        ['Laura A Harrison',             'SC','Myrtle Beach','2026-06-30'],
+        ['Kenneth E Haselden',           'SC','Myrtle Beach','2026-06-30'],
+        ['Jordyn Delaney Heche',         'SC','Myrtle Beach','2025-06-30'],
+        ['Shawn L Hixenbaugh',           'SC','Myrtle Beach','2025-06-30'],
+        ['Tammy Hoey',                   'SC','Myrtle Beach','2027-06-30'],
+        ['Nicole Michelle Hughes',       'SC','Myrtle Beach','2025-06-30'],
+        ['Ronald M Hyman',               'SC','Myrtle Beach','2026-06-30'],
+        ['Jade Iglesias',                'SC','Myrtle Beach','2025-06-30'],
+        ['Virginia Mackenzie Jesselson', 'SC','Myrtle Beach','2025-06-30'],
+        ['Anita Jo Jones',               'SC','Myrtle Beach','2027-06-30'],
+        ['Colleen L Kane',               'SC','Myrtle Beach','2026-06-30'],
+        ['Jessica R Keefer',             'SC','Myrtle Beach','2026-06-30'],
+        ["D'Ambrah Patricia Rose King",  'SC','Myrtle Beach','2025-06-30'],
+        ['Krista Naomi Knight',          'SC','Myrtle Beach','2026-06-30'],
+        ['Derek A Kouche',               'SC','Myrtle Beach','2025-06-30'],
+        ['Brenda Lynn Kozak',            'SC','Myrtle Beach','2026-06-30'],
+        ['Kristin La Bar',               'SC','Myrtle Beach','2026-06-30'],
+        ['Rebecca A Lewis',              'SC','Myrtle Beach','2026-06-30'],
+        ['Mark J Loomis',                'SC','Myrtle Beach','2026-06-30'],
+        ['Jeffrey T Love',               'SC','Myrtle Beach','2025-06-30'],
+        ['Sabrina Susanne Lynch',        'SC','Myrtle Beach','2026-06-30'],
+        ['Lisa Maureen Mantone',         'SC','Myrtle Beach','2027-06-30'],
+        ['Tammy Ann Marasia',            'SC','Myrtle Beach','2026-06-30'],
+        ['Tyler Marchese',               'SC','Myrtle Beach','2027-06-30'],
+        ['Noelle Mason',                 'SC','Myrtle Beach',''],
+        ['Faith Mattei',                 'SC','Myrtle Beach','2025-06-30'],
+        ['Kevin Matthews',               'SC','Myrtle Beach','2027-06-30'],
+        ['Christopher W McZeke',         'SC','Myrtle Beach','2026-06-30'],
+        ['Sarah Brittany Miller',        'SC','Myrtle Beach','2026-06-30'],
+        ['Chris Robert Nadelman',        'SC','Myrtle Beach','2025-06-30'],
+        ['Teresa Marie Nealey',          'SC','Myrtle Beach','2027-06-30'],
+        ['Thubelihle Nkomazana',         'SC','Myrtle Beach','2026-06-30'],
+        ['April M Oakley',               'SC','Myrtle Beach','2026-06-30'],
+        ['Bruna Simas Pabon',            'SC','Myrtle Beach','2026-06-30'],
+        ['Ricky Francis Pabon',          'SC','Myrtle Beach','2026-06-30'],
+        ['Venice Samantha Parker',       'SC','Myrtle Beach','2026-06-30'],
+        ['Jamie Edwin Pate',             'SC','Myrtle Beach','2027-06-30'],
+        ['Komal R Patel',                'SC','Myrtle Beach','2028-06-30'],
+        ['Renee Popovic',                'SC','Myrtle Beach','2027-06-30'],
+        ['Rene Rhine',                   'SC','Myrtle Beach','2027-06-30'],
+        ['Jennifer Michelle Rossini',    'SC','Myrtle Beach','2026-06-30'],
+        ['Amber Rae Roy',                'SC','Myrtle Beach','2025-06-30'],
+        ['Karla Jean Rupp',              'SC','Myrtle Beach','2025-06-30'],
+        ['Inna Semenova Arbolino',       'SC','Myrtle Beach','2026-06-30'],
+        ['Eric Allen Shenberger',        'SC','Myrtle Beach','2027-06-30'],
+        ['Christian Todd Sichitano',     'SC','Myrtle Beach','2026-06-30'],
+        ['Payton Anna Smith',            'SC','Myrtle Beach','2026-06-30'],
+        ['Diana Joy Smith',              'SC','Myrtle Beach','2028-06-30'],
+        ['Lee Anthony Spryzenski',       'SC','Myrtle Beach','2028-06-30'],
+        ['Joshua Stevens',               'SC','Myrtle Beach','2027-06-30'],
+        ['Christopher Michael Stoll',    'SC','Myrtle Beach','2026-06-30'],
+        ['Jennifer Jeanne Swisher',      'SC','Myrtle Beach','2027-06-30'],
+        ['Kimberly Sue Tatro',           'SC','Myrtle Beach','2026-06-30'],
+        ['Robert Paul Tichy',            'SC','Myrtle Beach','2026-06-30'],
+        ['Cliff Scarborough Todd',       'SC','Myrtle Beach','2027-06-30'],
+        ['Jillian A Tomkovich',          'SC','Myrtle Beach','2025-06-30'],
+        ['Gavin Chaplinski Vallonga',    'SC','Myrtle Beach','2025-06-30'],
+        ['Adriana Mendonca Vidal',       'SC','Myrtle Beach','2026-06-30'],
+        ['Carol M Watters',              'SC','Myrtle Beach','2026-06-30'],
+        ['Kathryn Werner',               'SC','Myrtle Beach',''],
+        ['Jason James Whedon',           'SC','Myrtle Beach','2026-06-30'],
+        ['Selena Antoinette Witherspoon','SC','Myrtle Beach','2026-06-30'],
+        ['Barry Alan Woessner',          'SC','Myrtle Beach','2025-06-30'],
+        ['Jimmy Sennon Wojtko',          'SC','Myrtle Beach','2027-06-30'],
+        ['Addie Elizabeth Woodbury',     'SC','Myrtle Beach','2027-06-30'],
+        ['Lisa J Yazici',                'SC','Myrtle Beach','2026-06-30'],
+        ['Rositsa Yordanova',            'SC','Myrtle Beach','2028-06-30'],
+        // SC — Conway
+        ['Gerry Gilbert',                'SC','Conway',''],
+        ['Ronald Lee Booth',             'SC','Conway','2027-06-30'],
+        ['Sheri Anita Cole Smith',       'SC','Conway','2027-06-30'],
+        ['Amanda Lynne Gunter',          'SC','Conway','2027-06-30'],
+        ['Veronica Smyth',               'SC','Conway','2028-06-30'],
+        ['Melissa Vella',                'SC','Conway','2027-06-30'],
+        // SC — Hilton Head
+        ['Brie Bender',                  'SC','Hilton Head',''],
+        ['Michael Fries',                'SC','Hilton Head',''],
+        // SC — Greenville
+        ['Kimberly A Guillory',          'SC','Greenville','2027-06-30'],
+        ['Maryhelen Medina-Tolbert',     'SC','Greenville','2027-06-30'],
+        ['Jessica Spikes',               'SC','Greenville','2027-06-30'],
+        // SC — Multi-Office
+        ['Todd Allen',                   'SC','Multi-Office','2026-06-30'],
+        ['Madison Phillips Baldwin',     'SC','Multi-Office','2027-06-30'],
+        ['Brittany A Booker',            'SC','Multi-Office','2025-06-30'],
+        ['Daniel Hawkins Brown',         'SC','Multi-Office','2025-06-30'],
+        ['Alison Mary Dagostino',        'SC','Multi-Office','2026-06-30'],
+        ['Matthew Gorham',               'SC','Multi-Office','2027-06-30'],
+        ['Stephen Hart',                 'SC','Multi-Office','2026-06-30'],
+        ['Kerwin Emerson Heath',         'SC','Multi-Office','2026-06-30'],
+        ['Kathryn Kim Loizzi',           'SC','Multi-Office','2026-06-30'],
+        ['Cristino Melendez',            'SC','Multi-Office','2026-06-30'],
+        ['Daniel J Murphy',              'SC','Multi-Office','2026-06-30'],
+        ['Jason Michael Reynolds',       'SC','Multi-Office','2027-06-30'],
+        ['Lisa Smith',                   'SC','Multi-Office','2027-06-30'],
+        ['Franklyn Solorzano',           'SC','Multi-Office','2026-06-30'],
+        ['Shayne Steiner',               'SC','Multi-Office','2026-06-30'],
+        ['Alysia Beth Stern',            'SC','Multi-Office','2026-06-30'],
+        ['Michael Thompson',             'SC','Multi-Office','2027-06-30'],
+        ['William Alexander Tomb',       'SC','Multi-Office','2026-06-30'],
+        ['James Rivalier Van Deventer',  'SC','Multi-Office','2026-06-30'],
+        // SC — Pawleys Island
+        ['Sarah Ethy Ballabani',         'SC','Pawleys Island','2026-06-30'],
+        ['Leslie Hanna Cooper',          'SC','Pawleys Island','2027-06-30'],
+        ['Christopher Brock Cooper',     'SC','Pawleys Island','2026-06-30'],
+        ['Deborah L Donovan Rice',       'SC','Pawleys Island','2026-06-30'],
+        ['Rebecca A Noble',              'SC','Pawleys Island','2025-06-30'],
+        ['Kelly Anne Olivet',            'SC','Pawleys Island','2025-06-30'],
+        ['Olivia Russell',               'SC','Pawleys Island','2025-06-30'],
+        ['Katherine Nicole Sargent',     'SC','Pawleys Island','2027-06-30'],
+        // SC — North Myrtle Beach
+        ['Tonya Mills Allen',            'SC','North Myrtle Beach','2025-06-30'],
+        ['David Walter Avery',           'SC','North Myrtle Beach','2026-06-30'],
+        ['James Dustin Batten',          'SC','North Myrtle Beach','2027-06-30'],
+        ['Linda C Bocchino',             'SC','North Myrtle Beach','2026-06-30'],
+        ['Brian C Bray',                 'SC','North Myrtle Beach','2026-06-30'],
+        ['Jonathan Blake Butler',        'SC','North Myrtle Beach','2026-06-30'],
+        ['Robin H Chestnutt',            'SC','North Myrtle Beach','2027-06-30'],
+        ['Mary Claire Clonts',           'SC','North Myrtle Beach','2025-06-30'],
+        ['April Campbell Coutsos',       'SC','North Myrtle Beach','2025-06-30'],
+        ["Tina Marie D'Amato",           'SC','North Myrtle Beach','2026-06-30'],
+        ['Kathleen L Dulhagen',          'SC','North Myrtle Beach','2025-06-30'],
+        ['Jaclyn S Edwards',             'SC','North Myrtle Beach','2025-06-30'],
+        ['Charlene Dean Ellison',        'SC','North Myrtle Beach','2025-06-30'],
+        ['Jennifer Faircloth',           'SC','North Myrtle Beach','2026-06-30'],
+        ['Steven Graiff',                'SC','North Myrtle Beach','2026-06-30'],
+        ['Adam Scott Lane',              'SC','North Myrtle Beach','2026-06-30'],
+        ['Nicole Byrd Lane',             'SC','North Myrtle Beach','2027-06-30'],
+        ['Virginia Ann Laroche',         'SC','North Myrtle Beach','2026-06-30'],
+        ['Holly J Levasseur',            'SC','North Myrtle Beach','2026-06-30'],
+        ['Stephanie Graham Lilly',       'SC','North Myrtle Beach','2025-06-30'],
+        ['Noah Cooper Livingston',       'SC','North Myrtle Beach','2025-06-30'],
+        ['Darlene M Olivo',              'SC','North Myrtle Beach','2026-06-30'],
+        ['Kayla B Parrinello',           'SC','North Myrtle Beach','2025-06-30'],
+        ['William Jordan Rogers',        'SC','North Myrtle Beach','2026-06-30'],
+        ['Elizabeth A Rogers',           'SC','North Myrtle Beach','2026-06-30'],
+        ['Susan Joan Rossi',             'SC','North Myrtle Beach','2026-06-30'],
+        ['Joseph John Sacks',            'SC','North Myrtle Beach','2028-06-30'],
+        ['Mark Louis Santora',           'SC','North Myrtle Beach','2027-06-30'],
+        ['Michelle Leigh Seales',        'SC','North Myrtle Beach','2025-06-30'],
+        ['Jay Seville',                  'SC','North Myrtle Beach','2027-06-30'],
+        ['Travis A Smith',               'SC','North Myrtle Beach','2026-06-30'],
+        ['Petrina Stanley',              'SC','North Myrtle Beach','2026-06-30'],
+        ['Pamela Thaxton',               'SC','North Myrtle Beach','2026-06-30'],
+        ['Justin T Thompson',            'SC','North Myrtle Beach','2026-06-30'],
+        ['Preston Greer Thompson',       'SC','North Myrtle Beach','2026-06-30'],
+        ['Wendy Wolbert',                'SC','North Myrtle Beach','2025-06-30'],
+        ['Robert Allen Woods',           'SC','North Myrtle Beach','2027-06-30'],
+        // SC — Charleston
+        ['Shelley Cribbs Monahan',       'SC','Charleston','2026-06-30'],
+        ['Debbie Himebaugh',             'SC','Charleston',''],
+        // SC — Hartsville
+        ['Natalie N Bedenbaugh',         'SC','Hartsville','2025-06-30'],
+        ['Sherri S Goode',               'SC','Hartsville','2026-06-30'],
+        ['William Charles Johnson',      'SC','Hartsville',''],
+        ['Margaret Elizabeth Lineberger','SC','Hartsville','2025-06-30'],
+        ['David Thompson',               'SC','Hartsville','2026-06-30'],
+        ['Madison Johnson',              'SC','Hartsville',''],
+        // SC — Murrells Inlet
+        ['Joseph Alini',                 'SC','Murrells Inlet','2027-06-30'],
+        ['Antonia Alini',                'SC','Murrells Inlet','2026-06-30'],
+        ['Andrew Bennett',               'SC','Murrells Inlet','2025-06-30'],
+        ['Christal Lynn Cason',          'SC','Murrells Inlet','2026-06-30'],
+        ['Michael James Chimento',       'SC','Murrells Inlet','2026-06-30'],
+        ['Sonya Louise Cicardi',         'SC','Murrells Inlet','2027-06-30'],
+        ['Diane Cleland',                'SC','Murrells Inlet','2028-06-30'],
+        ['Allison Quinn Cooper',         'SC','Murrells Inlet','2026-06-30'],
+        ['Melanie Stella Corpening',     'SC','Murrells Inlet','2025-06-30'],
+        ['April Marie Demure',           'SC','Murrells Inlet','2028-06-30'],
+        ['Gordon Grout',                 'SC','Murrells Inlet','2025-06-30'],
+        ['Emily Jane Higdon',            'SC','Murrells Inlet','2025-06-30'],
+        ['Michael B Higdon',             'SC','Murrells Inlet','2025-06-30'],
+        ['Robert G Hughart',             'SC','Murrells Inlet','2027-06-30'],
+        ['Rhonda Eileen Hughart',        'SC','Murrells Inlet','2025-06-30'],
+        ['Joseph A Laveglia',            'SC','Murrells Inlet','2026-06-30'],
+        ['Kim Diane Lynch',              'SC','Murrells Inlet','2026-06-30'],
+        ['Derek J Macleod',              'SC','Murrells Inlet','2025-06-30'],
+        ['Courtney Patterson Martin',    'SC','Murrells Inlet','2025-06-30'],
+        ['Paul F Mayer',                 'SC','Murrells Inlet','2026-06-30'],
+        ['David Brian Mercer',           'SC','Murrells Inlet','2026-06-30'],
+        ['Corinne Sue Morin',            'SC','Murrells Inlet','2025-06-30'],
+        ['Stephen T Morrow',             'SC','Murrells Inlet','2026-06-30'],
+        ['Christina Ann Osborne',        'SC','Murrells Inlet','2026-06-30'],
+        ['Thomas V Palermo',             'SC','Murrells Inlet','2025-06-30'],
+        ['Nicole Palermo',               'SC','Murrells Inlet','2025-06-30'],
+        ['Nancy Pratt Patrick',          'SC','Murrells Inlet','2025-06-30'],
+        ['Alison Pavy',                  'SC','Murrells Inlet','2025-06-30'],
+        ['Kathleen Marie Reiersen',      'SC','Murrells Inlet','2026-06-30'],
+        ['Anna Lowery Richardson',       'SC','Murrells Inlet','2026-06-30'],
+        ['Corey Richardson',             'SC','Murrells Inlet',''],
+        ['Gregory Thomas Arcuri Sanders','SC','Murrells Inlet','2026-06-30'],
+        ['Corey Allan Sanders',          'SC','Murrells Inlet','2026-06-30'],
+        ['Deborah H Shine',              'SC','Murrells Inlet','2026-06-30'],
+        ['Patrick J Shine',              'SC','Murrells Inlet','2026-06-30'],
+        ['Cheryl Lynn Smith',            'SC','Murrells Inlet','2027-06-30'],
+        ['Frank Vigna',                  'SC','Murrells Inlet','2027-06-30'],
+        ['Annie Halliday Williams',      'SC','Murrells Inlet','2026-06-30'],
+        ['Darren S Woodard',             'SC','Murrells Inlet','2026-06-30'],
+        ['Kris Fuller',                  'SC','Murrells Inlet',''],
+    ];
 }

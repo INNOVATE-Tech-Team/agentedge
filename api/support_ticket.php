@@ -1,66 +1,38 @@
 <?php
-// Proxy: creates a support ticket in the intranet ticket system on behalf of
-// the signed-in agent. POST body: { title, departmentSlug, body }
+// Create a new support ticket (called by the support modal in global.js).
 require __DIR__ . '/../db.php';
 require __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405); echo json_encode(['error' => 'POST only']); exit;
-}
-
-$agent = current_agent();
-if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
+$me = current_agent();
+if (!$me) { http_response_code(401); echo json_encode(['error'=>'not signed in']); exit; }
 
 $in = json_decode(file_get_contents('php://input'), true) ?: [];
-
-$title    = trim($in['title']          ?? '');
-$bodyText = trim($in['body']           ?? '');
+$title    = trim($in['title'] ?? '');
+$body     = trim($in['body']  ?? '');
 $deptSlug = trim($in['departmentSlug'] ?? '');
+if (!$title || !$body) { http_response_code(400); echo json_encode(['error'=>'title and body required']); exit; }
 
-if (!$title || !$bodyText || !$deptSlug) {
-    http_response_code(400);
-    echo json_encode(['error' => 'title, body, and departmentSlug are required']);
-    exit;
+$db = local_db();
+
+// Validate dept slug
+$dept = null;
+if ($deptSlug) {
+    $ds = $db->prepare("SELECT slug FROM support_departments WHERE slug=?");
+    $ds->execute([$deptSlug]);
+    $dept = $ds->fetchColumn();
 }
 
-$c     = cfg();
-$base  = rtrim($c['intranet_ticket_url'] ?? '', '/');
-$token = $c['intranet_ticket_token'] ?? '';
+$s = $db->prepare(
+    "INSERT INTO support_tickets (title,body,dept_slug,agent_email,agent_name) VALUES (?,?,?,?,?)"
+);
+$s->execute([$title, $body, $dept ?: null, $me['email'], $me['name'] ?? '']);
+$ticketId = $db->lastInsertId();
 
-if (!$base || !$token) {
-    http_response_code(503);
-    echo json_encode(['error' => 'Support tickets are not configured yet.']);
-    exit;
-}
+// First message = the original body
+$m = $db->prepare(
+    "INSERT INTO support_ticket_messages (ticket_id,author,is_staff,body) VALUES (?,?,0,?)"
+);
+$m->execute([$ticketId, $me['email'], $body]);
 
-$payload = json_encode([
-    'title'          => $title,
-    'body'           => $bodyText,
-    'departmentSlug' => $deptSlug,
-    'submitterEmail' => $agent['email'],
-]);
-
-$ctx = stream_context_create(['http' => [
-    'method'        => 'POST',
-    'timeout'       => 12,
-    'header'        => "Authorization: Bearer $token\r\nContent-Type: application/json\r\nAccept: application/json\r\n",
-    'content'       => $payload,
-    'ignore_errors' => true,
-]]);
-$raw  = @file_get_contents("$base/api/tickets/submit", false, $ctx);
-$data = $raw !== false ? json_decode($raw, true) : null;
-
-// Parse HTTP status from response headers
-$status = 200;
-foreach ($http_response_header ?? [] as $h) {
-    if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $status = (int)$m[1];
-}
-
-if ($status >= 400 || !is_array($data) || empty($data['ok'])) {
-    http_response_code(502);
-    echo json_encode(['error' => $data['error'] ?? 'Could not create ticket.']);
-    exit;
-}
-
-echo json_encode(['ok' => true, 'ticketId' => $data['ticketId'] ?? null]);
+echo json_encode(['ok'=>true,'id'=>(int)$ticketId]);

@@ -35,6 +35,8 @@ function nav_items(): array {
         'calendar'   => ['key' => 'calendar',   'label' => 'Company Calendar', 'href' => 'calendar.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
+        'docs'       => ['key' => 'docs',       'label' => 'Resources',           'href' => 'docs.php'],
+        'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',          'href' => 'tickets.php'],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -56,7 +58,12 @@ function nav_items(): array {
 // Items that live under the Back Office collapsible (admin only).
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
+        ['key' => 'bo_announcements', 'label' => 'Announcements',   'href' => 'backoffice_announcements.php'],
+        ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
+        ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
+        ['key' => 'bo_workflows',     'label' => 'Workflows',        'href' => 'backoffice_workflows.php'],
         ['key' => 'backoffice_state_rosters', 'label' => 'State Rosters', 'href' => 'backoffice_state_rosters.php'],
+        ['key' => 'backoffice_roster',        'label' => 'Agent Roster',  'href' => 'backoffice_roster.php'],
     ];
     foreach (backoffice_items_all() as $r) {
         $item = ['key' => 'bo_' . $r['id'], 'label' => $r['label'], 'href' => $r['url']];
