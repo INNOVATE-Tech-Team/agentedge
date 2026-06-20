@@ -1,27 +1,12 @@
 <?php
-// ---------------------------------------------------------------------------
-// AgentEdge  <-  Perfex bridge   (login + dashboard data)
-// ---------------------------------------------------------------------------
-// Deploy ON innovateonline.com (cPanel), in the agentedge.innovateonline.com
-// subdomain folder, reachable at https://agentedge.innovateonline.com/verify.php
-//
-// AgentEdge POSTs JSON {token, ...}:
-//   • {email, password}                       -> verify login, return agent
-//   • {action:"dashboard", staffid}           -> agent's own RE numbers
-//   • {action:"dashboard_by_email", email}    -> admin lookup by email
-// Read-only DB user; never returns the password hash.
-//
-// >>> FILL IN $BRIDGE_TOKEN and $DB_PASS below on the server, then save. <<<
-// ---------------------------------------------------------------------------
-
-mysqli_report(MYSQLI_REPORT_OFF);   // PHP 8.1+: return errors instead of throwing
+mysqli_report(MYSQLI_REPORT_OFF);
 header('Content-Type: application/json');
 
-$BRIDGE_TOKEN = 'PUT-SHARED-SECRET-HERE';     // must match auth_bridge_token in AgentEdge config.php
+$BRIDGE_TOKEN = '69f875969332c128a5523ad1cfa4ed2bc06ea29b75a9f484';
 $DB_HOST = 'localhost';
 $DB_NAME = 'innovate_agents';
 $DB_USER = 'innovate_agentedge_ro';
-$DB_PASS = 'PUT-READ-ONLY-DB-PASSWORD-HERE';
+$DB_PASS = 'Innovate2026!';
 
 $in = json_decode(file_get_contents('php://input'), true);
 if (!is_array($in)) $in = $_POST;
@@ -33,7 +18,6 @@ $db->set_charset('utf8mb4');
 
 $action = $in['action'] ?? 'login';
 
-// ---- Dashboard (own numbers or admin lookup by email) ----------------------
 if ($action === 'dashboard' || $action === 'dashboard_by_email') {
     if ($action === 'dashboard_by_email') {
         $email = trim((string)($in['email'] ?? ''));
@@ -43,9 +27,7 @@ if ($action === 'dashboard' || $action === 'dashboard_by_email') {
         $su->bind_param('s', $email); $su->execute();
         $sr = $su->get_result()->fetch_assoc(); $su->close();
         if (!$sr) {
-            echo json_encode(['ok'=>true,'hasData'=>false,
-                'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],
-                'cap'=>null,'network'=>[]]);
+            echo json_encode(['ok'=>true,'hasData'=>false,'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],'cap'=>null,'network'=>[]]);
             exit;
         }
         $staffid = (string)$sr['staffid'];
@@ -54,10 +36,7 @@ if ($action === 'dashboard' || $action === 'dashboard_by_email') {
         if ($staffid === '') { echo json_encode(['ok'=>false]); exit; }
     }
 
-    $out = ['ok'=>true,'hasData'=>false,
-            'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],
-            'cap'=>null,'network'=>[]];
-
+    $out = ['ok'=>true,'hasData'=>false,'tiles'=>['volume'=>0,'closedDeals'=>0,'residual'=>0,'recruits'=>0],'cap'=>null,'network'=>[]];
     $st = $db->prepare("SELECT id, agent_id, agent_total_sales_volume, agent_total_closed_deals, agent_residual_income_earned FROM tblre_transaction_agents WHERE agent_id = ? LIMIT 1");
     if ($st) {
         $st->bind_param('s', $staffid); $st->execute();
@@ -70,24 +49,12 @@ if ($action === 'dashboard' || $action === 'dashboard_by_email') {
             $out['tiles']['closedDeals'] = (int)$me['agent_total_closed_deals'];
             $out['tiles']['residual']    = (float)$me['agent_residual_income_earned'];
             $myKey = ($me['agent_id'] !== null && $me['agent_id'] !== '') ? (string)$me['agent_id'] : (string)$me['id'];
-            $dl = $db->prepare(
-                "SELECT t.agent_total_sales_volume, t.agent_total_closed_deals,
-                        t.agent_residual_income_earned, s.firstname, s.lastname
-                 FROM tblre_transaction_agents t
-                 LEFT JOIN tblstaff s ON s.staffid = t.agent_id
-                 WHERE t.recruit_source_agent_id = ?
-                 ORDER BY t.agent_total_sales_volume DESC"
-            );
+            $dl = $db->prepare("SELECT t.agent_total_sales_volume, t.agent_total_closed_deals, t.agent_residual_income_earned, s.firstname, s.lastname FROM tblre_transaction_agents t LEFT JOIN tblstaff s ON s.staffid = t.agent_id WHERE t.recruit_source_agent_id = ? ORDER BY t.agent_total_sales_volume DESC");
             if ($dl) {
                 $dl->bind_param('s', $myKey); $dl->execute(); $res = $dl->get_result();
                 while ($row = $res->fetch_assoc()) {
                     $name = trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')) ?: 'Agent';
-                    $out['network'][] = [
-                        'name'     => $name,
-                        'volume'   => (float)$row['agent_total_sales_volume'],
-                        'deals'    => (int)$row['agent_total_closed_deals'],
-                        'residual' => (float)$row['agent_residual_income_earned'],
-                    ];
+                    $out['network'][] = ['name'=>$name,'volume'=>(float)$row['agent_total_sales_volume'],'deals'=>(int)$row['agent_total_closed_deals'],'residual'=>(float)$row['agent_residual_income_earned']];
                 }
                 $dl->close();
             }
@@ -102,7 +69,6 @@ if ($action === 'network_tree') {
     $email = trim((string)($in['email'] ?? ''));
     if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
 
-    // Look up this agent's staffid
     $su = $db->prepare("SELECT staffid FROM tblstaff WHERE email = ? LIMIT 1");
     if (!$su) { echo json_encode(['ok'=>false,'error'=>'lookup']); exit; }
     $su->bind_param('s', $email); $su->execute();
@@ -110,7 +76,6 @@ if ($action === 'network_tree') {
     if (!$sr) { echo json_encode(['ok'=>true,'tree'=>null,'totalCount'=>0]); exit; }
     $rootId = (string)$sr['staffid'];
 
-    // Load all agent rows in one query — build tree in PHP
     $res = $db->query(
         "SELECT t.agent_id, t.recruit_source_agent_id,
                 t.agent_total_sales_volume, t.agent_total_closed_deals,
@@ -119,8 +84,7 @@ if ($action === 'network_tree') {
          FROM tblre_transaction_agents t
          LEFT JOIN tblstaff s ON s.staffid = t.agent_id"
     );
-    $nodes = []; // agent_id => node data
-    $children = []; // agent_id => [child_ids]
+    $nodes = []; $children = []; $parents = [];
     while ($row = $res->fetch_assoc()) {
         $id = (string)$row['agent_id'];
         $nodes[$id] = [
@@ -131,9 +95,7 @@ if ($action === 'network_tree') {
             'residual' => (float)$row['agent_residual_income_earned'],
         ];
         $parent = (string)($row['recruit_source_agent_id'] ?? '');
-        if ($parent !== '' && $parent !== '0') {
-            $children[$parent][] = $id;
-        }
+        if ($parent !== '' && $parent !== '0') { $children[$parent][] = $id; $parents[$id] = $parent; }
     }
 
     function buildTree(string $id, array &$nodes, array &$children, int $depth): ?array {
@@ -147,7 +109,6 @@ if ($action === 'network_tree') {
         usort($node['children'], fn($a,$b) => $b['volume'] <=> $a['volume']);
         return $node;
     }
-
     function countTree(array $node): int {
         $n = 1;
         foreach ($node['children'] as $c) $n += countTree($c);
@@ -155,8 +116,24 @@ if ($action === 'network_tree') {
     }
 
     $tree = buildTree($rootId, $nodes, $children, 0);
-    $total = $tree ? countTree($tree) - 1 : 0; // exclude root
-    echo json_encode(['ok'=>true,'tree'=>$tree,'totalCount'=>$total]);
+    $total = $tree ? countTree($tree) - 1 : 0;
+    $sponsorId = $parents[$rootId] ?? '';
+    $sponsor   = ($sponsorId !== '' && $sponsorId !== '0' && isset($nodes[$sponsorId])) ? $nodes[$sponsorId] : null;
+    echo json_encode(['ok'=>true,'tree'=>$tree,'totalCount'=>$total,'sponsor'=>$sponsor]);
+    exit;
+}
+
+// ---- Agent lookup by email -----------------------------------------------
+if ($action === 'agent_lookup') {
+    $email = strtolower(trim((string)($in['email'] ?? '')));
+    if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
+    $s = $db->prepare("SELECT staffid, email, firstname, lastname, profile_pic FROM tblstaff WHERE email = ? LIMIT 1");
+    if (!$s) { echo json_encode(['ok'=>false,'error'=>'query']); exit; }
+    $s->bind_param('s', $email); $s->execute();
+    $u = $s->get_result()->fetch_assoc(); $s->close();
+    if (!$u) { echo json_encode(['ok'=>false]); exit; }
+    $name = trim(($u['firstname'] ?? '') . ' ' . ($u['lastname'] ?? '')) ?: $email;
+    echo json_encode(['ok'=>true,'staffid'=>(int)$u['staffid'],'email'=>$u['email'],'name'=>$name,'photo'=>$u['profile_pic']??null]);
     exit;
 }
 
