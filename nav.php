@@ -53,6 +53,20 @@ function nav_items(): array {
     ]);
 }
 
+// Items that live under the Back Office collapsible (admin only).
+function backoffice_nav_items(bool $superAdmin): array {
+    $items = [
+        ['key' => 'backoffice_state_rosters', 'label' => 'State Rosters', 'href' => 'backoffice_state_rosters.php'],
+    ];
+    foreach (backoffice_items_all() as $r) {
+        $item = ['key' => 'bo_' . $r['id'], 'label' => $r['label'], 'href' => $r['url']];
+        if ($r['is_ext']) $item['external'] = true;
+        $items[] = $item;
+    }
+    $items[] = ['key' => 'admin_backoffice', 'label' => 'Menu Builder', 'href' => 'admin_backoffice.php', 'superOnly' => true];
+    return $items;
+}
+
 function render_sidebar(string $current, array $agent): void {
     $perms = current_perms();
     $admin = !empty($perms['isAdmin']);
@@ -90,6 +104,24 @@ function render_sidebar(string $current, array $agent): void {
         echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($it['href']) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
     }
     if ($currentGroup !== '') echo '</div>';
+
+    // Back Office section — admin+ only. Collapsible, same pattern as external link groups.
+    if ($admin) {
+        $boItems = backoffice_nav_items($superAdmin);
+        echo '<button class="sb-links-toggle" data-group="Back Office" onclick="toggleSbLinks(this)" aria-expanded="true">'
+           . 'Back Office <span class="sb-links-arrow">&#9660;</span></button>';
+        echo '<div class="sb-links-sub">';
+        foreach ($boItems as $it) {
+            if (!empty($it['superOnly']) && !$superAdmin) continue;
+            $act = $it['key'] === $current ? ' sb-active' : '';
+            $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+            $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+            echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
+               . htmlspecialchars($it['label']) . $arr . '</a>';
+        }
+        echo '</div>';
+    }
+
     // MC-specific links injected here by mc-links.js
     echo '<div id="mc-resources" hidden></div>';
     $who = htmlspecialchars($agent['name'] ?: $agent['email']);

@@ -188,6 +188,30 @@ function local_db(): PDO {
         imported_at TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // Back Office menu builder — admin-defined items that appear in the Back Office sidebar section.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS backoffice_items (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        label    TEXT    NOT NULL,
+        url      TEXT    NOT NULL DEFAULT '#',
+        is_ext   INTEGER NOT NULL DEFAULT 0,
+        sort_ord INTEGER NOT NULL DEFAULT 0,
+        enabled  INTEGER NOT NULL DEFAULT 1
+    )");
+
+    // Per-state automation status for the State Rosters page.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
+        state_code TEXT PRIMARY KEY,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        notes      TEXT NOT NULL DEFAULT '',
+        updated_by TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    // Seed one row per state so every state shows up even before anyone sets a status.
+    $seedSt = $pdo->prepare("INSERT OR IGNORE INTO state_roster_status (state_code) VALUES (?)");
+    foreach (['FL','VA','DE','RI','NH','OH','NC','GA','PA','SC','MD','TN','NJ','MA'] as $sc) {
+        $seedSt->execute([$sc]);
+    }
+
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
         $seed = [
@@ -221,6 +245,30 @@ function nav_ext_links_all(): array {
     return local_db()
         ->query("SELECT * FROM nav_ext_links WHERE enabled=1 ORDER BY sort_ord,id")
         ->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// All enabled back office menu items, ordered for sidebar display.
+function backoffice_items_all(): array {
+    try {
+        return local_db()
+            ->query("SELECT * FROM backoffice_items WHERE enabled=1 ORDER BY sort_ord,id")
+            ->fetchAll(PDO::FETCH_ASSOC);
+    } catch (\Exception $e) { return []; }
+}
+
+// Current status row for a state, or defaults if not yet set.
+function state_roster_status(string $code): array {
+    $s = local_db()->prepare("SELECT * FROM state_roster_status WHERE state_code=?");
+    $s->execute([$code]);
+    return $s->fetch(PDO::FETCH_ASSOC) ?: ['state_code' => $code, 'status' => 'pending', 'notes' => ''];
+}
+
+// All 14 state roster statuses keyed by state code.
+function state_roster_statuses_all(): array {
+    $rows = local_db()->query("SELECT * FROM state_roster_status")->fetchAll(PDO::FETCH_ASSOC);
+    $map = [];
+    foreach ($rows as $r) $map[$r['state_code']] = $r;
+    return $map;
 }
 
 // MC-specific links for a given slug — only returns rows with real URLs.
