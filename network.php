@@ -321,7 +321,8 @@ function loadTree() {
     });
 }
 
-if (!IS_LEADER) loadTree();
+// Always auto-load own tree; leaders can then type another email to look up others
+loadTree();
 document.getElementById('email-input')?.addEventListener('keydown', e => { if (e.key==='Enter') loadTree(); });
 </script>
 </body>
