@@ -1,4 +1,6 @@
 <?php
+if (defined('AGENTEDGE_NAV_LOADED')) return;
+define('AGENTEDGE_NAV_LOADED', true);
 // The agent menu, in one place. Edit this list to change the sidebar
 // everywhere. `external => true` marks an SSO link out to another system.
 // `adminOnly => true` hides the item from non-admins (super/retention admin).
@@ -35,8 +37,9 @@ function nav_items(): array {
         'calendar'   => ['key' => 'calendar',   'label' => 'Company Calendar', 'href' => 'calendar.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
-        'docs'       => ['key' => 'docs',       'label' => 'Resources',           'href' => 'docs.php'],
-        'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',          'href' => 'tickets.php'],
+        'docs'       => ['key' => 'docs',       'label' => 'Resources',             'href' => 'docs.php'],
+        'university' => ['key' => 'university', 'label' => 'INNOVATE University',  'href' => 'university.php'],
+        'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',           'href' => 'tickets.php'],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -62,6 +65,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
         ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
         ['key' => 'bo_workflows',     'label' => 'Workflows',        'href' => 'backoffice_workflows.php'],
+        ['key' => 'admin_university', 'label' => 'University',       'href' => 'admin_university.php'],
         ['key' => 'backoffice_state_rosters',  'label' => 'State Rosters',   'href' => 'backoffice_state_rosters.php'],
         ['key' => 'backoffice_roster',         'label' => 'Agent Roster',   'href' => 'backoffice_roster.php'],
         ['key' => 'backoffice_roster_changes', 'label' => 'Roster Changes', 'href' => 'backoffice_roster_changes.php'],
@@ -71,6 +75,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         if ($r['is_ext']) $item['external'] = true;
         $items[] = $item;
     }
+    $items[] = ['key' => 'admin_market_centers', 'label' => 'Market Centers', 'href' => 'admin_market_centers.php', 'superOnly' => true];
     $items[] = ['key' => 'admin_backoffice', 'label' => 'Menu Builder', 'href' => 'admin_backoffice.php', 'superOnly' => true];
     return $items;
 }

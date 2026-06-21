@@ -35,10 +35,12 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['tickets',90]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
             $ins->execute($r);
         }
     }
+    // Ensure university row exists on existing installs
+    $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['university',85]);
 
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (
@@ -134,12 +136,17 @@ function local_db(): PDO {
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
     // Other apps (intranet, CRM) call /api/permissions.php to read this.
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_roles (
-        email      TEXT PRIMARY KEY,
-        role       TEXT NOT NULL DEFAULT 'agent',
-        mc_slugs   TEXT NOT NULL DEFAULT '[]',
-        updated_by TEXT,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        email        TEXT PRIMARY KEY,
+        role         TEXT NOT NULL DEFAULT 'agent',
+        mc_slugs     TEXT NOT NULL DEFAULT '[]',  -- MCs this user leads (mc_leader/bic)
+        own_mc_slug  TEXT NOT NULL DEFAULT '',    -- MC this agent belongs to
+        bic_email    TEXT NOT NULL DEFAULT '',    -- BIC assigned to this agent
+        updated_by   TEXT,
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
     )");
+    // Migrations for existing installs
+    try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN own_mc_slug TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Per-agent extra fields: birthday, hire date, license renewal.
     // birthday and license_renewal are stored as MM-DD so they recur every year.
@@ -200,15 +207,44 @@ function local_db(): PDO {
 
     // ── Announcements ─────────────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS announcements (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        title      TEXT    NOT NULL,
-        body       TEXT    NOT NULL,
-        author     TEXT    NOT NULL,
-        audience   TEXT    NOT NULL DEFAULT 'all',  -- all | admin
-        pinned     INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-        expires_at TEXT
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        title            TEXT    NOT NULL,
+        body             TEXT    NOT NULL,
+        author           TEXT    NOT NULL,
+        audience         TEXT    NOT NULL DEFAULT 'all',  -- all | admin | mc | bic
+        target_mc_slug   TEXT    NOT NULL DEFAULT '',     -- set when audience='mc'
+        target_bic_email TEXT    NOT NULL DEFAULT '',     -- set when audience='bic'
+        pinned           INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        expires_at       TEXT
     )");
+    // Migrations for existing installs
+    try { $pdo->exec("ALTER TABLE announcements ADD COLUMN target_mc_slug TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE announcements ADD COLUMN target_bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // ── Notification Preferences ──────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_prefs (
+        email        TEXT    PRIMARY KEY,
+        notify_email INTEGER NOT NULL DEFAULT 1,
+        notify_sms   INTEGER NOT NULL DEFAULT 0,
+        sms_phone    TEXT    NOT NULL DEFAULT '',
+        updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // ── Outbound Notification Queue ───────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_queue (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient  TEXT    NOT NULL,
+        channel    TEXT    NOT NULL,  -- email | sms
+        subject    TEXT    NOT NULL DEFAULT '',
+        body       TEXT    NOT NULL,
+        phone      TEXT    NOT NULL DEFAULT '',
+        status     TEXT    NOT NULL DEFAULT 'pending',  -- pending | sent | failed
+        attempts   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+        sent_at    TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
 
     // ── Document Library ──────────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
@@ -303,6 +339,92 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wfitem_sid ON wf_items(stage_id)");
+
+    // ── INNOVATE University (LMS) ─────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_categories (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL,
+        icon       TEXT    NOT NULL DEFAULT '📚',
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_courses (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        category_id INTEGER,
+        title       TEXT    NOT NULL,
+        description TEXT    NOT NULL DEFAULT '',
+        thumb_key   TEXT    NOT NULL DEFAULT '',
+        is_required INTEGER NOT NULL DEFAULT 0,
+        sort_ord    INTEGER NOT NULL DEFAULT 0,
+        published   INTEGER NOT NULL DEFAULT 0,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_courses_cat ON uni_courses(category_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lessons (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id    INTEGER NOT NULL,
+        title        TEXT    NOT NULL,
+        sort_ord     INTEGER NOT NULL DEFAULT 0,
+        type         TEXT    NOT NULL DEFAULT 'video',  -- video | doc | quiz
+        file_key     TEXT    NOT NULL DEFAULT '',
+        content_html TEXT    NOT NULL DEFAULT '',
+        duration_sec INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_crs ON uni_lessons(course_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_questions (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        question      TEXT    NOT NULL,
+        options       TEXT    NOT NULL DEFAULT '[]',  -- JSON array of option strings
+        correct_index INTEGER NOT NULL DEFAULT 0,
+        sort_ord      INTEGER NOT NULL DEFAULT 0
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_q_lesson ON uni_questions(lesson_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_progress (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email  TEXT    NOT NULL,
+        lesson_id    INTEGER NOT NULL,
+        completed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+        score        INTEGER,           -- quiz score 0-100; NULL for video/doc
+        attempts     INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(agent_email, lesson_id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_prog_email ON uni_progress(agent_email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_certs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email TEXT    NOT NULL,
+        course_id   INTEGER NOT NULL,
+        issued_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        cert_code   TEXT    NOT NULL UNIQUE,
+        UNIQUE(agent_email, course_id)
+    )");
+
+    $uniDir = __DIR__ . '/data/uni';
+    if (!is_dir($uniDir)) @mkdir($uniDir, 0750, true);
+    $uniHt  = $uniDir . '/.htaccess';
+    if (!file_exists($uniHt)) @file_put_contents($uniHt, "Deny from all\n");
+
+    // ── Market Centers master list ────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS market_centers (
+        slug            TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        state_code      TEXT NOT NULL DEFAULT '',
+        sort_ord        INTEGER NOT NULL DEFAULT 0,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        bic_email       TEXT NOT NULL DEFAULT '',
+        mc_leader_email TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_state ON market_centers(state_code)");
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Per-state automation status for the State Rosters page.
     $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
