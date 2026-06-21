@@ -35,7 +35,7 @@ if ($code === '') {
 $c            = cfg();
 $clientId     = $c['dotloop_client_id']     ?? '';
 $clientSecret = $c['dotloop_client_secret'] ?? '';
-$redirectUri  = 'https://agentedge.innovateonline.com/dotloop_callback.php';
+$redirectUri  = 'https://agents.innovateonline.com/dotloop_callback.php';
 
 $ctx = stream_context_create(['http' => [
     'method'        => 'POST',

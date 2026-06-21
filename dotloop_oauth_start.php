@@ -7,7 +7,7 @@ $agent = require_login();
 
 $c            = cfg();
 $clientId     = $c['dotloop_client_id'] ?? '';
-$redirectUri  = 'https://agentedge.innovateonline.com/dotloop_callback.php';
+$redirectUri  = 'https://agents.innovateonline.com/dotloop_callback.php';
 
 if ($clientId === '') {
     header('Location: dotloop_connect.php?error=not_configured');
