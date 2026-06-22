@@ -61,6 +61,7 @@ function nav_items(): array {
 // Items that live under the Back Office collapsible (admin only).
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
+        ['key' => 'press_release',    'label' => 'Press Release Studio', 'href' => 'press_release.php'],
         ['key' => 'bo_announcements', 'label' => 'Announcements',   'href' => 'backoffice_announcements.php'],
         ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
         ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
