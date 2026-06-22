@@ -1,6 +1,8 @@
 <?php
 // AgentEdge-owned SQLite database — settings, link configs, agent notes, etc.
-// Stored at data/agentedge.db (protected by data/.htaccess; never web-served).
+// By default stored at data/agentedge.db inside the app folder, but you can
+// move it outside the git/deploy directory by setting 'local_db_dir' in config.php
+// (e.g. '/home/ec2-user/agentedge-data'). That way deploys never wipe the database.
 if (defined('AGENTEDGE_LOCAL_DB_LOADED')) return;
 define('AGENTEDGE_LOCAL_DB_LOADED', true);
 
@@ -8,8 +10,11 @@ function local_db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
 
-    $dir = __DIR__ . '/data';
-    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    // Allow config.php to point the db at a directory outside the repo so deploys
+    // (git pull / SCP / zip-extract) can never accidentally wipe the database.
+    $cfgDir = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
+    $dir = $cfgDir ?: (__DIR__ . '/data');
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
 
     $pdo = new PDO('sqlite:' . $dir . '/agentedge.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -179,7 +184,7 @@ function local_db(): PDO {
     )");
 
     // Ensure upload directory exists and is protected
-    $uploadDir = __DIR__ . '/data/hud_uploads';
+    $uploadDir = $dir . '/hud_uploads';
     if (!is_dir($uploadDir)) @mkdir($uploadDir, 0750, true);
     $htaccess = $uploadDir . '/.htaccess';
     if (!file_exists($htaccess)) @file_put_contents($htaccess, "Deny from all\n");
@@ -269,7 +274,7 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
-    $docsDir = __DIR__ . '/data/docs';
+    $docsDir = $dir . '/docs';
     if (!is_dir($docsDir)) @mkdir($docsDir, 0750, true);
     $docsHt = $docsDir . '/.htaccess';
     if (!file_exists($docsHt)) @file_put_contents($docsHt, "Deny from all\n");
@@ -406,7 +411,7 @@ function local_db(): PDO {
         UNIQUE(agent_email, course_id)
     )");
 
-    $uniDir = __DIR__ . '/data/uni';
+    $uniDir = $dir . '/uni';
     if (!is_dir($uniDir)) @mkdir($uniDir, 0750, true);
     $uniHt  = $uniDir . '/.htaccess';
     if (!file_exists($uniHt)) @file_put_contents($uniHt, "Deny from all\n");

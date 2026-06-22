@@ -1,3 +1,10 @@
 config.php
 *.log
 .DS_Store
+
+# SQLite database and user-uploaded files — never commit these.
+# On the server these live at local_db_dir (outside the repo) to survive deploys.
+data/*.db
+data/hud_uploads/
+data/docs/
+data/uni/
