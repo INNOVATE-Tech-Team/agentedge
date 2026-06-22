@@ -1,9 +1,9 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/roles.php';
-require __DIR__ . '/local_db.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
+require_once __DIR__ . '/nav.php';
 
 $agent = require_login();
 if (!is_super_admin()) { header('Location: index.php'); exit; }
@@ -11,7 +11,7 @@ if (!is_super_admin()) { header('Location: index.php'); exit; }
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
-$tab = preg_replace('/[^a-z]/', '', $_GET['tab'] ?? 'nav');
+$tab = preg_replace('/[^a-z]/', '', $_GET['tab'] ?? 'core');
 $ok  = !empty($_GET['ok']);
 
 // ── Handle POST ────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $db     = local_db();
     $action = $_POST['action'] ?? '';
-    $tab    = preg_replace('/[^a-z]/', '', $_POST['tab'] ?? 'nav');
+    $tab    = preg_replace('/[^a-z]/', '', $_POST['tab'] ?? 'core');
 
     // Reorder actions — return JSON, no redirect
     if ($action === 'reorder_nav') {
@@ -100,12 +100,16 @@ foreach ($mcRows as $r) $bySlug[$r['mc_slug']][] = $r;
 ksort($bySlug);
 
 $coreLabels = [
-    'dashboard'  => ['label' => 'Dashboard',        'access' => 'All agents'],
-    'roster'     => ['label' => 'Agent Roster',      'access' => 'All agents'],
-    'network'    => ['label' => 'My Network',        'access' => 'All agents'],
-    'onboarding' => ['label' => 'Onboarding',        'access' => 'Admin only'],
-    'calendar'   => ['label' => 'Company Calendar',  'access' => 'All agents'],
-    'profile'    => ['label' => 'My Profile',        'access' => 'All agents'],
+    'dashboard'  => ['label' => 'Dashboard',              'access' => 'All agents'],
+    'roster'     => ['label' => 'Agent Roster',           'access' => 'All agents'],
+    'network'    => ['label' => 'My Network',             'access' => 'All agents'],
+    'onboarding' => ['label' => 'Onboarding',             'access' => 'Admin only'],
+    'calendar'   => ['label' => 'Company Calendar',       'access' => 'All agents'],
+    'profile'    => ['label' => 'My Profile',             'access' => 'All agents'],
+    'hud_submit' => ['label' => 'Submit HUD & Check',     'access' => 'All agents'],
+    'docs'       => ['label' => 'Resources',              'access' => 'All agents'],
+    'university' => ['label' => 'INNOVATE University',    'access' => 'All agents'],
+    'tickets'    => ['label' => 'My Tickets',             'access' => 'All agents'],
 ];
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
@@ -170,8 +174,33 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
         <!-- TABS -->
         <div class="tabs">
-          <button class="tab-btn<?= $tab==='nav'?' active':'' ?>" onclick="switchTab('nav')">External Nav Links</button>
-          <button class="tab-btn<?= $tab==='mc'?' active':'' ?>" onclick="switchTab('mc')">MC Resource Links</button>
+          <button class="tab-btn<?= $tab==='core'?' active':'' ?>" data-tab="core" onclick="switchTab('core')">Core Menu</button>
+          <button class="tab-btn<?= $tab==='nav'?' active':'' ?>"  data-tab="nav"  onclick="switchTab('nav')">External Links</button>
+          <button class="tab-btn<?= $tab==='mc'?' active':'' ?>"   data-tab="mc"   onclick="switchTab('mc')">MC Resources</button>
+          <button class="tab-btn<?= $tab==='bo'?' active':'' ?>"   data-tab="bo"   onclick="switchTab('bo')">Back Office</button>
+        </div>
+
+        <!-- ── TAB: CORE MENU ───────────────────────────────────────────────── -->
+        <div id="tab-core" class="tab-pane<?= $tab==='core'?' active':'' ?>">
+          <p style="font-size:13px;color:#666;margin:0 0 16px">Drag to change the order these built-in pages appear in the sidebar for all agents. Labels and access rules are fixed.</p>
+          <table class="settings-table">
+            <thead><tr>
+              <th style="width:28px"></th>
+              <th>Page</th>
+              <th>Visible to</th>
+            </tr></thead>
+            <tbody id="core-tbody">
+            <?php foreach ($coreOrder as $row):
+                $info = $coreLabels[$row['key']] ?? ['label' => $row['key'], 'access' => '—'];
+            ?>
+              <tr class="core-row" data-key="<?= h($row['key']) ?>">
+                <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+                <td style="font-weight:600"><?= h($info['label']) ?></td>
+                <td style="font-size:12px;color:#888"><?= h($info['access']) ?></td>
+              </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
         </div>
 
         <!-- ── TAB: NAV LINKS ─────────────────────────────────────────────── -->
@@ -230,29 +259,6 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
             </form>
           </div>
 
-          <!-- Core page order -->
-          <div style="margin-top:28px;padding-top:20px;border-top:2px solid #e6e7e8">
-            <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">Core Page Order</div>
-            <p style="font-size:12px;color:#888;margin:0 0 12px">Drag to change the order these built-in pages appear in the sidebar. Labels and destinations are fixed.</p>
-            <table class="settings-table">
-              <thead><tr>
-                <th style="width:28px"></th>
-                <th>Page</th>
-                <th>Visible to</th>
-              </tr></thead>
-              <tbody id="core-tbody">
-              <?php foreach ($coreOrder as $row):
-                  $info = $coreLabels[$row['key']] ?? ['label' => $row['key'], 'access' => '—'];
-              ?>
-                <tr class="core-row" data-key="<?= h($row['key']) ?>">
-                  <td><span class="drag-handle" title="Drag to reorder">⠿</span></td>
-                  <td style="font-weight:600"><?= h($info['label']) ?></td>
-                  <td style="font-size:12px;color:#888"><?= h($info['access']) ?></td>
-                </tr>
-              <?php endforeach; ?>
-              </tbody>
-            </table>
-          </div>
         </div>
 
         <!-- ── TAB: MC RESOURCE LINKS ────────────────────────────────────── -->
@@ -326,13 +332,71 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           </div>
         </div>
 
+        <!-- ── TAB: BACK OFFICE ──────────────────────────────────────────────── -->
+        <div id="tab-bo" class="tab-pane<?= $tab==='bo'?' active':'' ?>">
+          <p style="font-size:13px;color:#666;margin:0 0 20px">
+            Add links that appear under the <strong>Back Office</strong> section of the sidebar for admin users.
+            Built-in items (Announcements, Tickets, Documents, etc.) always appear and cannot be changed here.
+          </p>
+          <?php
+          $boItems = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
+          ?>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px;padding:14px;background:#fafafa;border:1px solid var(--border,#e6e7e8);border-radius:6px">
+            <div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:4px">Label</div>
+              <input type="text" id="bo-newLabel" class="ifield ifield-label" placeholder="e.g. Recruiting Reports" style="min-width:200px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:4px">URL</div>
+              <input type="text" id="bo-newUrl" class="ifield ifield-url" placeholder="e.g. reports.php or https://...">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
+              <input type="checkbox" id="bo-newExt" style="accent-color:#82C112">
+              <label for="bo-newExt" style="font-size:13px;cursor:pointer">New tab</label>
+            </div>
+            <button class="btn-save" onclick="boAdd()" style="padding:7px 16px">+ Add Item</button>
+          </div>
+
+          <table class="settings-table" id="bo-table">
+            <thead><tr>
+              <th style="width:40px">Order</th>
+              <th>Label</th><th>URL</th>
+              <th style="width:70px">Ext</th>
+              <th style="width:70px">On</th>
+              <th style="width:100px"></th>
+            </tr></thead>
+            <tbody id="bo-tbody">
+            <?php if (empty($boItems)): ?>
+              <tr id="bo-empty"><td colspan="6" style="text-align:center;color:#aaa;padding:24px;font-style:italic">No custom items yet.</td></tr>
+            <?php else: ?>
+              <?php foreach ($boItems as $r): ?>
+              <tr id="bo-row-<?= $r['id'] ?>" data-id="<?= $r['id'] ?>">
+                <td>
+                  <button class="btn-del" style="font-size:11px;border:1px solid #ddd;padding:2px 6px" onclick="boMove(<?= $r['id'] ?>,-1)">↑</button>
+                  <button class="btn-del" style="font-size:11px;border:1px solid #ddd;padding:2px 6px" onclick="boMove(<?= $r['id'] ?>, 1)">↓</button>
+                </td>
+                <td><input class="ifield" style="width:100%" type="text" value="<?= h($r['label']) ?>" data-field="label" data-id="<?= $r['id'] ?>" oninput="boMark(<?= $r['id'] ?>)"></td>
+                <td><input class="ifield ifield-url" type="text" value="<?= h($r['url']) ?>"   data-field="url"   data-id="<?= $r['id'] ?>" oninput="boMark(<?= $r['id'] ?>)"></td>
+                <td style="text-align:center"><input type="checkbox" style="accent-color:#82C112" data-field="is_ext"  data-id="<?= $r['id'] ?>" <?= $r['is_ext'] ?'checked':'' ?> onchange="boMark(<?= $r['id'] ?>)"></td>
+                <td style="text-align:center"><input type="checkbox" style="accent-color:#82C112" data-field="enabled" data-id="<?= $r['id'] ?>" <?= $r['enabled']?'checked':'' ?> onchange="boMark(<?= $r['id'] ?>)"></td>
+                <td>
+                  <button class="btn-save" id="bo-save-<?= $r['id'] ?>" style="display:none" onclick="boSave(<?= $r['id'] ?>)">Save</button>
+                  <button class="btn-del" onclick="boDel(<?= $r['id'] ?>)">✕</button>
+                </td>
+              </tr>
+              <?php endforeach; ?>
+            <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+
       </div>
     </main>
   </div>
 </div>
 <script>
 function switchTab(t) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().startsWith(t === 'nav' ? 'external' : 'mc')));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + t));
   history.replaceState(null, '', 'admin_links.php?tab=' + t);
 }
@@ -415,6 +479,76 @@ if (coreTbody) initDragSort(coreTbody, 'tr.core-row', rows => {
   const keys = rows.map(r => r.dataset.key).filter(Boolean).join(',');
   if (keys) postOrder({action: 'reorder_core', keys});
 });
+
+// ── Back Office tab ──────────────────────────────────────────────────────────
+function boApi(body) {
+  return fetch('api/backoffice_menu.php', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+}
+function boMark(id) { document.getElementById('bo-save-' + id).style.display = 'inline-block'; }
+function boSave(id) {
+  const row = document.getElementById('bo-row-' + id);
+  const label   = row.querySelector('[data-field="label"]').value.trim();
+  const url     = row.querySelector('[data-field="url"]').value.trim();
+  const is_ext  = row.querySelector('[data-field="is_ext"]').checked ? 1 : 0;
+  const enabled = row.querySelector('[data-field="enabled"]').checked ? 1 : 0;
+  if (!label || !url) return alert('Label and URL required.');
+  boApi({action:'update', id, label, url, is_ext, enabled}).then(d => {
+    if (d.ok) document.getElementById('bo-save-' + id).style.display = 'none';
+  });
+}
+function boDel(id) {
+  if (!confirm('Remove this Back Office item?')) return;
+  boApi({action:'delete', id}).then(d => {
+    if (!d.ok) return;
+    const row = document.getElementById('bo-row-' + id);
+    if (row) row.remove();
+    if (!document.querySelector('#bo-tbody tr[data-id]')) {
+      document.getElementById('bo-tbody').innerHTML =
+        '<tr id="bo-empty"><td colspan="6" style="text-align:center;color:#aaa;padding:24px;font-style:italic">No custom items yet.</td></tr>';
+    }
+  });
+}
+function boMove(id, dir) {
+  boApi({action:'move', id, dir}).then(d => { if (d.ok) location.reload(); });
+}
+function boAdd() {
+  const label  = document.getElementById('bo-newLabel').value.trim();
+  const url    = document.getElementById('bo-newUrl').value.trim();
+  const is_ext = document.getElementById('bo-newExt').checked ? 1 : 0;
+  if (!label || !url) return alert('Label and URL required.');
+  boApi({action:'add', label, url, is_ext}).then(d => {
+    if (!d.ok || !d.item) return;
+    const item = d.item;
+    const emp = document.getElementById('bo-empty');
+    if (emp) emp.remove();
+    const tbody = document.getElementById('bo-tbody');
+    const tr = document.createElement('tr');
+    tr.id = 'bo-row-' + item.id;
+    tr.dataset.id = item.id;
+    tr.innerHTML = `
+      <td>
+        <button class="btn-del" style="font-size:11px;border:1px solid #ddd;padding:2px 6px" onclick="boMove(${item.id},-1)">↑</button>
+        <button class="btn-del" style="font-size:11px;border:1px solid #ddd;padding:2px 6px" onclick="boMove(${item.id}, 1)">↓</button>
+      </td>
+      <td><input class="ifield" style="width:100%" type="text" value="${esc(item.label)}" data-field="label" data-id="${item.id}" oninput="boMark(${item.id})"></td>
+      <td><input class="ifield ifield-url" type="text" value="${esc(item.url)}" data-field="url" data-id="${item.id}" oninput="boMark(${item.id})"></td>
+      <td style="text-align:center"><input type="checkbox" style="accent-color:#82C112" data-field="is_ext"  data-id="${item.id}" ${item.is_ext?'checked':''} onchange="boMark(${item.id})"></td>
+      <td style="text-align:center"><input type="checkbox" style="accent-color:#82C112" data-field="enabled" data-id="${item.id}" checked onchange="boMark(${item.id})"></td>
+      <td>
+        <button class="btn-save" id="bo-save-${item.id}" style="display:none" onclick="boSave(${item.id})">Save</button>
+        <button class="btn-del" onclick="boDel(${item.id})">✕</button>
+      </td>`;
+    tbody.appendChild(tr);
+    document.getElementById('bo-newLabel').value = '';
+    document.getElementById('bo-newUrl').value   = '';
+    document.getElementById('bo-newExt').checked = false;
+  });
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 </script>
 </body>
 </html>
