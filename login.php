@@ -1,6 +1,6 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
 
 if (current_agent()) { header('Location: index.php'); exit; }
 
@@ -79,7 +79,13 @@ $googleClient = cfg()['google_client_id'] ?? '';
         <input type="email" name="email" required autofocus value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
       </label>
       <label>Password
-        <input type="password" name="password" required>
+        <div style="position:relative">
+          <input type="password" name="password" id="ae-pw" required style="padding-right:36px;width:100%;box-sizing:border-box">
+          <button type="button" onclick="(function(){var i=document.getElementById('ae-pw'),s=document.getElementById('ae-pw-eye'),on=i.type==='password';i.type=on?'text':'password';s.innerHTML=on?'<path d=&quot;M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24&quot;/><line x1=&quot;1&quot; y1=&quot;1&quot; x2=&quot;23&quot; y2=&quot;23&quot;/>':'<path d=&quot;M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z&quot;/><circle cx=&quot;12&quot; cy=&quot;12&quot; r=&quot;3&quot;/>'})()" aria-label="Show/hide password"
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:2px;color:#888;line-height:0;display:flex;align-items:center">
+            <svg id="ae-pw-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
       </label>
       <button type="submit">Sign in</button>
       <a class="login-forgot" href="<?= htmlspecialchars($reset_url) ?>" target="_blank" rel="noopener">Forgot password?</a>
