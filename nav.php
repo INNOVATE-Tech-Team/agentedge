@@ -51,6 +51,9 @@ function nav_items(): array {
     }
 
     return array_merge($core, $ext, [
+        // ── Admin shortcuts ───────────────────────────────────────────────────
+        ['key' => 'press_release', 'label' => 'Press Release Studio', 'href' => 'press_release.php', 'adminOnly' => true],
+        ['key' => 'crm',           'label' => 'INNOVATE Advantage',   'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
         // ── Super admin only ──────────────────────────────────────────────────
         ['key' => 'admin_roles',  'label' => 'Role Assignments', 'href' => 'admin_roles.php',  'superOnly' => true],
         ['key' => 'admin_import','label' => 'Import Agents',   'href' => 'admin_import.php', 'adminOnly' => true],
