@@ -123,6 +123,18 @@ if ($action === 'network_tree') {
     exit;
 }
 
+// ---- Dump all active agents (for Lightsail import script) ----------------
+if ($action === 'dump') {
+    $res = $db->query("SELECT staffid, firstname, lastname, email, phonenumber FROM tblstaff WHERE active = 1 ORDER BY staffid");
+    if (!$res) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>$db->error]); exit; }
+    $agents = [];
+    while ($row = $res->fetch_assoc()) {
+        $agents[] = ['staffid'=>(int)$row['staffid'],'firstname'=>$row['firstname']??'','lastname'=>$row['lastname']??'','email'=>strtolower(trim($row['email']??'')),'phone'=>$row['phonenumber']??''];
+    }
+    echo json_encode(['ok'=>true,'count'=>count($agents),'agents'=>$agents]);
+    exit;
+}
+
 // ---- Agent lookup by email -----------------------------------------------
 if ($action === 'agent_lookup') {
     $email = strtolower(trim((string)($in['email'] ?? '')));
