@@ -31,15 +31,18 @@ function nav_items(): array {
     // Core pages — sorted by nav_core_order if set
     $coreMap = [
         'dashboard'  => ['key' => 'dashboard',  'label' => 'Dashboard',        'href' => 'index.php'],
-        'roster'     => ['key' => 'roster',     'label' => 'Agent Roster',     'href' => 'roster.php'],
+        'roster'         => ['key' => 'roster',         'label' => 'Agent Roster',     'href' => 'roster.php'],
+        'market_centers' => ['key' => 'market_centers', 'label' => 'Market Centers',   'href' => 'market_centers.php'],
         'network'    => ['key' => 'network',    'label' => 'My Network',       'href' => 'network.php'],
         'onboarding' => ['key' => 'onboarding', 'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
-        'calendar'   => ['key' => 'calendar',   'label' => 'Company Calendar', 'href' => 'calendar.php'],
+        'calendar'          => ['key' => 'calendar',          'label' => 'Company Calendar', 'href' => 'calendar.php'],
+        'industry_events'   => ['key' => 'industry_events',   'label' => 'Industry Events',   'href' => 'industry_events.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
         'docs'       => ['key' => 'docs',       'label' => 'Resources',             'href' => 'docs.php'],
         'university' => ['key' => 'university', 'label' => 'INNOVATE University',  'href' => 'university.php'],
         'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',           'href' => 'tickets.php'],
+        'marketing'  => ['key' => 'marketing',  'label' => 'Marketing Studio',     'href' => 'sso_marketing.php', 'external' => true],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -79,7 +82,6 @@ function backoffice_nav_items(bool $superAdmin): array {
         if ($r['is_ext']) $item['external'] = true;
         $items[] = $item;
     }
-    $items[] = ['key' => 'admin_market_centers', 'label' => 'Market Centers', 'href' => 'admin_market_centers.php', 'superOnly' => true];
     $items[] = ['key' => 'admin_backoffice', 'label' => 'Menu Builder', 'href' => 'admin_backoffice.php', 'superOnly' => true];
     return $items;
 }
