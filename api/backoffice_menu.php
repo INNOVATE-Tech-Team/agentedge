@@ -20,23 +20,25 @@ switch ($action) {
         $label  = trim($body['label'] ?? '');
         $url    = trim($body['url']   ?? '');
         $is_ext = (int)($body['is_ext'] ?? 0);
+        $dept   = trim($body['department'] ?? 'Operations');
         if (!$label || !$url) { echo json_encode(['ok'=>false,'error'=>'label and url required']); exit; }
         $maxOrd = (int)($db->query("SELECT COALESCE(MAX(sort_ord),0) FROM backoffice_items")->fetchColumn());
-        $s = $db->prepare("INSERT INTO backoffice_items (label,url,is_ext,sort_ord,enabled) VALUES (?,?,?,?,1)");
-        $s->execute([$label, $url, $is_ext, $maxOrd + 10]);
+        $s = $db->prepare("INSERT INTO backoffice_items (label,url,is_ext,sort_ord,enabled,department) VALUES (?,?,?,?,1,?)");
+        $s->execute([$label, $url, $is_ext, $maxOrd + 10, $dept]);
         $id = (int)$db->lastInsertId();
-        echo json_encode(['ok'=>true, 'item'=>['id'=>$id,'label'=>$label,'url'=>$url,'is_ext'=>$is_ext]]);
+        echo json_encode(['ok'=>true, 'item'=>['id'=>$id,'label'=>$label,'url'=>$url,'is_ext'=>$is_ext,'department'=>$dept]]);
         break;
 
     case 'update':
-        $id     = (int)($body['id'] ?? 0);
-        $label  = trim($body['label']  ?? '');
-        $url    = trim($body['url']    ?? '');
-        $is_ext = (int)($body['is_ext']  ?? 0);
-        $enabled = (int)($body['enabled'] ?? 1);
+        $id      = (int)($body['id'] ?? 0);
+        $label   = trim($body['label']      ?? '');
+        $url     = trim($body['url']        ?? '');
+        $is_ext  = (int)($body['is_ext']    ?? 0);
+        $enabled = (int)($body['enabled']   ?? 1);
+        $dept    = trim($body['department'] ?? 'Operations');
         if (!$id || !$label || !$url) { echo json_encode(['ok'=>false,'error'=>'id, label and url required']); exit; }
-        $s = $db->prepare("UPDATE backoffice_items SET label=?,url=?,is_ext=?,enabled=? WHERE id=?");
-        $s->execute([$label, $url, $is_ext, $enabled, $id]);
+        $s = $db->prepare("UPDATE backoffice_items SET label=?,url=?,is_ext=?,enabled=?,department=? WHERE id=?");
+        $s->execute([$label, $url, $is_ext, $enabled, $dept, $id]);
         echo json_encode(['ok'=>true]);
         break;
 

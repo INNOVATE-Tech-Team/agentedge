@@ -54,38 +54,41 @@ function nav_items(): array {
     }
 
     return array_merge($core, $ext, [
-        // ── Admin shortcuts ───────────────────────────────────────────────────
-        ['key' => 'press_release', 'label' => 'Press Release Studio', 'href' => 'press_release.php', 'adminOnly' => true],
-        ['key' => 'crm',           'label' => 'INNOVATE Advantage',   'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
-        // ── Super admin only ──────────────────────────────────────────────────
-        ['key' => 'admin_roles',  'label' => 'Role Assignments', 'href' => 'admin_roles.php',  'superOnly' => true],
-        ['key' => 'admin_import','label' => 'Import Agents',   'href' => 'admin_import.php', 'adminOnly' => true],
-        ['key' => 'admin_links', 'label' => 'Link Settings',   'href' => 'admin_links.php',  'superOnly' => true],
+        ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
     ]);
 }
 
 // Items that live under the Back Office collapsible (admin only).
+// Each item carries a 'dept' key so render_sidebar() can group them.
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
-        ['key' => 'backoffice_agents', 'label' => 'Agent Profiles',      'href' => 'backoffice_agents.php'],
-        ['key' => 'onboarding',        'label' => 'Onboarding Queue',    'href' => 'onboarding.php'],
-        ['key' => 'press_release',     'label' => 'Press Release Studio','href' => 'press_release.php'],
-        ['key' => 'bo_announcements',  'label' => 'Announcements',       'href' => 'backoffice_announcements.php'],
-        ['key' => 'bo_industry_events',   'label' => 'Industry Events', 'href' => 'backoffice_industry_events.php'],
-        ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
-        ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
-        ['key' => 'bo_workflows',     'label' => 'Workflows',        'href' => 'backoffice_workflows.php'],
-        ['key' => 'admin_university', 'label' => 'University',       'href' => 'admin_university.php'],
-        ['key' => 'backoffice_state_rosters',  'label' => 'State Rosters',   'href' => 'backoffice_state_rosters.php'],
-        ['key' => 'backoffice_roster',         'label' => 'Agent Roster',   'href' => 'backoffice_roster.php'],
-        ['key' => 'backoffice_roster_changes', 'label' => 'Roster Changes', 'href' => 'backoffice_roster_changes.php'],
+        // ── Operations ──────────────────────────────────────────────────────────
+        ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations'],
+        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
+        ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations'],
+        ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
+        ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
+        ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
+        // ── Broker Files ────────────────────────────────────────────────────────
+        ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
+        // ── Events ──────────────────────────────────────────────────────────────
+        ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Events'],
+        ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
+        ['key'=>'press_release',             'label'=>'Press Release',       'href'=>'press_release.php',             'dept'=>'Events'],
+        // ── Agent Development ───────────────────────────────────────────────────
+        ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
+        ['key'=>'bo_workflows',              'label'=>'Workflows',           'href'=>'backoffice_workflows.php',      'dept'=>'Agent Development'],
+        // ── Technology ──────────────────────────────────────────────────────────
+        ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
+        ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
+        ['key'=>'admin_links',               'label'=>'Link Settings',       'href'=>'admin_links.php',               'dept'=>'Technology', 'superOnly'=>true],
+        ['key'=>'admin_backoffice',          'label'=>'Menu Builder',        'href'=>'admin_backoffice.php',          'dept'=>'Technology', 'superOnly'=>true],
     ];
     foreach (backoffice_items_all() as $r) {
-        $item = ['key' => 'bo_' . $r['id'], 'label' => $r['label'], 'href' => $r['url']];
+        $item = ['key'=>'bo_'.$r['id'], 'label'=>$r['label'], 'href'=>$r['url'], 'dept'=>($r['department'] ?? 'Operations')];
         if ($r['is_ext']) $item['external'] = true;
         $items[] = $item;
     }
-    $items[] = ['key' => 'admin_backoffice', 'label' => 'Menu Builder', 'href' => 'admin_backoffice.php', 'superOnly' => true];
     return $items;
 }
 
@@ -127,19 +130,56 @@ function render_sidebar(string $current, array $agent): void {
     }
     if ($currentGroup !== '') echo '</div>';
 
-    // Back Office section — admin+ only. Collapsible, same pattern as external link groups.
+    // Back Office section — admin+ only. Collapsible with department sub-groups.
     if ($admin) {
-        $boItems = backoffice_nav_items($superAdmin);
+        static $boStylesEmitted = false;
+        if (!$boStylesEmitted) {
+            $boStylesEmitted = true;
+            echo '<style>'
+               . '.sb-dept-toggle{all:unset;display:flex;align-items:center;gap:4px;width:100%;'
+               . 'padding:5px 12px 3px 16px;font-size:10px;font-weight:800;text-transform:uppercase;'
+               . 'letter-spacing:.07em;color:var(--faint,#999);cursor:pointer;box-sizing:border-box}'
+               . '.sb-dept-toggle .sb-links-arrow{margin-left:auto;font-size:8px;transition:transform .2s}'
+               . '.sb-depth-2{padding-left:26px!important}'
+               . '.sb-dept-empty{display:block;font-size:11px;color:var(--faint,#bbb);'
+               . 'padding:3px 12px 3px 26px;font-style:italic}'
+               . '</style>';
+        }
+        $boItems   = backoffice_nav_items($superAdmin);
+        $deptOrder = ['Operations','Finance','Broker Files','Events','Agent Development','Technology','Human Resources'];
+        $byDept    = array_fill_keys($deptOrder, []);
+        foreach ($boItems as $it) {
+            $d = $it['dept'] ?? 'Operations';
+            if (!array_key_exists($d, $byDept)) $byDept[$d] = [];
+            $byDept[$d][] = $it;
+        }
+        $activeDept = '';
+        foreach ($byDept as $dn => $ditems) {
+            foreach ($ditems as $it) {
+                if ($it['key'] === $current) { $activeDept = $dn; break 2; }
+            }
+        }
         echo '<button class="sb-links-toggle" data-group="Back Office" onclick="toggleSbLinks(this)" aria-expanded="true">'
            . 'Back Office <span class="sb-links-arrow">&#9660;</span></button>';
         echo '<div class="sb-links-sub">';
-        foreach ($boItems as $it) {
-            if (!empty($it['superOnly']) && !$superAdmin) continue;
-            $act = $it['key'] === $current ? ' sb-active' : '';
-            $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
-            $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
-            echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
-               . htmlspecialchars($it['label']) . $arr . '</a>';
+        foreach ($deptOrder as $deptName) {
+            $deptItems = $byDept[$deptName] ?? [];
+            $visible   = array_values(array_filter($deptItems, fn($it) => empty($it['superOnly']) || $superAdmin));
+            $isActive  = ($deptName === $activeDept);
+            echo '<button class="sb-dept-toggle" onclick="toggleSbLinks(this)" aria-expanded="' . ($isActive ? 'true' : 'false') . '">'
+               . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';
+            echo '<div class="sb-links-sub" style="' . ($isActive ? '' : 'display:none') . '">';
+            if (empty($visible)) {
+                echo '<span class="sb-dept-empty">No items</span>';
+            }
+            foreach ($visible as $it) {
+                $act = $it['key'] === $current ? ' sb-active' : '';
+                $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+                $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+                echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
+                   . htmlspecialchars($it['label']) . $arr . '</a>';
+            }
+            echo '</div>';
         }
         echo '</div>';
     }

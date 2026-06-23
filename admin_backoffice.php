@@ -103,6 +103,18 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
           <input type="text" id="newUrl" placeholder="e.g. reports.php or https://..." required maxlength="500">
         </div>
         <div class="field">
+          <label>Department</label>
+          <select id="newDept" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+            <option value="Operations">Operations</option>
+            <option value="Finance">Finance</option>
+            <option value="Broker Files">Broker Files</option>
+            <option value="Events">Events</option>
+            <option value="Agent Development">Agent Development</option>
+            <option value="Technology">Technology</option>
+            <option value="Human Resources">Human Resources</option>
+          </select>
+        </div>
+        <div class="field">
           <label>Opens in</label>
           <div class="cb-row">
             <input type="checkbox" id="newExt" style="accent-color:var(--green)">
@@ -123,6 +135,7 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
             <th style="width:40px">Order</th>
             <th>Label</th>
             <th>URL</th>
+            <th style="width:130px">Department</th>
             <th style="width:70px">External</th>
             <th style="width:70px">Enabled</th>
             <th style="width:110px"></th>
@@ -134,6 +147,7 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
             <td>—</td>
             <td>State Rosters <span class="built-in-badge">built-in</span></td>
             <td style="font-size:11px;color:var(--faint)">backoffice_state_rosters.php</td>
+            <td style="font-size:11px;color:var(--faint)">Operations</td>
             <td></td>
             <td></td>
             <td></td>
@@ -153,6 +167,14 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
               <input class="mb-input" type="text" value="<?= htmlspecialchars($item['url']) ?>"
                      data-field="url" data-id="<?= $item['id'] ?>" oninput="markDirty(this)">
             </td>
+            <td>
+              <?php $deptVal = htmlspecialchars($item['department'] ?? 'Operations'); ?>
+              <select class="mb-input" style="padding:3px 6px;font-size:12px" data-field="department" data-id="<?= $item['id'] ?>" onchange="markDirty(this)">
+                <?php foreach (['Operations','Finance','Broker Files','Events','Agent Development','Technology','Human Resources'] as $dopt): ?>
+                <option value="<?= htmlspecialchars($dopt) ?>" <?= ($item['department'] ?? 'Operations') === $dopt ? 'selected' : '' ?>><?= htmlspecialchars($dopt) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </td>
             <td style="text-align:center">
               <input type="checkbox" class="toggle-cb" data-field="is_ext" data-id="<?= $item['id'] ?>"
                      <?= $item['is_ext'] ? 'checked' : '' ?> onchange="markDirty(this)">
@@ -170,7 +192,7 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
           <?php endforeach; ?>
           <?php if (empty($items)): ?>
           <tr id="emptyRow">
-            <td colspan="6" style="text-align:center;color:var(--faint);padding:28px;font-style:italic">
+            <td colspan="7" style="text-align:center;color:var(--faint);padding:28px;font-style:italic">
               No custom items yet. Add one above.
             </td>
           </tr>
@@ -180,6 +202,7 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
             <td>—</td>
             <td>Menu Builder <span class="built-in-badge">built-in</span></td>
             <td style="font-size:11px;color:var(--faint)">admin_backoffice.php</td>
+            <td style="font-size:11px;color:var(--faint)">Technology</td>
             <td></td>
             <td></td>
             <td></td>
@@ -200,15 +223,16 @@ function markDirty(el) {
 
 function saveRow(id) {
     const row = document.getElementById('row-' + id);
-    const label   = row.querySelector('[data-field="label"]').value.trim();
-    const url     = row.querySelector('[data-field="url"]').value.trim();
-    const is_ext  = row.querySelector('[data-field="is_ext"]').checked ? 1 : 0;
-    const enabled = row.querySelector('[data-field="enabled"]').checked ? 1 : 0;
+    const label      = row.querySelector('[data-field="label"]').value.trim();
+    const url        = row.querySelector('[data-field="url"]').value.trim();
+    const is_ext     = row.querySelector('[data-field="is_ext"]').checked ? 1 : 0;
+    const enabled    = row.querySelector('[data-field="enabled"]').checked ? 1 : 0;
+    const department = row.querySelector('[data-field="department"]').value;
     if (!label || !url) return alert('Label and URL are required.');
     fetch('api/backoffice_menu.php', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action:'update', id, label, url, is_ext, enabled})
+        body: JSON.stringify({action:'update', id, label, url, is_ext, enabled, department})
     })
     .then(r => r.json())
     .then(d => {
@@ -239,7 +263,7 @@ function deleteItem(id) {
             if (dynamic.length === 0 && !document.getElementById('emptyRow')) {
                 const tr = document.createElement('tr');
                 tr.id = 'emptyRow';
-                tr.innerHTML = '<td colspan="6" style="text-align:center;color:var(--faint);padding:28px;font-style:italic">No custom items yet. Add one above.</td>';
+                tr.innerHTML = '<td colspan="7" style="text-align:center;color:var(--faint);padding:28px;font-style:italic">No custom items yet. Add one above.</td>';
                 // Insert after first built-in row
                 const builtins = tbody.querySelectorAll('.built-in-row');
                 builtins[0].after(tr);
@@ -250,14 +274,15 @@ function deleteItem(id) {
 
 function addItem(e) {
     e.preventDefault();
-    const label  = document.getElementById('newLabel').value.trim();
-    const url    = document.getElementById('newUrl').value.trim();
-    const is_ext = document.getElementById('newExt').checked ? 1 : 0;
+    const label      = document.getElementById('newLabel').value.trim();
+    const url        = document.getElementById('newUrl').value.trim();
+    const is_ext     = document.getElementById('newExt').checked ? 1 : 0;
+    const department = document.getElementById('newDept').value;
     if (!label || !url) return;
     fetch('api/backoffice_menu.php', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action:'add', label, url, is_ext})
+        body: JSON.stringify({action:'add', label, url, is_ext, department})
     })
     .then(r => r.json())
     .then(d => {
@@ -279,6 +304,7 @@ function addItem(e) {
           </td>
           <td><input class="mb-input" type="text" value="${esc(item.label)}" data-field="label" data-id="${item.id}" oninput="markDirty(this)"></td>
           <td><input class="mb-input" type="text" value="${esc(item.url)}"   data-field="url"   data-id="${item.id}" oninput="markDirty(this)"></td>
+          <td>${deptSelect(item.id, item.department || 'Operations')}</td>
           <td style="text-align:center"><input type="checkbox" class="toggle-cb" data-field="is_ext"  data-id="${item.id}" ${item.is_ext  ? 'checked' : ''} onchange="markDirty(this)"></td>
           <td style="text-align:center"><input type="checkbox" class="toggle-cb" data-field="enabled" data-id="${item.id}" checked onchange="markDirty(this)"></td>
           <td>
@@ -291,6 +317,7 @@ function addItem(e) {
         document.getElementById('newLabel').value = '';
         document.getElementById('newUrl').value   = '';
         document.getElementById('newExt').checked = false;
+        document.getElementById('newDept').value  = 'Operations';
     });
 }
 
@@ -306,6 +333,12 @@ function moveRow(id, dir) {
 
 function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+const DEPTS = ['Operations','Finance','Broker Files','Events','Agent Development','Technology','Human Resources'];
+function deptSelect(id, current) {
+    const opts = DEPTS.map(d => `<option value="${esc(d)}"${d === current ? ' selected' : ''}>${esc(d)}</option>`).join('');
+    return `<select class="mb-input" style="padding:3px 6px;font-size:12px" data-field="department" data-id="${id}" onchange="markDirty(this)">${opts}</select>`;
 }
 </script>
 </body>

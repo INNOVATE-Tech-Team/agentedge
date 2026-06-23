@@ -268,13 +268,15 @@ function local_db(): PDO {
 
     // Back Office menu builder — admin-defined items that appear in the Back Office sidebar section.
     $pdo->exec("CREATE TABLE IF NOT EXISTS backoffice_items (
-        id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        label    TEXT    NOT NULL,
-        url      TEXT    NOT NULL DEFAULT '#',
-        is_ext   INTEGER NOT NULL DEFAULT 0,
-        sort_ord INTEGER NOT NULL DEFAULT 0,
-        enabled  INTEGER NOT NULL DEFAULT 1
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        label      TEXT    NOT NULL,
+        url        TEXT    NOT NULL DEFAULT '#',
+        is_ext     INTEGER NOT NULL DEFAULT 0,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        department TEXT    NOT NULL DEFAULT 'Operations'
     )");
+    try { $pdo->exec("ALTER TABLE backoffice_items ADD COLUMN department TEXT NOT NULL DEFAULT 'Operations'"); } catch (\Exception $e) {}
 
     // ── Announcements ─────────────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS announcements (

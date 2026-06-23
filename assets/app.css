@@ -304,3 +304,5 @@ body.masquerading .layout{margin-top:36px}
 .dl-connect-cta{max-width:480px;margin:60px auto;text-align:center;padding:40px;background:white;border:1px solid #E6E7E8;border-radius:12px}
 .dl-connect-cta h2{font-size:20px;margin:0 0 12px}
 .dl-connect-cta p{font-size:14px;color:#666;margin:0 0 24px;line-height:1.6}
+.app-shell{display:flex;min-height:100vh}
+.main-content{flex:1;min-width:0;overflow-y:auto;padding:24px;background:var(--bg)}
