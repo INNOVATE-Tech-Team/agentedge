@@ -1,10 +1,10 @@
 <?php
 // Open House Portal — save/update a listing + its time slots.
 // POST-only handler, redirects back on success/error.
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/roles.php';
-require __DIR__ . '/local_db.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 
 $agent = require_login();
 

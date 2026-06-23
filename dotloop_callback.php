@@ -21,13 +21,14 @@ if ($returnedState === '' || $returnedState !== $storedState) {
 
 // ── Check for OAuth errors from DotLoop ──────────────────────────────────────
 if (!empty($_GET['error'])) {
-    header('Location: dotloop_connect.php?error=oauth_failed');
+    $detail = urlencode($_GET['error_description'] ?? $_GET['error']);
+    header("Location: dotloop_connect.php?error=oauth_failed&detail={$detail}");
     exit;
 }
 
 $code = $_GET['code'] ?? '';
 if ($code === '') {
-    header('Location: dotloop_connect.php?error=oauth_failed');
+    header('Location: dotloop_connect.php?error=oauth_failed&detail=no_code');
     exit;
 }
 
@@ -35,31 +36,31 @@ if ($code === '') {
 $c            = cfg();
 $clientId     = $c['dotloop_client_id']     ?? '';
 $clientSecret = $c['dotloop_client_secret'] ?? '';
-$redirectUri  = 'https://agents.innovateonline.com/dotloop_callback.php';
+$redirectUri  = $c['dotloop_redirect_uri'] ?? 'https://agentedge.innovateonline.com/dotloop_callback.php';
 
+$basicAuth = base64_encode($clientId . ':' . $clientSecret);
 $ctx = stream_context_create(['http' => [
     'method'        => 'POST',
     'timeout'       => 20,
-    'header'        => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n",
+    'header'        => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\nAuthorization: Basic {$basicAuth}\r\n",
     'content'       => http_build_query([
-        'grant_type'    => 'authorization_code',
-        'code'          => $code,
-        'redirect_uri'  => $redirectUri,
-        'client_id'     => $clientId,
-        'client_secret' => $clientSecret,
+        'grant_type'   => 'authorization_code',
+        'code'         => $code,
+        'redirect_uri' => $redirectUri,
     ]),
     'ignore_errors' => true,
 ]]);
 
 $raw = @file_get_contents(DOTLOOP_TOKEN_URL, false, $ctx);
 if ($raw === false) {
-    header('Location: dotloop_connect.php?error=oauth_failed');
+    header('Location: dotloop_connect.php?error=oauth_failed&detail=token_request_failed');
     exit;
 }
 
 $tokenData = json_decode($raw, true);
 if (empty($tokenData['access_token'])) {
-    header('Location: dotloop_connect.php?error=oauth_failed');
+    $detail = urlencode($tokenData['error_description'] ?? $tokenData['error'] ?? substr($raw, 0, 200));
+    header("Location: dotloop_connect.php?error=oauth_failed&detail={$detail}");
     exit;
 }
 
@@ -68,18 +69,30 @@ if (empty($tokenData['access_token'])) {
 $tokenData['profile_id'] = null;
 dotloop_save_tokens($email, $tokenData);
 
+// Try /profile/me first; fall back to /profile (returns array, take first)
 $profileResult = dotloop_api($email, 'GET', '/profile/me');
 if (!$profileResult['ok']) {
-    // Clean up incomplete tokens
+    $profileResult = dotloop_api($email, 'GET', '/profile');
+}
+
+if (!$profileResult['ok']) {
     local_db()->prepare("DELETE FROM dotloop_tokens WHERE agent_email = ?")->execute([$email]);
-    header('Location: dotloop_connect.php?error=profile_failed');
+    $detail = urlencode($profileResult['error'] ?? 'profile_api_failed');
+    header("Location: dotloop_connect.php?error=profile_failed&detail={$detail}");
     exit;
 }
 
-$profileId = (string)($profileResult['data']['id'] ?? '');
+// /profile returns an array; /profile/me returns a single object
+$profileData = $profileResult['data'];
+if (isset($profileData['data']) && is_array($profileData['data'])) {
+    $profileData = $profileData['data'][0] ?? [];
+}
+
+$profileId = (string)($profileData['id'] ?? '');
 if ($profileId === '') {
     local_db()->prepare("DELETE FROM dotloop_tokens WHERE agent_email = ?")->execute([$email]);
-    header('Location: dotloop_connect.php?error=profile_failed');
+    $rawDetail = urlencode(substr(json_encode($profileResult['data']), 0, 200));
+    header("Location: dotloop_connect.php?error=profile_failed&detail=no_id_{$rawDetail}");
     exit;
 }
 

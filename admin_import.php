@@ -1,9 +1,9 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/roles.php';
-require __DIR__ . '/local_db.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
+require_once __DIR__ . '/nav.php';
 
 $agent = require_login();
 if (!is_admin()) { header('Location: index.php'); exit; }
@@ -205,9 +205,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
           <div style="margin-top:20px"></div>
 
-          <div class="field-label">Market Center</div>
-          <select name="mc" class="field-select" required>
-            <option value="">— Select Market Center —</option>
+          <div class="field-label">Market Center <span style="font-weight:400;color:#aaa;font-size:10px;text-transform:none">(optional — assign later)</span></div>
+          <select name="mc" class="field-select">
+            <option value="">— Unassigned (assign later) —</option>
             <?php foreach ($mc_opts as $slug => $label): ?>
               <option value="<?= h($slug) ?>"><?= h($label) ?></option>
             <?php endforeach; ?>
@@ -246,9 +246,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <input type="hidden" name="action" value="import">
           <input type="hidden" name="rows" value="<?= h($raw_rows) ?>">
 
-          <div class="field-label">Market Center</div>
-          <select name="mc" class="field-select" required>
-            <option value="">— Select Market Center —</option>
+          <div class="field-label">Market Center <span style="font-weight:400;color:#aaa;font-size:10px;text-transform:none">(optional — assign later)</span></div>
+          <select name="mc" class="field-select">
+            <option value="">— Unassigned (assign later) —</option>
             <?php foreach ($mc_opts as $slug => $label): ?>
               <option value="<?= h($slug) ?>"<?= $mc_selected === $slug ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>

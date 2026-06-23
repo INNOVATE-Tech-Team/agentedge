@@ -1,8 +1,8 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/roles.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/nav.php';
 
 $agent = require_login();
 ?>

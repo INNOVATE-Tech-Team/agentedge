@@ -1,7 +1,7 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/nav.php';
 $agent = require_login();
 if (!is_admin()) { header('Location: index.php'); exit; }
 ?>

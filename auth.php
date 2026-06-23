@@ -1,4 +1,6 @@
 <?php
+if (defined('AGENTEDGE_AUTH_LOADED')) return;
+define('AGENTEDGE_AUTH_LOADED', true);
 // Session + auth helpers. Agents sign in with their existing Perfex (tblstaff)
 // email + password (bcrypt), so there's no new account to manage.
 

@@ -1,8 +1,8 @@
 <?php
 // Returns the signed-in agent's dashboard numbers as JSON, from the Perfex RE
 // module (tblre_transaction_agents), joined to their tblstaff login via staffid.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }

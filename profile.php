@@ -1,7 +1,7 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/nav.php';
 $agent = require_login();
 ?>
 <!doctype html>
@@ -55,9 +55,81 @@ $agent = require_login();
             </div>
           </form>
         </section>
+
+        <section class="card" style="margin-top:20px">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Notification Preferences</h2>
+          <p class="form-sub" style="margin:0 0 18px">Choose how you want to be notified when new announcements are posted.</p>
+          <div id="notif-msg" class="banner" hidden></div>
+
+          <div style="display:flex;flex-direction:column;gap:16px;max-width:420px">
+            <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer">
+              <div>
+                <div style="font-size:13px;font-weight:700">Email notifications</div>
+                <div style="font-size:12px;color:#888">Announcements sent to your login email</div>
+              </div>
+              <input type="checkbox" id="notif-email" style="width:18px;height:18px;accent-color:#82C112;cursor:pointer">
+            </label>
+
+            <div>
+              <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer">
+                <div>
+                  <div style="font-size:13px;font-weight:700">Text (SMS) notifications</div>
+                  <div style="font-size:12px;color:#888">Short announcement alerts to your mobile</div>
+                </div>
+                <input type="checkbox" id="notif-sms" style="width:18px;height:18px;accent-color:#82C112;cursor:pointer" onchange="togglePhoneField()">
+              </label>
+              <div id="phone-field" style="margin-top:10px;display:none">
+                <input type="tel" id="notif-phone" placeholder="(843) 555-1234"
+                  style="padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box">
+                <div style="font-size:11px;color:#aaa;margin-top:4px">US numbers only. Standard message rates apply.</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:18px">
+            <button class="btn-save" id="notif-save" onclick="saveNotifPrefs()">Save preferences</button>
+            <span id="notif-status" style="font-size:12px;color:#888;margin-left:10px"></span>
+          </div>
+        </section>
       </main>
     </div>
   </div>
   <script src="assets/profile.js"></script>
+  <script>
+  // ── Notification preferences ────────────────────────────────────────────────
+  (function(){
+    fetch('api/notify_prefs.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+      document.getElementById('notif-email').checked = !!d.notify_email;
+      document.getElementById('notif-sms').checked   = !!d.notify_sms;
+      if(d.sms_phone) document.getElementById('notif-phone').value = d.sms_phone;
+      togglePhoneField();
+    }).catch(()=>{});
+  })();
+
+  function togglePhoneField(){
+    const show = document.getElementById('notif-sms').checked;
+    document.getElementById('phone-field').style.display = show ? '' : 'none';
+  }
+
+  function saveNotifPrefs(){
+    const emailOn = document.getElementById('notif-email').checked;
+    const smsOn   = document.getElementById('notif-sms').checked;
+    const phone   = document.getElementById('notif-phone').value.trim();
+    if(smsOn && !phone){ alert('Please enter a phone number to enable SMS notifications.'); return; }
+    const btn = document.getElementById('notif-save');
+    const msg = document.getElementById('notif-status');
+    btn.disabled = true;
+    msg.textContent = 'Saving…';
+    fetch('api/notify_prefs.php',{
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({notify_email: emailOn?1:0, notify_sms: smsOn?1:0, sms_phone: phone}),
+    }).then(r=>r.json()).then(d=>{
+      btn.disabled = false;
+      if(d.ok){ msg.textContent='Saved!'; msg.style.color='#5b8e0d'; setTimeout(()=>msg.textContent='',3000); }
+      else { msg.textContent = d.error||'Error saving.'; msg.style.color='#c00'; }
+    }).catch(()=>{ btn.disabled=false; msg.textContent='Network error.'; msg.style.color='#c00'; });
+  }
+  </script>
 </body>
 </html>

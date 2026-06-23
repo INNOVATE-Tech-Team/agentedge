@@ -85,6 +85,19 @@ return [
     'trestle_client_id'     => '',
     'trestle_client_secret' => '',
 
+    // SendGrid — transactional email for announcements and other agent notifications.
+    // Get API key at: app.sendgrid.com → Settings → API Keys → Create API Key (Mail Send)
+    // Verified sender domain: innovateonline.com (domain auth already complete).
+    'sendgrid_key'  => '',                              // SG.xxxxxxxx
+    'sendgrid_from' => 'noreply@innovateonline.com',    // must be on verified domain
+    'sendgrid_name' => 'INNOVATE Real Estate',          // display name
+
+    // Twilio — SMS notifications for announcements.
+    // Find credentials at: console.twilio.com → Account Info
+    'twilio_sid'   => '',    // ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    'twilio_token' => '',    // your auth token
+    'twilio_from'  => '',    // your Twilio phone number, e.g. +18435551234
+
     // Follow Up Boss — auto-provisions new agents. Get key at: FUB → Admin → API
     'fub_api_key' => '',
 

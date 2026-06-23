@@ -1,9 +1,4 @@
 <?php
-// TEMP debugging — shows errors on the page while we get set up. Remove these
-// two lines before go-live.
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
 // Read-only MySQL connection (mysqli) to the Perfex database. AgentEdge only
 // ever runs SELECTs. Uses mysqli (which this PHP already has) rather than PDO.
 

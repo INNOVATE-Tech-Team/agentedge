@@ -1,8 +1,18 @@
 // Agent Roster — loads the retention roster, filters live, and sorts on header click.
 let ALL = [];
-let VIEW = [];
 let sortKey = 'name';
 let sortDir = 1; // 1 asc, -1 desc
+
+const COLLAPSE_KEY = 'roster_collapsed_mcs';
+
+function getCollapsed() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]')); }
+  catch(e) { return new Set(); }
+}
+
+function saveCollapsed(set) {
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set]));
+}
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -36,17 +46,10 @@ function roleBadge(email) {
   return `<span class="role-badge-sm role-${esc(cur.role)}">${esc((typeof ROLE_LABELS !== 'undefined' ? ROLE_LABELS[cur.role] : null) || cur.role)}</span> `;
 }
 
-function render(rows) {
-  const table = document.getElementById('roster-table');
-  const empty = document.getElementById('roster-empty');
-  const body  = document.getElementById('roster-body');
-  const count = document.getElementById('roster-count');
-  count.textContent = `${rows.length} agent${rows.length === 1 ? '' : 's'}`;
-  if (rows.length === 0) { table.hidden = true; empty.hidden = false; return; }
-  empty.hidden = true; table.hidden = false;
-  body.innerHTML = rows.map(a => `<tr>
+function agentCells(a) {
+  return `
     <td>${esc(a.name)}</td>
-    <td>${esc(a.marketCenter) || '—'}</td>
+    <td>${esc(a.marketCenter) || '<span class="muted">Unassigned</span>'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>
     ${IS_ADMIN ? `<td style="white-space:nowrap">
@@ -54,9 +57,10 @@ function render(rows) {
       <button class="btn-stats" data-email="${esc(a.email)}" data-name="${esc(a.name)}">Stats</button>
       ${(typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>
       <button class="btn-loginas" data-email="${esc(a.email)}" data-name="${esc(a.name)}" style="margin-left:4px">Log in as</button>` : ''}
-    </td>` : ''}
-  </tr>`).join('');
+    </td>` : ''}`;
+}
 
+function attachRowHandlers(body) {
   if (IS_ADMIN) {
     body.querySelectorAll('.btn-stats').forEach(btn => {
       btn.addEventListener('click', () => showStats(btn.dataset.email, btn.dataset.name));
@@ -72,6 +76,95 @@ function render(rows) {
   }
 }
 
+function render(rows) {
+  const table = document.getElementById('roster-table');
+  const empty = document.getElementById('roster-empty');
+  const body  = document.getElementById('roster-body');
+  const count = document.getElementById('roster-count');
+  count.textContent = `${rows.length} agent${rows.length === 1 ? '' : 's'}`;
+  if (rows.length === 0) { table.hidden = true; empty.hidden = false; return; }
+  empty.hidden = true; table.hidden = false;
+
+  const q = document.getElementById('roster-search').value.trim();
+  const colCount = IS_ADMIN ? 5 : 4;
+
+  if (q) {
+    // Searching — flat table, no groups
+    body.innerHTML = rows.map(a => `<tr>${agentCells(a)}</tr>`).join('');
+    attachRowHandlers(body);
+    return;
+  }
+
+  // Grouped view — collapse/expand by market center
+  const groups = new Map();
+  rows.forEach(a => {
+    const mc = a.marketCenter || '';
+    if (!groups.has(mc)) groups.set(mc, []);
+    groups.get(mc).push(a);
+  });
+
+  // Named MCs alphabetically; unassigned last
+  const sortedMcs = [...groups.keys()].sort((a, b) => {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+
+  const collapsed = getCollapsed();
+
+  let html = '';
+  sortedMcs.forEach(mc => {
+    const agents = groups.get(mc).slice().sort((a, b) =>
+      (a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1
+    );
+    const label = mc || 'Unassigned';
+    const isCollapsed = collapsed.has(mc);
+    const arrow = isCollapsed ? '▶' : '▼';
+    const mcEncoded = esc(encodeURIComponent(mc));
+
+    html += `<tr class="mc-group-header" data-mc="${mcEncoded}" style="cursor:pointer;background:#f5f7f3;user-select:none">
+      <td colspan="${colCount}" style="padding:8px 12px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#5b8e0d;border-bottom:2px solid #e0e8d8">
+        <span class="mc-toggle" style="display:inline-block;width:14px;font-size:10px">${arrow}</span>
+        ${esc(label)}
+        <span style="font-weight:500;color:#aaa;margin-left:6px">${agents.length} agent${agents.length !== 1 ? 's' : ''}</span>
+      </td>
+    </tr>`;
+
+    agents.forEach(a => {
+      html += `<tr class="mc-agent-row" data-mc="${mcEncoded}"${isCollapsed ? ' hidden' : ''}>${agentCells(a)}</tr>`;
+    });
+  });
+
+  body.innerHTML = html;
+
+  body.querySelectorAll('.mc-group-header').forEach(hdr => {
+    hdr.addEventListener('click', () => toggleGroup(hdr.dataset.mc));
+  });
+
+  attachRowHandlers(body);
+}
+
+function toggleGroup(mcEncoded) {
+  const mc = decodeURIComponent(mcEncoded);
+  const collapsed = getCollapsed();
+  const isNowCollapsed = !collapsed.has(mc);
+
+  document.querySelectorAll(`.mc-agent-row[data-mc="${esc(mcEncoded)}"]`).forEach(r => {
+    r.hidden = isNowCollapsed;
+  });
+
+  const hdr = document.querySelector(`.mc-group-header[data-mc="${esc(mcEncoded)}"]`);
+  if (hdr) {
+    const toggle = hdr.querySelector('.mc-toggle');
+    if (toggle) toggle.textContent = isNowCollapsed ? '▶' : '▼';
+  }
+
+  if (isNowCollapsed) collapsed.add(mc);
+  else collapsed.delete(mc);
+  saveCollapsed(collapsed);
+}
+
 function sortRows(rows) {
   return rows.slice().sort((a, b) => {
     const x = (a[sortKey] || '').toString().toLowerCase();
@@ -84,8 +177,8 @@ function refresh() {
   const q = document.getElementById('roster-search').value.trim().toLowerCase();
   let rows = ALL;
   if (q) rows = rows.filter(a => `${a.name} ${a.marketCenter} ${a.email}`.toLowerCase().includes(q));
-  VIEW = sortRows(rows);
-  render(VIEW);
+  rows = sortRows(rows);
+  render(rows);
   document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
     th.dataset.dir = th.dataset.sort === sortKey ? (sortDir === 1 ? 'asc' : 'desc') : '';

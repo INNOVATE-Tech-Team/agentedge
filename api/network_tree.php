@@ -1,9 +1,9 @@
 <?php
 // Returns the full network tree for a given agent email.
 // Leaders can query any email; agents can only query their own.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 header('Content-Type: application/json');
 
 $me = current_agent();

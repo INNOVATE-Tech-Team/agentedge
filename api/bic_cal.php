@@ -2,10 +2,10 @@
 // BIC / leader calendar feed — returns all agents' birthdays and work
 // anniversaries for the requested month as BIC-scoped calendar events.
 // Only accessible to BIC, MC leaders, and admin roles.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
-require __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../local_db.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();

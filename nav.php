@@ -34,7 +34,7 @@ function nav_items(): array {
         'roster'         => ['key' => 'roster',         'label' => 'Agent Roster',     'href' => 'roster.php'],
         'market_centers' => ['key' => 'market_centers', 'label' => 'Market Centers',   'href' => 'market_centers.php'],
         'network'    => ['key' => 'network',    'label' => 'My Network',       'href' => 'network.php'],
-        'onboarding' => ['key' => 'onboarding', 'label' => 'Onboarding',       'href' => 'onboarding.php', 'adminOnly' => true],
+        'intake'     => ['key' => 'intake',     'label' => 'Intake Form',       'href' => 'intake.php'],
         'calendar'          => ['key' => 'calendar',          'label' => 'Company Calendar', 'href' => 'calendar.php'],
         'industry_events'   => ['key' => 'industry_events',   'label' => 'Industry Events',   'href' => 'industry_events.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
@@ -67,8 +67,10 @@ function nav_items(): array {
 // Items that live under the Back Office collapsible (admin only).
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
-        ['key' => 'press_release',    'label' => 'Press Release Studio', 'href' => 'press_release.php'],
-        ['key' => 'bo_announcements',     'label' => 'Announcements',   'href' => 'backoffice_announcements.php'],
+        ['key' => 'backoffice_agents', 'label' => 'Agent Profiles',      'href' => 'backoffice_agents.php'],
+        ['key' => 'onboarding',        'label' => 'Onboarding Queue',    'href' => 'onboarding.php'],
+        ['key' => 'press_release',     'label' => 'Press Release Studio','href' => 'press_release.php'],
+        ['key' => 'bo_announcements',  'label' => 'Announcements',       'href' => 'backoffice_announcements.php'],
         ['key' => 'bo_industry_events',   'label' => 'Industry Events', 'href' => 'backoffice_industry_events.php'],
         ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
         ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],

@@ -40,13 +40,14 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['intake',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
             $ins->execute($r);
         }
     }
     // Ensure rows exist on existing installs
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['university',85]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['market_centers',25]);
+    $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['intake',40]);
 
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (
@@ -189,6 +190,54 @@ function local_db(): PDO {
     if (!is_dir($uploadDir)) @mkdir($uploadDir, 0750, true);
     $htaccess = $uploadDir . '/.htaccess';
     if (!file_exists($htaccess)) @file_put_contents($htaccess, "Deny from all\n");
+
+    // Agent intake form — native replacement for the Google Form onboarding sheet.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake (
+        email               TEXT PRIMARY KEY,
+        full_name           TEXT NOT NULL DEFAULT '',
+        phone               TEXT NOT NULL DEFAULT '',
+        license_number      TEXT NOT NULL DEFAULT '',
+        license_state       TEXT NOT NULL DEFAULT '',
+        license_exp         TEXT NOT NULL DEFAULT '',
+        nar_number          TEXT NOT NULL DEFAULT '',
+        mls_board           TEXT NOT NULL DEFAULT '',
+        mls_id              TEXT NOT NULL DEFAULT '',
+        office_location     TEXT NOT NULL DEFAULT '',
+        birthday            TEXT NOT NULL DEFAULT '',
+        mailing_address     TEXT NOT NULL DEFAULT '',
+        spouse_name         TEXT NOT NULL DEFAULT '',
+        emergency_name      TEXT NOT NULL DEFAULT '',
+        emergency_phone     TEXT NOT NULL DEFAULT '',
+        bio                 TEXT NOT NULL DEFAULT '',
+        tshirt_size         TEXT NOT NULL DEFAULT '',
+        is_military         TEXT NOT NULL DEFAULT '',
+        first_responder     TEXT NOT NULL DEFAULT '',
+        is_teacher          TEXT NOT NULL DEFAULT '',
+        phone_last4         TEXT NOT NULL DEFAULT '',
+        referring_agent     TEXT NOT NULL DEFAULT '',
+        languages           TEXT NOT NULL DEFAULT '',
+        submitted           INTEGER NOT NULL DEFAULT 0,
+        submitted_at        TEXT,
+        updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Headshot photos uploaded with the intake form (up to 5 per agent)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email TEXT NOT NULL,
+        file_key    TEXT NOT NULL UNIQUE,
+        orig_name   TEXT NOT NULL DEFAULT '',
+        mime_type   TEXT NOT NULL DEFAULT '',
+        size_bytes  INTEGER NOT NULL DEFAULT 0,
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_files_email ON agent_intake_files(agent_email)");
+
+    // Ensure headshots directory exists and is web-protected
+    $hsDir = $dir . '/headshots';
+    if (!is_dir($hsDir)) @mkdir($hsDir, 0750, true);
+    $hsHt  = $hsDir . '/.htaccess';
+    if (!file_exists($hsHt)) @file_put_contents($hsHt, "Deny from all\n");
 
     // Agents imported via CSV upload (not yet in CRM).
     $pdo->exec("CREATE TABLE IF NOT EXISTS imported_agents (

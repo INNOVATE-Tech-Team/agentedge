@@ -54,15 +54,14 @@ function dotloop_refresh_token(string $email): ?string {
     $clientSecret = $c['dotloop_client_secret'] ?? '';
     if ($clientId === '' || $clientSecret === '') return null;
 
+    $basicAuth = base64_encode($clientId . ':' . $clientSecret);
     $ctx = stream_context_create(['http' => [
         'method'        => 'POST',
         'timeout'       => 15,
-        'header'        => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n",
+        'header'        => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\nAuthorization: Basic {$basicAuth}\r\n",
         'content'       => http_build_query([
             'grant_type'    => 'refresh_token',
             'refresh_token' => $row['refresh_token'],
-            'client_id'     => $clientId,
-            'client_secret' => $clientSecret,
         ]),
         'ignore_errors' => true,
     ]]);

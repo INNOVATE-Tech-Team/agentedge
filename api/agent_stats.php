@@ -1,9 +1,9 @@
 <?php
 // Admin endpoint: returns dashboard stats for any agent by email.
 // Calls the Perfex bridge with action=dashboard_by_email.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();

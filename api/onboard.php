@@ -2,9 +2,9 @@
 // Onboarding API — lists market centers + agents (for the sponsor picker) and
 // creates a new agent in the bold360.vip CRM. Admin only. In preview/demo mode
 // the create is simulated (no write) so the production CRM isn't polluted.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 header('Content-Type: application/json');
 
 if (!current_agent()) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }

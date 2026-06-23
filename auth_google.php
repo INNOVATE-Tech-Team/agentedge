@@ -2,8 +2,8 @@
 // Google OAuth handler for AgentEdge.
 // ?start=1  → redirect to Google
 // ?code=...  → callback from Google
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
 
 if (current_agent()) { header('Location: index.php'); exit; }
 

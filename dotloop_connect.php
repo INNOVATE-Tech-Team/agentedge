@@ -15,11 +15,12 @@ $tokens    = $connected ? dotloop_get_tokens($email) : null;
 
 $errMsg = '';
 if (isset($_GET['error'])) {
+    $detail = !empty($_GET['detail']) ? ' (' . htmlspecialchars(urldecode($_GET['detail']), ENT_QUOTES) . ')' : '';
     $errMsg = match($_GET['error']) {
         'state_mismatch'   => 'OAuth state mismatch — please try connecting again.',
-        'oauth_failed'     => 'Could not exchange authorization code for tokens. Please try again.',
-        'profile_failed'   => 'Connected but failed to fetch your DotLoop profile. Please try again.',
-        default            => 'An error occurred. Please try again.',
+        'oauth_failed'     => 'Could not complete DotLoop authorization.' . $detail,
+        'profile_failed'   => 'Connected but failed to fetch your DotLoop profile.' . $detail,
+        default            => 'An error occurred. Please try again.' . $detail,
     };
 }
 ?>

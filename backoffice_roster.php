@@ -1,7 +1,8 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $perms = current_perms();
 if (empty($perms['isAdmin'])) {
@@ -16,10 +17,12 @@ $rows = local_db()
     ->query("SELECT * FROM innovate_roster WHERE active=1 ORDER BY state_code, market_center, agent_name")
     ->fetchAll(PDO::FETCH_ASSOC);
 
+define('MC_UNASSIGNED', '__unassigned__');
+
 $byState = [];
 foreach ($rows as $r) {
     $st = $r['state_code'];
-    $mc = $r['market_center'] ?: '—';
+    $mc = $r['market_center'] !== '' ? $r['market_center'] : MC_UNASSIGNED;
     $byState[$st][$mc][] = $r;
 }
 
@@ -28,7 +31,7 @@ $uniqueTotal = (int)local_db()
     ->query("SELECT COUNT(DISTINCT agent_name) FROM innovate_roster WHERE active=1")
     ->fetchColumn();
 
-// Summary counts per state (unique within each state).
+// Summary counts per state (unique within each state). MC count excludes the unassigned bucket.
 $stateMeta = [];
 foreach ($byState as $st => $mcs) {
     $total = 0; $exp = 0; $warn = 0; $seen = [];
@@ -41,7 +44,8 @@ foreach ($byState as $st => $mcs) {
             elseif ($a['license_exp'] && $a['license_exp'] <= $warn60) $warn++;
         }
     }
-    $stateMeta[$st] = ['total'=>$total,'mc_count'=>count($mcs),'expired'=>$exp,'expiring'=>$warn];
+    $namedMcCount = count(array_filter(array_keys($mcs), fn($k) => $k !== MC_UNASSIGNED));
+    $stateMeta[$st] = ['total'=>$total,'mc_count'=>$namedMcCount,'expired'=>$exp,'expiring'=>$warn];
 }
 
 $stateNames = [
@@ -57,12 +61,56 @@ $tierClass  = [1=>'tier1',2=>'tier2',3=>'tier3'];
 $activeState = $_GET['state'] ?? (array_key_first($byState) ?: 'SC');
 if (!isset($byState[$activeState])) $activeState = array_key_first($byState) ?: 'SC';
 
-// MC list for the active state (for the add-agent datalist)
+// MC list for the active state (for the add-agent datalist) — excludes the unassigned bucket
 $mcList = [];
 if (isset($byState[$activeState])) {
-    $mcList = array_keys($byState[$activeState]);
-    if (($i = array_search('—', $mcList)) !== false) unset($mcList[$i]);
+    $mcList = array_filter(array_keys($byState[$activeState]), fn($k) => $k !== MC_UNASSIGNED);
     $mcList = array_values($mcList);
+}
+
+// Build ordered group for the active state:
+//   1. Named MCs in market_centers table order (so the master list order is respected)
+//   2. Any MC names in the roster that aren't in the master list (orphaned text values)
+//   3. Unassigned agents last
+$activeGroups = [];
+if (isset($byState[$activeState])) {
+    $statePool = $byState[$activeState];
+    // 1. MCs in master-list order
+    $masterNames = array_column(
+        local_db()->query("SELECT name FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")->fetchAll(PDO::FETCH_ASSOC),
+        'name'
+    );
+    foreach ($masterNames as $n) {
+        if (isset($statePool[$n])) { $activeGroups[$n] = $statePool[$n]; }
+    }
+    // 2. Orphaned MC names (in roster but not in master list)
+    foreach ($statePool as $k => $v) {
+        if ($k !== MC_UNASSIGNED && !isset($activeGroups[$k])) { $activeGroups[$k] = $v; }
+    }
+    // 3. Unassigned last
+    if (isset($statePool[MC_UNASSIGNED])) { $activeGroups[MC_UNASSIGNED] = $statePool[MC_UNASSIGNED]; }
+}
+
+// MC options for bulk-assign dropdown (from market_centers table)
+$mcOptsAssign = local_db()
+    ->query("SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
+    ->fetchAll(PDO::FETCH_ASSOC);
+
+
+// BIC options for bulk-assign dropdown
+$bicOpts = local_db()
+    ->query("SELECT email FROM agent_roles WHERE role='bic' ORDER BY email")
+    ->fetchAll(PDO::FETCH_COLUMN);
+
+// MC Leader options for add-MC modal
+$mcLeaderOpts = local_db()
+    ->query("SELECT email FROM agent_roles WHERE role='mc_leader' ORDER BY email")
+    ->fetchAll(PDO::FETCH_COLUMN);
+
+// MC metadata map: display name → {slug, bic_email, mc_leader_email} for heading chips
+$mcMeta = [];
+foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM market_centers")->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $mcMeta[$row['name']] = $row;
 }
 ?>
 <!DOCTYPE html>
@@ -105,9 +153,23 @@ if (isset($byState[$activeState])) {
 .detail-title{font-size:18px;font-weight:800}
 .detail-sub{font-size:12px;color:var(--faint)}
 .mc-heading{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
-            color:var(--faint);padding:10px 18px 6px;border-top:1px solid var(--border);
-            background:#fafbfa;display:flex;align-items:center;gap:10px}
+            color:var(--faint);padding:10px 18px 8px;border-top:1px solid var(--border);
+            background:#fafbfa;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+            cursor:pointer;user-select:none}
+.mc-heading:hover{background:#f2f6ee}
 .mc-heading span{flex:1}
+.mc-heading-unassigned{background:#fafafa;border-top:2px dashed #ddd;color:#bbb}
+.mc-heading-unassigned:hover{background:#f5f5f5}
+.mc-chevron{flex-shrink:0;width:14px;height:14px;display:inline-flex;align-items:center;
+            justify-content:center;color:var(--faint);font-size:9px;transition:transform .18s;
+            font-style:normal}
+.mc-heading.mc-open .mc-chevron{transform:rotate(90deg)}
+.mc-group-content{display:none}
+.mc-group-content.mc-open{display:block}
+.mc-role-chip{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;
+              white-space:nowrap;text-transform:none;letter-spacing:0}
+.mc-bic-chip{background:#fff4e0;color:#a07221}
+.mc-leader-chip{background:#eef5e8;color:#5b8e0d}
 .agent-table{width:100%;border-collapse:collapse;font-size:13px}
 .agent-table th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
                 color:var(--faint);padding:8px 18px;text-align:left;white-space:nowrap}
@@ -123,15 +185,73 @@ if (isset($byState[$activeState])) {
 .prod-deals{font-size:11px;color:var(--muted);white-space:nowrap}
 .prod-none {color:var(--faint);font-size:11px}
 
+
 /* Remove button */
 .btn-remove{background:none;border:none;color:var(--faint);font-size:14px;cursor:pointer;
             padding:2px 6px;border-radius:4px;line-height:1;opacity:.5;transition:opacity .15s}
 .btn-remove:hover{opacity:1;color:var(--red,#c0392b);background:#fdecea}
 
+/* Move-MC per-row */
+.btn-move-mc{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
+             padding:2px 6px;border-radius:4px;opacity:.45;transition:opacity .15s;white-space:nowrap}
+.btn-move-mc:hover{opacity:1;background:#f0f5e8;color:#5b8e0d}
+.move-mc-inline{display:none;align-items:center;gap:5px}
+.move-mc-inline.open{display:flex}
+.move-mc-select{font-size:11px;padding:3px 6px;border:1px solid var(--green);border-radius:4px;
+                background:#fff;max-width:160px}
+.btn-move-save{padding:3px 9px;background:var(--green);color:#111;border:0;border-radius:4px;
+               font-size:11px;font-weight:700;cursor:pointer}
+.btn-move-cancel{padding:3px 7px;border:1px solid #ccc;background:#fff;color:#555;
+                 border-radius:4px;font-size:11px;cursor:pointer}
+
 /* Add-agent button */
 .btn-add-agent{font-size:11px;font-weight:700;padding:4px 12px;background:var(--green);color:#111;
                border:0;border-radius:6px;cursor:pointer;white-space:nowrap;text-decoration:none}
 .btn-add-agent:hover{background:var(--green-d,#5b8e0d);color:#fff}
+
+/* Checkboxes */
+.agent-cb,.mc-sel-all{accent-color:#82C112;width:14px;height:14px;cursor:pointer;flex-shrink:0}
+.cb-cell{width:32px;padding-left:14px!important;padding-right:4px!important}
+
+/* MC Edit & Delete */
+.btn-edit-mc{padding:3px 9px;border:1px solid var(--border);background:#fff;color:#444;
+             border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn-edit-mc:hover{border-color:var(--green);color:#5b8e0d;background:#f0f8e8}
+.btn-delete-mc{padding:3px 9px;border:1px solid #fcc;background:#fff;color:#c00;
+               border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn-delete-mc:hover{background:#fff0f0}
+.mc-edit-panel{background:#f4fbec;border-top:2px solid var(--green);padding:14px 18px;display:none}
+.mc-edit-panel.open{display:block}
+.mc-edit-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.mc-edit-field{display:flex;flex-direction:column;gap:3px}
+.mc-edit-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+.mc-edit-input{padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:#fff;min-width:200px}
+.mc-edit-input:focus{outline:2px solid var(--green);border-color:var(--green)}
+.mc-edit-select{padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:#fff;min-width:200px}
+.mc-edit-select:focus{outline:2px solid var(--green);border-color:var(--green)}
+.mc-edit-actions{display:flex;gap:7px}
+.mc-edit-save{padding:6px 16px;background:var(--green);color:#111;border:0;border-radius:5px;
+              font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap}
+.mc-edit-save:hover{background:var(--green-d,#5b8e0d);color:#fff}
+.mc-edit-cancel{padding:6px 12px;border:1px solid #ccc;background:#fff;color:#555;
+                border-radius:5px;font-size:12px;cursor:pointer}
+
+/* Bulk action bar */
+#bulk-bar{position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#fff;
+          padding:12px 20px;display:none;align-items:center;gap:12px;flex-wrap:wrap;
+          z-index:500;box-shadow:0 -2px 12px rgba(0,0,0,.25)}
+#bulk-bar.open{display:flex}
+#bulk-count{font-size:13px;font-weight:700;white-space:nowrap;min-width:80px}
+.bulk-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+            color:#aaa;white-space:nowrap}
+.bulk-select{padding:6px 10px;border-radius:5px;border:1px solid #444;background:#2a2a2a;
+             color:#fff;font-size:12px;min-width:160px}
+.btn-bulk-assign{padding:8px 18px;background:#82C112;color:#111;border:0;border-radius:5px;
+                 font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap}
+.btn-bulk-assign:hover{background:#6da00f}
+.btn-bulk-clear{padding:8px 12px;background:none;border:1px solid #555;color:#ccc;
+                border-radius:5px;font-size:12px;cursor:pointer}
+.btn-bulk-clear:hover{border-color:#888;color:#fff}
 
 /* Modal */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;
@@ -237,7 +357,7 @@ if (isset($byState[$activeState])) {
     </div>
 
     <!-- Detail panel -->
-    <?php if (isset($byState[$activeState])): ?>
+    <?php if ($activeGroups): ?>
     <?php $m = $stateMeta[$activeState]; $tier = $stateTiers[$activeState] ?? 0; ?>
     <div class="detail-panel">
       <div class="detail-header">
@@ -251,18 +371,85 @@ if (isset($byState[$activeState])) {
             <?php if ($m['expired']): ?>&nbsp;·&nbsp;<span style="color:#c0392b;font-weight:700"><?= $m['expired'] ?> expired</span><?php endif; ?>
             <?php if ($m['expiring']): ?>&nbsp;·&nbsp;<span style="color:#c87800;font-weight:700"><?= $m['expiring'] ?> expiring</span><?php endif; ?>
           </div>
+          <?php if (is_super_admin()): ?>
+          <button class="btn-add-agent" style="background:#f0f0f0;color:#555;border:1px solid #ddd"
+                  id="btn-import-mc" onclick="importMCsFromRoster()">↓ Import MCs from CRM</button>
+          <button class="btn-add-agent" style="background:#f0f5e8;color:#5b8e0d;border:1px solid #c3dfa8" onclick="openAddMCModal()">+ Add MC</button>
+          <?php endif; ?>
           <button class="btn-add-agent" onclick="openAddModal()">+ Add Agent</button>
         </div>
       </div>
 
-      <?php foreach ($byState[$activeState] as $mc => $agents): ?>
+      <?php foreach ($activeGroups as $mc => $agents):
+        $isUnassigned = ($mc === MC_UNASSIGNED);
+        $mcLabel  = $isUnassigned ? 'Unassigned Agents' : $mc;
+        $mcJson   = htmlspecialchars(json_encode($mc), ENT_QUOTES);
+        $mcSlug   = $isUnassigned ? '' : ($mcMeta[$mc]['slug'] ?? '');
+        $mcSlugJ  = htmlspecialchars(json_encode($mcSlug), ENT_QUOTES);
+        $mcBic    = $isUnassigned ? '' : ($mcMeta[$mc]['bic_email']      ?? '');
+        $mcLeader = $isUnassigned ? '' : ($mcMeta[$mc]['mc_leader_email'] ?? '');
+        $mcEditId = 'mc-edit-' . md5($mc);
+      ?>
       <div>
-        <div class="mc-heading">
-          <span><?= htmlspecialchars($mc) ?> — <?= count($agents) ?> agent<?= count($agents)!==1?'s':'' ?></span>
+        <div class="mc-heading<?= $isUnassigned ? ' mc-heading-unassigned' : '' ?>"
+             data-content-id="mc-content-<?= $mcEditId ?>">
+          <input type="checkbox" class="mc-sel-all" title="Select all in this group"
+                 onchange="toggleMcAll(this, <?= $mcJson ?>)">
+          <i class="mc-chevron">&#9654;</i>
+          <span class="mc-name-label"><?= htmlspecialchars($mcLabel) ?> &mdash; <?= count($agents) ?> agent<?= count($agents)!==1?'s':'' ?></span>
+          <?php if (!$isUnassigned && $mcBic): ?>
+          <span class="mc-role-chip mc-bic-chip">BIC: <?= htmlspecialchars($mcBic) ?></span>
+          <?php endif; ?>
+          <?php if (!$isUnassigned && $mcLeader): ?>
+          <span class="mc-role-chip mc-leader-chip">Leader: <?= htmlspecialchars($mcLeader) ?></span>
+          <?php endif; ?>
+          <?php if (!$isUnassigned && is_super_admin()): ?>
+          <div style="margin-left:auto;display:flex;gap:5px;flex-shrink:0">
+            <button class="btn-edit-mc" onclick="toggleEditMC('<?= $mcEditId ?>')">Edit</button>
+            <button class="btn-delete-mc"
+                    onclick="deleteMC(<?= $mcSlugJ ?>, <?= $mcJson ?>, <?= count($agents) ?>)">Delete</button>
+          </div>
+          <?php endif; ?>
         </div>
+        <?php if (!$isUnassigned && is_super_admin()): ?>
+        <div class="mc-edit-panel" id="<?= $mcEditId ?>">
+          <div class="mc-edit-row">
+            <div class="mc-edit-field">
+              <label class="mc-edit-label">Name</label>
+              <input class="mc-edit-input mc-edit-name" type="text"
+                     value="<?= htmlspecialchars($mc) ?>" maxlength="80" autocomplete="off">
+            </div>
+            <div class="mc-edit-field">
+              <label class="mc-edit-label">BIC (Broker in Charge)</label>
+              <select class="mc-edit-select mc-edit-bic">
+                <option value="">— none —</option>
+                <?php foreach ($bicOpts as $be): ?>
+                <option value="<?= htmlspecialchars($be) ?>"<?= $be===$mcBic?' selected':'' ?>><?= htmlspecialchars($be) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="mc-edit-field">
+              <label class="mc-edit-label">MC Leader</label>
+              <select class="mc-edit-select mc-edit-leader">
+                <option value="">— none —</option>
+                <?php foreach ($mcLeaderOpts as $le): ?>
+                <option value="<?= htmlspecialchars($le) ?>"<?= $le===$mcLeader?' selected':'' ?>><?= htmlspecialchars($le) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+          </div>
+          <div class="mc-edit-actions">
+            <button class="mc-edit-save"
+                    onclick="saveEditMC('<?= $mcEditId ?>', <?= $mcJson ?>, <?= $mcSlugJ ?>)">Save Changes</button>
+            <button class="mc-edit-cancel" onclick="toggleEditMC('<?= $mcEditId ?>')">Cancel</button>
+          </div>
+        </div>
+        <?php endif; ?>
+        <div class="mc-group-content" id="mc-content-<?= $mcEditId ?>">
         <table class="agent-table">
           <thead>
             <tr>
+              <th class="cb-cell"></th>
               <th>Name</th>
               <th>Volume</th>
               <th>Deals</th>
@@ -272,8 +459,29 @@ if (isset($byState[$activeState])) {
           </thead>
           <tbody>
             <?php foreach ($agents as $a): ?>
-            <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-roster-id="<?= $a['id'] ?>">
-              <td><?= htmlspecialchars($a['agent_name']) ?></td>
+            <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>" data-roster-id="<?= $a['id'] ?>">
+              <td class="cb-cell">
+                <input type="checkbox" class="agent-cb" data-name="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>">
+              </td>
+              <td>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span><?= htmlspecialchars($a['agent_name']) ?></span>
+                  <button class="btn-move-mc" title="Move to a different Market Center"
+                          onclick="openMoveMC(this, <?= $a['id'] ?>, <?= json_encode($mc) ?>)">↪ Move</button>
+                  <div class="move-mc-inline" id="move-mc-<?= $a['id'] ?>">
+                    <select class="move-mc-select">
+                      <option value="">— pick MC —</option>
+                      <?php foreach ($mcOptsAssign as $opt): ?>
+                      <?php $optLabel = ($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']; ?>
+                      <option value="<?= htmlspecialchars($opt['name']) ?>"
+                        <?= $opt['name']===$mc?' selected':'' ?>><?= htmlspecialchars($optLabel) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                    <button class="btn-move-save" onclick="saveMoveMC(<?= $a['id'] ?>)">Save</button>
+                    <button class="btn-move-cancel" onclick="closeMoveMC(<?= $a['id'] ?>)">✕</button>
+                  </div>
+                </div>
+              </td>
               <td class="prod-cell-vol"><span class="prod-none">—</span></td>
               <td class="prod-cell-deals"><span class="prod-none">—</span></td>
               <?php if ($activeState==='SC'): ?>
@@ -295,14 +503,38 @@ if (isset($byState[$activeState])) {
             <?php endforeach; ?>
           </tbody>
         </table>
+        </div><!-- /mc-group-content -->
       </div>
       <?php endforeach; ?>
     </div>
     <?php endif; ?>
 
+
   </div><!-- /wrap -->
 </div><!-- /content -->
 </div><!-- /layout -->
+
+<!-- Bulk Assign Bar -->
+<div id="bulk-bar">
+  <span id="bulk-count">0 selected</span>
+  <span class="bulk-label">Assign to MC</span>
+  <select id="bulk-mc" class="bulk-select">
+    <option value="">— pick a Market Center —</option>
+    <?php foreach ($mcOptsAssign as $mc): ?>
+    <?php $optLabel = ($mc['state_code'] ? $mc['state_code'] . ' - ' : '') . $mc['name']; ?>
+    <option value="<?= htmlspecialchars($mc['slug']) ?>"><?= htmlspecialchars($optLabel) ?></option>
+    <?php endforeach; ?>
+  </select>
+  <span class="bulk-label">BIC</span>
+  <select id="bulk-bic" class="bulk-select">
+    <option value="">— none / keep existing —</option>
+    <?php foreach ($bicOpts as $be): ?>
+    <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars($be) ?></option>
+    <?php endforeach; ?>
+  </select>
+  <button class="btn-bulk-assign" onclick="doBulkAssign()">Assign</button>
+  <button class="btn-bulk-clear" onclick="clearSelection()">Clear</button>
+</div>
 
 <!-- Add Agent Modal -->
 <div class="modal-overlay" id="addModalOverlay">
@@ -335,9 +567,46 @@ if (isset($byState[$activeState])) {
   </div>
 </div>
 
+<!-- Add MC Modal -->
+<div class="modal-overlay" id="addMCModalOverlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeAddMCModal()">×</button>
+    <h3>Add Market Center</h3>
+    <div class="modal-sub">Create a new Market Center. Agents can then be assigned to it.</div>
+    <label class="mf-label">Market Center Name</label>
+    <input id="mc-name" class="mf-input" type="text" placeholder="e.g. SC - Myrtle Beach" maxlength="80" autocomplete="off">
+    <label class="mf-label">State</label>
+    <select id="mc-state" class="mf-input">
+      <?php foreach ($stateNames as $code => $name): ?>
+      <option value="<?= $code ?>"<?= $code===$activeState?' selected':'' ?>><?= htmlspecialchars($name) ?> (<?= $code ?>)</option>
+      <?php endforeach; ?>
+    </select>
+    <label class="mf-label">BIC (Broker in Charge) <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+    <select id="mc-bic" class="mf-input">
+      <option value="">— none —</option>
+      <?php foreach ($bicOpts as $be): ?>
+      <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars($be) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <label class="mf-label">MC Leader <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+    <select id="mc-leader" class="mf-input">
+      <option value="">— none —</option>
+      <?php foreach ($mcLeaderOpts as $le): ?>
+      <option value="<?= htmlspecialchars($le) ?>"><?= htmlspecialchars($le) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <div class="mf-err" id="mc-err"></div>
+    <div class="mf-btns">
+      <button class="mf-save" id="mc-save" onclick="saveNewMC()">Add Market Center</button>
+      <button class="mf-cancel" onclick="closeAddMCModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const ACTIVE_STATE = <?= json_encode($activeState) ?>;
 const STATE_URL    = 'backoffice_roster.php?state=' + encodeURIComponent(ACTIVE_STATE);
+const MC_OPTS      = <?= json_encode(array_column($mcOptsAssign, 'name', 'slug')) ?>;
 
 // ── Add agent modal ──────────────────────────────────────────────────────────
 function openAddModal() {
@@ -392,6 +661,49 @@ function saveNewAgent() {
     .catch(()=>{ btn.disabled=false; btn.textContent='Add to Roster'; err.textContent='Network error.'; err.style.display=''; });
 }
 
+// ── Add MC modal ──────────────────────────────────────────────────────────────
+function openAddMCModal() {
+    document.getElementById('addMCModalOverlay').classList.add('open');
+    document.getElementById('mc-name').focus();
+}
+function closeAddMCModal() {
+    document.getElementById('addMCModalOverlay').classList.remove('open');
+    document.getElementById('mc-err').style.display = 'none';
+}
+document.getElementById('addMCModalOverlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeAddMCModal();
+});
+
+function saveNewMC() {
+    const name   = document.getElementById('mc-name').value.trim();
+    const state  = document.getElementById('mc-state').value;
+    const bic    = document.getElementById('mc-bic').value;
+    const leader = document.getElementById('mc-leader').value;
+    const err    = document.getElementById('mc-err');
+    err.style.display = 'none';
+    if (!name) { err.textContent = 'Market Center name is required.'; err.style.display = ''; return; }
+
+    const btn = document.getElementById('mc-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+
+    fetch('api/mc_action.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action:'save', name, state_code:state, sort_ord:0, bic_email:bic, mc_leader_email:leader})
+    })
+    .then(r => r.json())
+    .then(d => {
+        btn.disabled = false; btn.textContent = 'Add Market Center';
+        if (!d.ok) { err.textContent = d.error || 'Error saving.'; err.style.display = ''; return; }
+        closeAddMCModal();
+        window.location.href = 'backoffice_roster.php?state=' + encodeURIComponent(state);
+    })
+    .catch(() => {
+        btn.disabled = false; btn.textContent = 'Add Market Center';
+        err.textContent = 'Network error.'; err.style.display = '';
+    });
+}
+
 // ── Remove agent ─────────────────────────────────────────────────────────────
 function removeAgent(id, name) {
     if (!confirm('Remove ' + name + ' from the roster?\n\nThis is logged and can be reviewed in Weekly Changes. The agent can be restored from the changes report.')) return;
@@ -411,6 +723,210 @@ function removeAgent(id, name) {
             }
         }
     });
+}
+
+// ── Bulk selection ───────────────────────────────────────────────────────────
+function updateBulkBar() {
+    const checked = document.querySelectorAll('.agent-cb:checked');
+    const bar = document.getElementById('bulk-bar');
+    const count = document.getElementById('bulk-count');
+    count.textContent = checked.length + ' selected';
+    bar.classList.toggle('open', checked.length > 0);
+}
+
+function toggleMcAll(masterCb, mcName) {
+    document.querySelectorAll(`.agent-cb[data-mc="${CSS.escape(mcName)}"]`)
+        .forEach(cb => { cb.checked = masterCb.checked; });
+    updateBulkBar();
+}
+
+function clearSelection() {
+    document.querySelectorAll('.agent-cb,.mc-sel-all').forEach(cb => cb.checked = false);
+    updateBulkBar();
+}
+
+document.addEventListener('change', e => {
+    if (e.target.classList.contains('agent-cb')) updateBulkBar();
+});
+
+function doBulkAssign() {
+    const names = Array.from(document.querySelectorAll('.agent-cb:checked'))
+                       .map(cb => cb.dataset.name);
+    if (!names.length) return;
+    const mcSlug   = document.getElementById('bulk-mc').value;
+    const bicEmail = document.getElementById('bulk-bic').value;
+    if (!mcSlug) { alert('Please choose a Market Center.'); return; }
+
+    const btn = document.querySelector('.btn-bulk-assign');
+    btn.disabled = true; btn.textContent = 'Assigning…';
+
+    fetch('api/roster_agent.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'bulk_assign', agent_names:names, mc_slug:mcSlug,
+                              bic_email:bicEmail, state_code:ACTIVE_STATE})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        btn.disabled = false; btn.textContent = 'Assign';
+        if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+        // Reload so agents appear under their new MC group
+        window.location.reload();
+    })
+    .catch(()=>{ btn.disabled=false; btn.textContent='Assign'; alert('Network error.'); });
+}
+
+// ── Move single agent to a different MC ──────────────────────────────────────
+function openMoveMC(btn, rosterId, currentMC) {
+    // Close any other open move panels
+    document.querySelectorAll('.move-mc-inline.open').forEach(el => {
+        if (el.id !== 'move-mc-' + rosterId) el.classList.remove('open');
+    });
+    document.querySelectorAll('.btn-move-mc').forEach(b => b.style.display = '');
+    const wrap = document.getElementById('move-mc-' + rosterId);
+    const isOpen = wrap.classList.contains('open');
+    if (isOpen) { wrap.classList.remove('open'); return; }
+    btn.style.display = 'none';
+    wrap.classList.add('open');
+    wrap.querySelector('.move-mc-select').focus();
+}
+
+function closeMoveMC(rosterId) {
+    const wrap = document.getElementById('move-mc-' + rosterId);
+    wrap.classList.remove('open');
+    const row = wrap.closest('tr');
+    if (row) {
+        const btn = row.querySelector('.btn-move-mc');
+        if (btn) btn.style.display = '';
+    }
+}
+
+function saveMoveMC(rosterId) {
+    const wrap   = document.getElementById('move-mc-' + rosterId);
+    const mcName = wrap.querySelector('.move-mc-select').value;
+    if (!mcName) { alert('Please pick a Market Center.'); return; }
+
+    const saveBtn = wrap.querySelector('.btn-move-save');
+    saveBtn.disabled = true; saveBtn.textContent = '…';
+
+    fetch('api/roster_agent.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'move_mc', id:rosterId, mc_name:mcName})
+    })
+    .then(r => r.json())
+    .then(d => {
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
+        if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+        window.location.reload();
+    })
+    .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
+}
+
+// ── Edit MC (name + BIC + leader) ────────────────────────────────────────────
+
+function saveEditMC(panelId, oldName, slug) {
+    const panel   = document.getElementById(panelId);
+    const newName = panel.querySelector('.mc-edit-name').value.trim();
+    const bic     = panel.querySelector('.mc-edit-bic').value;
+    const leader  = panel.querySelector('.mc-edit-leader').value;
+    if (!newName) { alert('Name is required.'); return; }
+
+    const btn = panel.querySelector('.mc-edit-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+
+    // If we have a slug, use mc_action for full save (propagates BIC to agent_roles)
+    // Always also run rename_mc to update innovate_roster rows
+    const saves = [];
+
+    if (slug) {
+        saves.push(fetch('api/mc_action.php', {
+            method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:'save', edit_slug:slug, name:newName,
+                                  state_code:ACTIVE_STATE, sort_ord:0,
+                                  bic_email:bic, mc_leader_email:leader})
+        }).then(r=>r.json()));
+    }
+
+    if (newName !== oldName) {
+        saves.push(fetch('api/roster_agent.php', {
+            method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:'rename_mc', old_name:oldName, new_name:newName, state_code:ACTIVE_STATE})
+        }).then(r=>r.json()));
+    }
+
+    Promise.all(saves).then(results => {
+        btn.disabled = false; btn.textContent = 'Save Changes';
+        const failed = results.find(r => !r.ok);
+        if (failed) { alert('Save failed: ' + (failed.error||'Unknown')); return; }
+        window.location.reload();
+    }).catch(err => {
+        btn.disabled = false; btn.textContent = 'Save Changes';
+        alert('Error: ' + err.message);
+    });
+}
+
+function deleteMC(slug, mcName, agentCount) {
+    const msg = agentCount > 0
+        ? `Delete "${mcName}"?\n\n${agentCount} agent${agentCount!==1?'s':''} will remain in the roster but won't be assigned to any Market Center. You can reassign them afterwards.`
+        : `Delete "${mcName}"?`;
+    if (!confirm(msg)) return;
+
+    fetch('api/mc_action.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'delete', slug})
+    })
+    .then(r=>r.json())
+    .then(d => {
+        if (!d.ok) { alert('Delete failed: ' + (d.error||'Unknown')); return; }
+        window.location.reload();
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function importMCsFromRoster() {
+    const btn = document.getElementById('btn-import-mc');
+    btn.disabled = true; btn.textContent = 'Importing…';
+    fetch('api/mc_action.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'import'})
+    })
+    .then(r=>r.json())
+    .then(d => {
+        btn.disabled = false; btn.textContent = '↓ Import MCs from CRM';
+        if (!d.ok) { alert('Import failed: ' + (d.error||'Unknown')); return; }
+        if (d.added === 0) { alert('All CRM Market Centers are already in the list.'); return; }
+        alert(`Imported ${d.added} new Market Center${d.added!==1?'s':''} from the CRM.`);
+        window.location.reload();
+    })
+    .catch(err => { btn.disabled=false; btn.textContent='↓ Import MCs from CRM'; alert('Error: '+err.message); });
+}
+
+// ── Collapsible MC groups ────────────────────────────────────────────────────
+function toggleMCGroup(heading) {
+    const contentId = heading.dataset.contentId;
+    const content = document.getElementById(contentId);
+    if (!content) return;
+    const isOpen = heading.classList.contains('mc-open');
+    heading.classList.toggle('mc-open', !isOpen);
+    content.classList.toggle('mc-open', !isOpen);
+}
+document.querySelectorAll('.mc-heading').forEach(function(h) {
+    h.addEventListener('click', function(e) {
+        if (e.target.closest('button,input,select,a,label')) return;
+        toggleMCGroup(h);
+    });
+});
+
+function toggleEditMC(panelId) {
+    const panel = document.getElementById(panelId);
+    const isOpen = panel.classList.contains('open');
+    document.querySelectorAll('.mc-edit-panel.open').forEach(p => p.classList.remove('open'));
+    if (!isOpen) { panel.classList.add('open'); panel.querySelector('.mc-edit-name').focus(); }
 }
 
 // ── Production enrichment ────────────────────────────────────────────────────

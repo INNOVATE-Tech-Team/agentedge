@@ -1,9 +1,9 @@
 <?php
 // Open House Portal — MLS lookup via Trestle API (OAuth2 client credentials).
 // GET ?mls=XXXXX  → JSON with property details or {"error":"..."}
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../local_db.php';
 
 header('Content-Type: application/json');
 

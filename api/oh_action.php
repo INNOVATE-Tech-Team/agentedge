@@ -1,10 +1,10 @@
 <?php
 // Open House Portal — action handler. All mutating operations go through here.
 // Returns JSON. Requires a logged-in session.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
-require __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../local_db.php';
 
 header('Content-Type: application/json');
 

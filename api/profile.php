@@ -2,8 +2,8 @@
 // My profile — load & save the logged-in agent's own record in the bold360.vip
 // CRM (agent_overrides). The agent is identified server-side by their session
 // email, so nobody can edit a record that isn't theirs by tampering with an id.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 
 $me = current_agent();

@@ -1,10 +1,10 @@
 <?php
-// Agent roster — pulled live from the bold360.vip CRM retention roster
-// (/public/retention-roster). Works from anywhere over HTTPS, so no database
-// or firewall dependency. Email/phone/socials come through only when a valid
-// crm_token is configured. Falls back to sample data in demo mode.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
+// Agent roster — pulled live from the bold360.vip CRM retention roster.
+// Market Center column is overlaid from the local innovate_roster table
+// (maintained in backoffice_roster.php) so MC assignments stay authoritative.
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 if (!current_agent()) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
@@ -22,18 +22,38 @@ function fetch_json(string $url): ?array {
     return is_array($d) ? $d : null;
 }
 
+// Build a name→MC map from the local roster (the authoritative source).
+// Key is lowercased agent name; value is "ST - MC Name" or just "MC Name".
+$localMC = [];
+try {
+    $rows = local_db()->query(
+        "SELECT agent_name, state_code, market_center FROM innovate_roster WHERE active=1 AND market_center != ''"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as $r) {
+        $key = strtolower(trim($r['agent_name']));
+        $mc  = trim($r['market_center']);
+        $st  = trim($r['state_code']);
+        $localMC[$key] = $st ? "$st - $mc" : $mc;
+    }
+} catch (\Exception $e) {}
+
 $data = fetch_json($url);
 
 if ($data !== null) {
     $agents = [];
     foreach ($data as $a) {
-        $mc = $a['marketCenter'] ?? '';
-        if ($mc === '' && !empty($a['marketCenters'])) {
-            $mc = implode(', ', array_filter(array_map(fn($m) => $m['name'] ?? '', $a['marketCenters'])));
+        $name = trim($a['fullName'] ?? ($a['email'] ?? 'Agent'));
+        // Prefer local MC assignment; fall back to CRM field
+        $mc = $localMC[strtolower($name)] ?? null;
+        if ($mc === null) {
+            $mc = $a['marketCenter'] ?? '';
+            if ($mc === '' && !empty($a['marketCenters'])) {
+                $mc = implode(', ', array_filter(array_map(fn($m) => $m['name'] ?? '', $a['marketCenters'])));
+            }
         }
         $agents[] = [
             'id'           => $a['id'] ?? null,
-            'name'         => $a['fullName'] ?? ($a['email'] ?? 'Agent'),
+            'name'         => $name,
             'marketCenter' => $mc,
             'brokerage'    => $a['brokerage'] ?? '',
             'email'        => $a['email'] ?? '',

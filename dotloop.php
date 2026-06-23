@@ -143,6 +143,7 @@ $tabs = [
     $loopId    = (string)($loop['id'] ?? '');
     $loopName  = $loop['name']   ?? 'Unnamed Loop';
     $status    = strtoupper($loop['status'] ?? 'ACTIVE');
+    if ($status === 'NO_STATUS' || $status === '') $status = 'ACTIVE';
     $detail    = $loop['detail'] ?? [];
     $closingRaw    = $detail['closing_date']                 ?? ($loop['closing_date'] ?? null);
     $priceRaw      = $detail['purchase_price']               ?? ($loop['purchase_price'] ?? null);

@@ -1,7 +1,7 @@
 <?php
 // Proxy to the intranet events API. Auth-gated — must be a signed-in agent.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();

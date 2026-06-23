@@ -2,9 +2,9 @@
 // Agent extra fields: birthday (MM-DD), hire_date (YYYY-MM-DD), license_renewal (MM-DD).
 // GET  → returns the signed-in agent's extra fields.
 // POST → saves them.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../local_db.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();

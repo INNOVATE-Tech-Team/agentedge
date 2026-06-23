@@ -4,9 +4,9 @@
 // license renewal date from agent_extra (stored as MM-DD, shown every year).
 //
 // Response format matches api/events.php: { events: [{ date, title, scope, description }] }
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../local_db.php';
 require __DIR__ . '/../lib/dotloop.php';
 header('Content-Type: application/json');
 

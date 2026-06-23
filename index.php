@@ -1,7 +1,8 @@
 <?php
-require __DIR__ . '/db.php';
-require __DIR__ . '/auth.php';
-require __DIR__ . '/nav.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/nav.php';
+require_once __DIR__ . '/roles.php';
 $agent = require_login();
 ?>
 <!doctype html>
@@ -98,9 +99,7 @@ $agent = require_login();
           <div class="ann-item-meta">${new Date(a.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
         </div>`).join('');
     }).catch(()=>{});
-    // Show manage link for admins — we check via the whoami endpoint if available, but simplest: always show if the user sees admin nav
-    // We use PHP to inject the isAdmin flag
-    <?php if (is_admin()): ?>
+    <?php if (can_post_announcements()): ?>
     document.getElementById('ann-manage-link').style.display='';
     <?php endif; ?>
   })();

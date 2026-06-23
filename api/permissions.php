@@ -6,8 +6,8 @@
 //
 // Response: { role, mc_slugs, is_staff, is_bic, is_mc_leader,
 //             can_post_org_wide, can_post_bic, can_post_mc }
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../roles.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');

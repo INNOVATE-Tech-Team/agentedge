@@ -1,8 +1,8 @@
 <?php
 // Protected file download — streams a doc file from data/docs/.
-require __DIR__ . '/../db.php';
-require __DIR__ . '/../auth.php';
-require __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 
 $me = current_agent();
 if (!$me) { header('Location: login.php'); exit; }
