@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../local_db.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
@@ -147,26 +148,65 @@ function industry_events_curated(): array {
     ];
 }
 
-// Serve from cache if still fresh
+// Custom events from SQLite — always fetched fresh so additions show immediately.
+function industry_custom_events(string $today): array {
+    try {
+        $rows = local_db()->query(
+            "SELECT * FROM custom_events ORDER BY start_date, id"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (\Exception $e) { return []; }
+    $out = [];
+    foreach ($rows as $r) {
+        $end = $r['end_date'] ?: $r['start_date'];
+        if ($end < $today) continue;
+        $out[] = [
+            'id'          => 'custom-' . $r['id'],
+            'name'        => $r['name'],
+            'organizer'   => $r['organizer'],
+            'category'    => $r['category'],
+            'start_date'  => $r['start_date'],
+            'end_date'    => $r['end_date'] ?: null,
+            'location'    => $r['location'],
+            'url'         => $r['url'],
+            'description' => $r['description'],
+            'featured'    => (bool)$r['featured'],
+            'source'      => 'custom',
+        ];
+    }
+    return $out;
+}
+
+// Serve from cache if still fresh (curated + RSS only — custom events always merged live)
+$cached_events = null;
+$cached_news   = [];
+$cached_ts     = null;
 if (file_exists($CACHE_FILE)) {
     $c = @json_decode(@file_get_contents($CACHE_FILE), true);
     if (is_array($c) && (time() - ($c['ts'] ?? 0)) < $CACHE_TTL) {
-        echo json_encode(['events' => $c['events'], 'news' => $c['news'] ?? [], 'cached_at' => date('c', $c['ts'])]);
-        exit;
+        $cached_events = $c['events'];
+        $cached_news   = $c['news'] ?? [];
+        $cached_ts     = $c['ts'];
     }
 }
 
-// Build fresh payload
-$today  = date('Y-m-d');
-$events = array_values(array_filter(industry_events_curated(), function ($e) use ($today) {
-    return ($e['end_date'] ?? $e['start_date']) >= $today;
-}));
-usort($events, function ($a, $b) { return strcmp($a['start_date'], $b['start_date']); });
-$news = industry_rss_news();
-$out  = ['ts' => time(), 'events' => $events, 'news' => $news];
+$today = date('Y-m-d');
 
-$dir = dirname($CACHE_FILE);
-if (!is_dir($dir)) @mkdir($dir, 0755, true);
-@file_put_contents($CACHE_FILE, json_encode($out));
+if ($cached_events === null) {
+    // Build fresh curated + RSS payload and cache it
+    $cached_events = array_values(array_filter(industry_events_curated(), function ($e) use ($today) {
+        return ($e['end_date'] ?? $e['start_date']) >= $today;
+    }));
+    $cached_news = industry_rss_news();
+    $cached_ts   = time();
+    $out = ['ts' => $cached_ts, 'events' => $cached_events, 'news' => $cached_news];
+    $dir = dirname($CACHE_FILE);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    @file_put_contents($CACHE_FILE, json_encode($out));
+}
 
-echo json_encode(['events' => $out['events'], 'news' => $out['news'], 'cached_at' => date('c', $out['ts'])]);
+// Merge custom events live, then sort combined list by start_date
+$custom  = industry_custom_events($today);
+$all     = array_merge($cached_events, $custom);
+usort($all, function ($a, $b) { return strcmp($a['start_date'], $b['start_date']); });
+
+echo json_encode(['events' => $all, 'news' => $cached_news, 'cached_at' => date('c', $cached_ts)]);

@@ -68,7 +68,8 @@ function nav_items(): array {
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
         ['key' => 'press_release',    'label' => 'Press Release Studio', 'href' => 'press_release.php'],
-        ['key' => 'bo_announcements', 'label' => 'Announcements',   'href' => 'backoffice_announcements.php'],
+        ['key' => 'bo_announcements',     'label' => 'Announcements',   'href' => 'backoffice_announcements.php'],
+        ['key' => 'bo_industry_events',   'label' => 'Industry Events', 'href' => 'backoffice_industry_events.php'],
         ['key' => 'bo_tickets',       'label' => 'Tickets',          'href' => 'backoffice_tickets.php'],
         ['key' => 'bo_docs',          'label' => 'Documents',        'href' => 'backoffice_docs.php'],
         ['key' => 'bo_workflows',     'label' => 'Workflows',        'href' => 'backoffice_workflows.php'],

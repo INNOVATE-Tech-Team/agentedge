@@ -40,12 +40,13 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['onboarding',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
             $ins->execute($r);
         }
     }
-    // Ensure university row exists on existing installs
+    // Ensure rows exist on existing installs
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['university',85]);
+    $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['market_centers',25]);
 
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (
@@ -198,6 +199,22 @@ function local_db(): PDO {
         mc_slug     TEXT    NOT NULL DEFAULT '',
         imported_by TEXT    NOT NULL DEFAULT '',
         imported_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Custom industry events — admin-added events merged into the Industry Events page.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS custom_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        organizer   TEXT    NOT NULL DEFAULT '',
+        category    TEXT    NOT NULL DEFAULT 'industry',
+        start_date  TEXT    NOT NULL,
+        end_date    TEXT    NOT NULL DEFAULT '',
+        location    TEXT    NOT NULL DEFAULT '',
+        url         TEXT    NOT NULL DEFAULT '',
+        description TEXT    NOT NULL DEFAULT '',
+        featured    INTEGER NOT NULL DEFAULT 0,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
     // Back Office menu builder — admin-defined items that appear in the Back Office sidebar section.
