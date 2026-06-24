@@ -32,14 +32,11 @@ function nav_items(): array {
     $coreMap = [
         'dashboard'  => ['key' => 'dashboard',  'label' => 'Dashboard',        'href' => 'index.php'],
         'roster'         => ['key' => 'roster',         'label' => 'Agent Roster',     'href' => 'roster.php'],
-        'market_centers' => ['key' => 'market_centers', 'label' => 'Market Centers',   'href' => 'market_centers.php'],
         'network'    => ['key' => 'network',    'label' => 'My Network',       'href' => 'network.php'],
-        'intake'     => ['key' => 'intake',     'label' => 'Intake Form',       'href' => 'intake.php'],
         'calendar'          => ['key' => 'calendar',          'label' => 'Company Calendar', 'href' => 'calendar.php'],
         'industry_events'   => ['key' => 'industry_events',   'label' => 'Industry Events',   'href' => 'industry_events.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
-        'vault'      => ['key' => 'vault',      'label' => 'The Vault',             'href' => 'vault.php'],
         'university' => ['key' => 'university', 'label' => 'INNOVATE University',  'href' => 'university.php'],
         'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',           'href' => 'tickets.php'],
         'marketing'  => ['key' => 'marketing',  'label' => 'Marketing Studio',     'href' => 'sso_marketing.php', 'external' => true],
@@ -63,8 +60,10 @@ function nav_items(): array {
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
         // ── Operations ──────────────────────────────────────────────────────────
+        ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'standalone'=>true],
         ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations'],
         ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
+        ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
         ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations'],
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
@@ -149,10 +148,12 @@ function render_sidebar(string $current, array $agent): void {
                . 'padding:3px 12px 3px 26px;font-style:italic}'
                . '</style>';
         }
-        $boItems   = backoffice_nav_items($superAdmin);
-        $deptOrder = ['Operations','Finance','Broker Files','Events','Agent Development','Technology','Human Resources'];
-        $byDept    = array_fill_keys($deptOrder, []);
-        foreach ($boItems as $it) {
+        $boItems    = backoffice_nav_items($superAdmin);
+        $standalone = array_values(array_filter($boItems, fn($it) => !empty($it['standalone'])));
+        $deptItems  = array_values(array_filter($boItems, fn($it) => empty($it['standalone'])));
+        $deptOrder  = ['Operations','Finance','Broker Files','Events','Agent Development','Technology','Human Resources'];
+        $byDept     = array_fill_keys($deptOrder, []);
+        foreach ($deptItems as $it) {
             $d = $it['dept'] ?? 'Operations';
             if (!array_key_exists($d, $byDept)) $byDept[$d] = [];
             $byDept[$d][] = $it;
@@ -166,9 +167,17 @@ function render_sidebar(string $current, array $agent): void {
         echo '<button class="sb-links-toggle" data-group="Back Office" onclick="toggleSbLinks(this)" aria-expanded="true">'
            . 'Back Office <span class="sb-links-arrow">&#9660;</span></button>';
         echo '<div class="sb-links-sub">';
+        foreach ($standalone as $it) {
+            if (!empty($it['superOnly']) && !$superAdmin) continue;
+            $act = $it['key'] === $current ? ' sb-active' : '';
+            $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+            $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+            echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
+               . htmlspecialchars($it['label']) . $arr . '</a>';
+        }
         foreach ($deptOrder as $deptName) {
-            $deptItems = $byDept[$deptName] ?? [];
-            $visible   = array_values(array_filter($deptItems, fn($it) => empty($it['superOnly']) || $superAdmin));
+            $dItems  = $byDept[$deptName] ?? [];
+            $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
             echo '<button class="sb-dept-toggle" onclick="toggleSbLinks(this)" aria-expanded="true">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';
             echo '<div class="sb-links-sub">';
