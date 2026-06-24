@@ -79,6 +79,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── Agent Development ───────────────────────────────────────────────────
         ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
         ['key'=>'bo_workflows',              'label'=>'Workflows',           'href'=>'backoffice_workflows.php',      'dept'=>'Agent Development'],
+        // ── Finance ─────────────────────────────────────────────────────────────
+        ['key'=>'finance_budget',            'label'=>'Department Budget',   'href'=>'finance_budget.php',            'dept'=>'Finance'],
+        ['key'=>'finance_statements',        'label'=>'Statement Scanner',   'href'=>'finance_statements.php',        'dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],

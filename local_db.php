@@ -614,6 +614,44 @@ function local_db(): PDO {
         }
     }
 
+    // ── Finance: Department Budgets ───────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS budget_periods (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        period_type TEXT    NOT NULL DEFAULT 'annual',  -- annual | quarterly | monthly | custom
+        start_date  TEXT    NOT NULL DEFAULT '',
+        end_date    TEXT    NOT NULL DEFAULT '',
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS budget_lines (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_id     INTEGER NOT NULL,
+        department    TEXT    NOT NULL DEFAULT 'Operations',
+        category      TEXT    NOT NULL DEFAULT '',
+        description   TEXT    NOT NULL DEFAULT '',
+        budgeted_amt  REAL    NOT NULL DEFAULT 0,
+        actual_amt    REAL    NOT NULL DEFAULT 0,
+        notes         TEXT    NOT NULL DEFAULT '',
+        created_by    TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_period ON budget_lines(period_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_dept   ON budget_lines(department)");
+
+    // ── Finance: Statement Scans ──────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_label   TEXT    NOT NULL DEFAULT '',
+        scan_type       TEXT    NOT NULL DEFAULT 'bank',  -- bank | credit_card
+        uploaded_by     TEXT    NOT NULL DEFAULT '',
+        uploaded_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        raw_text        TEXT    NOT NULL DEFAULT '',
+        analysis_json   TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'pending'  -- pending | complete | error
+    )");
+
     return $pdo;
 }
 

@@ -98,6 +98,10 @@ return [
     'twilio_token' => '',    // your auth token
     'twilio_from'  => '',    // your Twilio phone number, e.g. +18435551234
 
+    // Anthropic Claude API — used by the Finance Statement Scanner to categorize
+    // spending and generate savings recommendations. Get a key at console.anthropic.com.
+    'anthropic_api_key' => '',
+
     // Follow Up Boss — auto-provisions new agents. Get key at: FUB → Admin → API
     'fub_api_key' => '',
 
