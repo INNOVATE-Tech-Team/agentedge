@@ -17,6 +17,7 @@ const SCOPES = {
   bic:            { bg: '#A07221', text: '#fff' },
   dotloop:        { bg: '#7c3aed', text: '#fff' },
   personal:       { bg: '#e91e8c', text: '#fff' },
+  training:       { bg: '#E87722', text: '#fff' },
 };
 
 function calEsc(s) {
@@ -52,7 +53,7 @@ async function loadEvents(key) {
   const params = new URLSearchParams({ month: key });
   if (agentMCSlug) params.set('dept', agentMCSlug);
 
-  const [companyRes, txRes, bicRes] = await Promise.allSettled([
+  const [companyRes, txRes, bicRes, trainingRes] = await Promise.allSettled([
     fetch('api/events.php?' + params, { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [] })
       .catch(() => ({ events: [] })),
@@ -62,13 +63,17 @@ async function loadEvents(key) {
     fetch('api/bic_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [] })
       .catch(() => ({ events: [] })),
+    fetch('api/training_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
   ]);
 
-  const company = companyRes.status === 'fulfilled' ? (companyRes.value.events ?? []) : [];
-  const tx      = txRes.status      === 'fulfilled' ? (txRes.value.events      ?? []) : [];
-  const bic     = bicRes.status     === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
+  const company  = companyRes.status  === 'fulfilled' ? (companyRes.value.events  ?? []) : [];
+  const tx       = txRes.status       === 'fulfilled' ? (txRes.value.events       ?? []) : [];
+  const bic      = bicRes.status      === 'fulfilled' ? (bicRes.value.events      ?? []) : [];
+  const training = trainingRes.status === 'fulfilled' ? (trainingRes.value.events ?? []) : [];
 
-  evCache[key] = [...company, ...tx, ...bic].sort((a, b) => a.date.localeCompare(b.date));
+  evCache[key] = [...company, ...tx, ...bic, ...training].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 
@@ -76,7 +81,8 @@ function filtered(evs) {
   if (calFilter === 'all') return evs;
   if (calFilter === 'mc')  return evs.filter(e => e.scope === 'market-center');
   // 'dotloop' tab shows both dotloop events and personal (birthday, license renewal)
-  if (calFilter === 'dotloop') return evs.filter(e => e.scope === 'dotloop' || e.scope === 'personal');
+  if (calFilter === 'dotloop')  return evs.filter(e => e.scope === 'dotloop' || e.scope === 'personal');
+  if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -125,6 +131,7 @@ function scopeLabel(scope) {
   if (scope === 'bic')           return 'BIC';
   if (scope === 'dotloop')       return 'Transaction';
   if (scope === 'personal')      return 'Personal';
+  if (scope === 'training')      return 'Training';
   return 'Company';
 }
 
@@ -148,20 +155,28 @@ function renderList(evs) {
           ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calEsc(ev.location)}</div>` : ''}
           ${ev.description ? `<div class="cal-list-desc">${calEsc(ev.description)}</div>` : ''}
         </div>
-        <span class="cal-scope-badge" style="background:${sc(ev).bg};color:${sc(ev).text}">
-          ${scopeLabel(ev.scope)}
-        </span>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none">
+          <span class="cal-scope-badge" style="background:${sc(ev).bg};color:${sc(ev).text}">
+            ${scopeLabel(ev.scope)}
+          </span>
+          ${ev.scope === 'training' ? `<button class="cal-rsvp-btn${ev.rsvped ? ' cal-rsvp-active' : ''}"
+            data-event-id="${calEsc(ev.gcal_id || '')}"
+            data-event-title="${calEsc(ev.title)}"
+            data-event-date="${calEsc(ev.date)}"
+            data-rsvped="${ev.rsvped ? '1' : '0'}">${ev.rsvped ? 'Registered &#10003;' : 'Register'}</button>` : ''}
+        </div>
       </div>
     </div>`).join('');
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, bic: 0, dotloop: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, bic: 0, dotloop: 0, training: 0 };
   evs.forEach(e => {
     if      (e.scope === 'company')       counts.company++;
     else if (e.scope === 'market-center') counts.mc++;
     else if (e.scope === 'bic')           counts.bic++;
     else if (e.scope === 'dotloop' || e.scope === 'personal') counts.dotloop++;
+    else if (e.scope === 'training')      counts.training++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;
@@ -204,3 +219,33 @@ document.getElementById('cal-next').addEventListener('click', () => {
 });
 
 loadProfile().then(() => calDraw());
+
+// RSVP toggle — delegated so it works after every renderList call
+document.getElementById('cal-event-list-body').addEventListener('click', e => {
+  const btn = e.target.closest('.cal-rsvp-btn');
+  if (!btn) return;
+  btn.disabled = true;
+  fetch('api/training_rsvp.php', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      event_id:    btn.dataset.eventId,
+      event_title: btn.dataset.eventTitle,
+      event_date:  btn.dataset.eventDate,
+    }),
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) return;
+    btn.dataset.rsvped = d.rsvped ? '1' : '0';
+    btn.innerHTML = d.rsvped ? 'Registered &#10003;' : 'Register';
+    btn.classList.toggle('cal-rsvp-active', d.rsvped);
+    // Update the cached event so tab switches stay in sync
+    const cached = evCache[calKey()] ?? [];
+    const ev = cached.find(x => x.gcal_id === btn.dataset.eventId);
+    if (ev) ev.rsvped = d.rsvped;
+  })
+  .catch(() => {})
+  .finally(() => { btn.disabled = false; });
+});

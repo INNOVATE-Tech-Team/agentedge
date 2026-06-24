@@ -741,6 +741,20 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lo_prospect ON listing_outreach(prospect_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lo_agent    ON listing_outreach(agent_email)");
 
+    // ── Training RSVPs ────────────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS training_rsvps (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id    TEXT    NOT NULL,
+        event_title TEXT    NOT NULL DEFAULT '',
+        event_date  TEXT    NOT NULL DEFAULT '',
+        agent_email TEXT    NOT NULL,
+        agent_name  TEXT    NOT NULL DEFAULT '',
+        rsvped_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(event_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_trsvp_event ON training_rsvps(event_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_trsvp_agent ON training_rsvps(agent_email)");
+
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -98,6 +98,12 @@ return [
     'twilio_token' => '',    // your auth token
     'twilio_from'  => '',    // your Twilio phone number, e.g. +18435551234
 
+    // Google Calendar — training events shown on the Calendar page.
+    // gcal_key_file: absolute path to the service account JSON key (never commit this file).
+    // gcal_calendar_id: the calendar's email address or ID.
+    'gcal_key_file'    => __DIR__ . '/agentedge-calendar-key.json',
+    'gcal_calendar_id' => 'training@innovateonline.com',
+
     // Anthropic Claude API — used by the Finance Statement Scanner to categorize
     // spending and generate savings recommendations. Get a key at console.anthropic.com.
     'anthropic_api_key' => '',

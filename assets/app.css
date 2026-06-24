@@ -172,6 +172,10 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 
 /* Calendar — extra scopes */
 .cal-tab[data-filter="dotloop"] { /* Transactions tab always visible */ }
+.cal-rsvp-btn{padding:5px 12px;border:1px solid #E87722;border-radius:20px;background:#fff;color:#E87722;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;white-space:nowrap}
+.cal-rsvp-btn:hover{background:#E87722;color:#fff}
+.cal-rsvp-btn.cal-rsvp-active{background:#E87722;color:#fff;border-color:#E87722}
+.cal-rsvp-btn:disabled{opacity:.5;cursor:default}
 
 /* Open House Portal */
 .oh-subnav{display:flex;gap:0;border-bottom:2px solid #E6E7E8;margin-bottom:20px}
