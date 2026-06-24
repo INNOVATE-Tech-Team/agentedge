@@ -172,10 +172,28 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 
 /* Calendar — extra scopes */
 .cal-tab[data-filter="dotloop"] { /* Transactions tab always visible */ }
-.cal-rsvp-btn{padding:5px 12px;border:1px solid #E87722;border-radius:20px;background:#fff;color:#E87722;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;white-space:nowrap}
+.cal-rsvp-btn{padding:5px 12px;border:1px solid #E87722;border-radius:20px;background:#fff;color:#E87722;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;white-space:nowrap;text-decoration:none;display:inline-block}
 .cal-rsvp-btn:hover{background:#E87722;color:#fff}
 .cal-rsvp-btn.cal-rsvp-active{background:#E87722;color:#fff;border-color:#E87722}
 .cal-rsvp-btn:disabled{opacity:.5;cursor:default}
+.cal-edit-btn{padding:5px 12px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.cal-edit-btn:hover{border-color:#aaa;color:var(--ink)}
+.cal-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.cal-modal{background:#fff;border-radius:14px;width:min(520px,100%);max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.18)}
+.cal-modal-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0;font-size:15px;font-weight:800}
+.cal-modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:var(--faint);line-height:1;padding:0 4px}
+.cal-modal-body{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.cal-field-label{font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;display:flex;flex-direction:column;gap:5px}
+.cal-field-input{padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fafafa;font-family:inherit;width:100%;box-sizing:border-box}
+.cal-field-input:focus{outline:2px solid var(--green);border-color:transparent}
+textarea.cal-field-input{resize:vertical;min-height:70px}
+.cal-modal-err{background:#fdecea;color:var(--red);border:1px solid #f5c6c0;border-radius:8px;padding:9px 12px;font-size:13px}
+.cal-modal-footer{display:flex;align-items:center;padding:14px 20px;border-top:1px solid var(--border);gap:8px}
+.cal-modal-save-btn{padding:9px 20px;border:none;border-radius:8px;background:var(--green);color:#111;font-weight:800;font-size:13px;cursor:pointer}
+.cal-modal-save-btn:disabled{opacity:.6;cursor:default}
+.cal-modal-cancel-btn{padding:9px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--muted);font-weight:700;font-size:13px;cursor:pointer}
+.cal-ev-delete-btn{padding:9px 16px;border:1px solid #f5c6c0;border-radius:8px;background:#fff;color:var(--red);font-weight:700;font-size:13px;cursor:pointer}
+.cal-ev-delete-btn:hover{background:#fdecea}
 
 /* Open House Portal */
 .oh-subnav{display:flex;gap:0;border-bottom:2px solid #E6E7E8;margin-bottom:20px}

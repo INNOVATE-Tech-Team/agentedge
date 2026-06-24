@@ -159,11 +159,15 @@ function renderList(evs) {
           <span class="cal-scope-badge" style="background:${sc(ev).bg};color:${sc(ev).text}">
             ${scopeLabel(ev.scope)}
           </span>
-          ${ev.scope === 'training' ? `<button class="cal-rsvp-btn${ev.rsvped ? ' cal-rsvp-active' : ''}"
-            data-event-id="${calEsc(ev.gcal_id || '')}"
-            data-event-title="${calEsc(ev.title)}"
-            data-event-date="${calEsc(ev.date)}"
-            data-rsvped="${ev.rsvped ? '1' : '0'}">${ev.rsvped ? 'Registered &#10003;' : 'Register'}</button>` : ''}
+          ${ev.scope === 'training' ? `
+            <button class="cal-rsvp-btn${ev.rsvped ? ' cal-rsvp-active' : ''}"
+              data-event-id="${calEsc(ev.gcal_id || '')}"
+              data-event-title="${calEsc(ev.title)}"
+              data-event-date="${calEsc(ev.date)}"
+              data-rsvped="${ev.rsvped ? '1' : '0'}">${ev.rsvped ? 'Registered &#10003;' : 'Register'}</button>
+            ${(typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
+              ? `<button class="cal-edit-btn" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>`
+              : ''}` : ''}
         </div>
       </div>
     </div>`).join('');
@@ -194,10 +198,37 @@ async function calDraw() {
   document.getElementById('cal-grid').innerHTML =
     '<div style="padding:2.5rem;text-align:center;color:#999">Loading…</div>';
   document.getElementById('cal-event-list-body').innerHTML = '';
+  updateTrainingBar();
   const evs = await loadEvents(calKey());
   renderGrid(evs);
   renderList(evs);
   updateTabCounts(evs);
+}
+
+function gcalAddUrl(ev) {
+  let dates;
+  if (ev.is_all_day) {
+    const s = (ev.start_dt || ev.date).replace(/-/g, '');
+    const endBase = ev.end_dt || ev.date;
+    const endObj  = new Date(endBase + 'T00:00:00');
+    endObj.setDate(endObj.getDate() + 1);
+    const e = endObj.toISOString().slice(0, 10).replace(/-/g, '');
+    dates = s + '/' + e;
+  } else {
+    const s = new Date(ev.start_dt).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const e = new Date(ev.end_dt  ).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    dates = s + '/' + e;
+  }
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+    + '&text='     + encodeURIComponent(ev.title       || '')
+    + '&dates='    + dates
+    + '&details='  + encodeURIComponent(ev.description || '')
+    + '&location=' + encodeURIComponent(ev.location    || '');
+}
+
+function updateTrainingBar() {
+  const bar = document.getElementById('cal-training-bar');
+  if (bar) bar.style.display = calFilter === 'training' ? 'flex' : 'none';
 }
 
 document.querySelectorAll('.cal-tab').forEach(t => {
@@ -205,6 +236,7 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     document.querySelectorAll('.cal-tab').forEach(x => x.classList.remove('cal-tab-active'));
     t.classList.add('cal-tab-active');
     calFilter = t.dataset.filter;
+    updateTrainingBar();
     loadEvents(calKey()).then(evs => { renderGrid(evs); renderList(evs); });
   });
 });
@@ -219,6 +251,122 @@ document.getElementById('cal-next').addEventListener('click', () => {
 });
 
 loadProfile().then(() => calDraw());
+
+// ── Admin: training event modal ───────────────────────────────────────────────
+if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
+  const overlay    = document.getElementById('cal-modal-overlay');
+  const modalTitle = document.getElementById('cal-modal-title');
+  const evId       = document.getElementById('cal-ev-id');
+  const evTitle    = document.getElementById('cal-ev-title');
+  const evDate     = document.getElementById('cal-ev-date');
+  const evEndDate  = document.getElementById('cal-ev-end-date');
+  const evStart    = document.getElementById('cal-ev-start-time');
+  const evEnd      = document.getElementById('cal-ev-end-time');
+  const evLoc      = document.getElementById('cal-ev-location');
+  const evDesc     = document.getElementById('cal-ev-description');
+  const errBox     = document.getElementById('cal-modal-err');
+  const deleteBtn  = document.getElementById('cal-ev-delete');
+
+  function openModal(ev) {
+    evId.value          = ev ? (ev.gcal_id || '') : '';
+    evTitle.value       = ev ? ev.title       : '';
+    evDate.value        = ev ? ev.date        : '';
+    evEndDate.value     = ev ? (ev.end_dt !== ev.date ? (ev.end_dt || '') : '') : '';
+    evLoc.value         = ev ? (ev.location    || '') : '';
+    evDesc.value        = ev ? (ev.description || '') : '';
+    evStart.value       = '';
+    evEnd.value         = '';
+    if (!ev?.is_all_day && ev?.start_dt?.includes('T')) {
+      evStart.value = ev.start_dt.slice(11, 16);
+      evEnd.value   = (ev.end_dt || '').slice(11, 16) || '';
+    }
+    modalTitle.textContent = ev ? 'Edit Training Event' : 'Add Training Event';
+    deleteBtn.style.display = ev ? 'block' : 'none';
+    errBox.style.display    = 'none';
+    overlay.style.display   = 'flex';
+    evTitle.focus();
+  }
+
+  function closeModal() { overlay.style.display = 'none'; }
+
+  document.getElementById('cal-add-event-btn')?.addEventListener('click', () => openModal(null));
+  document.getElementById('cal-modal-close')   .addEventListener('click', closeModal);
+  document.getElementById('cal-modal-cancel')  .addEventListener('click', closeModal);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+  // Edit button — delegated
+  document.getElementById('cal-event-list-body').addEventListener('click', e => {
+    const btn = e.target.closest('.cal-edit-btn');
+    if (!btn) return;
+    const cached = evCache[calKey()] ?? [];
+    const ev = cached.find(x => x.gcal_id === btn.dataset.eventId);
+    if (ev) openModal(ev);
+  });
+
+  // Save
+  document.getElementById('cal-ev-save').addEventListener('click', async () => {
+    const id    = evId.value.trim();
+    const title = evTitle.value.trim();
+    const date  = evDate.value;
+    if (!title || !date) { errBox.textContent = 'Title and start date are required.'; errBox.style.display = 'block'; return; }
+
+    errBox.style.display = 'none';
+    const saveBtn = document.getElementById('cal-ev-save');
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+
+    const payload = {
+      action: id ? 'update' : 'create',
+      event_id:    id,
+      title, date,
+      end_date:    evEndDate.value,
+      start_time:  evStart.value,
+      end_time:    evEnd.value,
+      location:    evLoc.value,
+      description: evDesc.value,
+    };
+
+    try {
+      const r = await fetch('api/training_event_action.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Unknown error');
+      closeModal();
+      delete evCache[calKey()];
+      calDraw();
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = 'block';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Event';
+    }
+  });
+
+  // Delete
+  deleteBtn.addEventListener('click', async () => {
+    const id = evId.value.trim();
+    if (!id || !confirm('Delete this training event? This cannot be undone.')) return;
+    deleteBtn.disabled = true;
+    try {
+      const r = await fetch('api/training_event_action.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', event_id: id }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error('Delete failed');
+      closeModal();
+      delete evCache[calKey()];
+      calDraw();
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = 'block';
+      deleteBtn.disabled = false;
+    }
+  });
+}
 
 // RSVP toggle — delegated so it works after every renderList call
 document.getElementById('cal-event-list-body').addEventListener('click', e => {
@@ -245,6 +393,8 @@ document.getElementById('cal-event-list-body').addEventListener('click', e => {
     const cached = evCache[calKey()] ?? [];
     const ev = cached.find(x => x.gcal_id === btn.dataset.eventId);
     if (ev) ev.rsvped = d.rsvped;
+    // On RSVP, open Google Calendar to add the event
+    if (d.rsvped && ev) window.open(gcalAddUrl(ev), '_blank', 'noopener');
   })
   .catch(() => {})
   .finally(() => { btn.disabled = false; });

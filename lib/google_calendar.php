@@ -15,7 +15,7 @@ function gcal_access_token(string $key_file): ?string {
     $header  = _gcal_b64u(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
     $payload = _gcal_b64u(json_encode([
         'iss'   => $key['client_email'],
-        'scope' => 'https://www.googleapis.com/auth/calendar.readonly',
+        'scope' => 'https://www.googleapis.com/auth/calendar.events',
         'aud'   => 'https://oauth2.googleapis.com/token',
         'iat'   => $now,
         'exp'   => $now + 3600,
@@ -65,6 +65,45 @@ function gcal_events(string $calendar_id, string $token, string $time_min, strin
     if (!$resp) return [];
     $d = json_decode($resp, true);
     return $d['items'] ?? [];
+}
+
+function gcal_create_event(string $calendar_id, string $token, array $event): ?array {
+    $url  = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events';
+    $resp = @file_get_contents($url, false, stream_context_create(['http' => [
+        'method'        => 'POST',
+        'header'        => "Authorization: Bearer $token\r\nContent-Type: application/json\r\nAccept: application/json\r\n",
+        'content'       => json_encode($event),
+        'ignore_errors' => true,
+    ]]));
+    if (!$resp) return null;
+    $d = json_decode($resp, true);
+    return isset($d['id']) ? $d : null;
+}
+
+function gcal_update_event(string $calendar_id, string $token, string $event_id, array $patch): ?array {
+    $url  = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events/' . urlencode($event_id);
+    $resp = @file_get_contents($url, false, stream_context_create(['http' => [
+        'method'        => 'PATCH',
+        'header'        => "Authorization: Bearer $token\r\nContent-Type: application/json\r\nAccept: application/json\r\n",
+        'content'       => json_encode($patch),
+        'ignore_errors' => true,
+    ]]));
+    if (!$resp) return null;
+    $d = json_decode($resp, true);
+    return isset($d['id']) ? $d : null;
+}
+
+function gcal_delete_event(string $calendar_id, string $token, string $event_id): bool {
+    $url = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events/' . urlencode($event_id);
+    @file_get_contents($url, false, stream_context_create(['http' => [
+        'method'        => 'DELETE',
+        'header'        => "Authorization: Bearer $token\r\n",
+        'ignore_errors' => true,
+    ]]));
+    foreach ($http_response_header ?? [] as $h) {
+        if (preg_match('/^HTTP\/\S+ (\d+)/', $h, $m)) return (int)$m[1] === 204;
+    }
+    return false;
 }
 
 function _gcal_b64u(string $data): string {

@@ -41,7 +41,15 @@ foreach ($items as $item) {
     $start = $item['start']['date'] ?? substr($item['start']['dateTime'] ?? '', 0, 10);
     if (!$start) continue;
 
-    $gcal_id = $item['id'] ?? '';
+    $gcal_id    = $item['id'] ?? '';
+    $is_all_day = isset($item['start']['date']);
+    $start_dt   = $item['start']['date'] ?? ($item['start']['dateTime'] ?? '');
+    $end_raw    = $item['end']['date']   ?? ($item['end']['dateTime']   ?? '');
+    // All-day end from Google is exclusive next day; normalize to last day for display
+    $end_dt = ($is_all_day && $end_raw)
+        ? date('Y-m-d', strtotime($end_raw . ' -1 day'))
+        : $end_raw;
+
     $events[] = [
         'date'        => $start,
         'title'       => $item['summary'] ?? 'Training Event',
@@ -50,6 +58,10 @@ foreach ($items as $item) {
         'location'    => $item['location'] ?? '',
         'gcal_id'     => $gcal_id,
         'rsvped'      => isset($rsvped[$gcal_id]),
+        'is_all_day'  => $is_all_day,
+        'start_dt'    => $start_dt,
+        'end_dt'      => $end_dt,
+        'gcal_link'   => $item['htmlLink'] ?? '',
     ];
 }
 
