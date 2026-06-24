@@ -1,4 +1,5 @@
 <?php
+ini_set('display_errors', 0);
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
@@ -67,7 +68,7 @@ Extract all expense/debit transactions. Then analyze the spending and return a J
       "current_spend": <number — what they're currently spending monthly on this>,
       "title": "<concise savings opportunity title — max 10 words>",
       "detail": "<2-3 sentences explaining the specific issue and why savings are possible — cite actual amounts>",
-      "how_to_save": "<one specific action step — e.g. 'Call Spectrum to negotiate, mention competitor rate of $X'>",
+      "how_to_save": "<one specific action step — e.g. 'Call Spectrum to negotiate, mention competitor rate of \$X'>",
       "estimated_monthly_savings": <number>,
       "effort": "low|medium|high",
       "priority": "high|medium|low"
