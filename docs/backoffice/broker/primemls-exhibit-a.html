@@ -1,0 +1,636 @@
+<title>PrimeMLS Exhibit A — INNOVATE Real Estate Data Field Request</title>
+<style>
+  :root {
+    --ground: #F6F6F3;
+    --ground-2: #EEEDE9;
+    --text: #111111;
+    --text-muted: #5A5A54;
+    --accent: #82C112;
+    --accent-2: #437C0E;
+    --mono: Consolas, 'Courier New', monospace;
+    --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --border: #DDDBD5;
+    --field-bg: #EFEDE9;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Page header ── */
+  .doc-header {
+    border-bottom: 2px solid var(--text);
+    padding: 32px 48px 24px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+  }
+  .doc-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .brand-name {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+  }
+  .brand-accent {
+    color: var(--accent-2);
+  }
+  .brand-sub {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+  }
+  .doc-title-block {
+    text-align: right;
+  }
+  .doc-eyebrow {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .doc-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.2;
+  }
+
+  /* ── Meta strip ── */
+  .meta-strip {
+    background: var(--text);
+    color: #fff;
+    padding: 14px 48px;
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+  .meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .meta-label {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #999;
+  }
+  .meta-value { font-size: 13px; font-weight: 600; color: #fff; }
+
+  /* ── Main wrapper ── */
+  .doc-body { padding: 40px 48px; max-width: 1000px; }
+
+  /* ── Schema manifest ── */
+  .manifest {
+    border: 1.5px solid var(--border);
+    border-left: 4px solid var(--accent);
+    background: var(--field-bg);
+    padding: 20px 24px;
+    margin-bottom: 40px;
+    border-radius: 0 4px 4px 0;
+  }
+  .manifest-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent-2);
+    margin-bottom: 12px;
+  }
+  .manifest-stats {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .mstat { display: flex; flex-direction: column; gap: 2px; }
+  .mstat-n {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+  }
+  .mstat-l {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  .manifest-products {
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .prod-card {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    background: var(--ground);
+    flex: 1;
+    min-width: 200px;
+  }
+  .prod-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent-2);
+    margin-bottom: 4px;
+  }
+  .prod-url {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .prod-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 3px;
+  }
+
+  /* ── Purpose statement ── */
+  .purpose-block {
+    border-left: 3px solid var(--accent);
+    padding: 14px 20px;
+    background: var(--field-bg);
+    margin-bottom: 40px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.65;
+    border-radius: 0 4px 4px 0;
+  }
+  .purpose-block strong { font-weight: 700; }
+
+  /* ── Section headers ── */
+  .section {
+    margin-bottom: 40px;
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    border-top: 2px solid var(--text);
+    padding-top: 14px;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    flex: 1;
+  }
+  .section-entity {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+  }
+  .section-count {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-2);
+    background: var(--field-bg);
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .section-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    line-height: 1.55;
+  }
+
+  /* ── Field table ── */
+  .field-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .field-table thead th {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ground-2);
+  }
+  .field-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .field-table tbody tr:last-child { border-bottom: none; }
+  .field-table tbody tr:nth-child(even) td { background: var(--field-bg); }
+  .field-table tbody td {
+    padding: 7px 10px;
+    vertical-align: top;
+  }
+  .field-name {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .field-type {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .field-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .usage-badge {
+    display: inline-block;
+    font-size: 8.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    padding: 1px 5px;
+    border-radius: 2px;
+    white-space: nowrap;
+    margin-right: 3px;
+  }
+  .use-idx {
+    background: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #C8E6C9;
+  }
+  .use-crm {
+    background: #E8F0FF;
+    color: #1A56A7;
+    border: 1px solid #C5D8FF;
+  }
+  .use-both {
+    background: #F3E8FF;
+    color: #6B21A8;
+    border: 1px solid #DDD6FE;
+  }
+
+  /* ── Footer / signature note ── */
+  .doc-footer {
+    border-top: 2px solid var(--text);
+    padding: 20px 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .footer-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    max-width: 480px;
+    line-height: 1.5;
+  }
+  .footer-ref {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  /* ── Exhibit note box ── */
+  .exhibit-note {
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.5;
+    background: var(--ground);
+  }
+
+  @media (max-width: 680px) {
+    .doc-header, .meta-strip, .doc-body, .doc-footer { padding-left: 20px; padding-right: 20px; }
+    .doc-header { flex-direction: column; }
+    .doc-title-block { text-align: left; }
+    .manifest-stats { gap: 20px; }
+    .field-table thead th:nth-child(2),
+    .field-table tbody td:nth-child(2) { display: none; }
+  }
+
+  @media print {
+    body { background: white; font-size: 11px; }
+    .section { page-break-inside: avoid; }
+    .field-table { page-break-inside: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<!-- ══ DOCUMENT HEADER ══════════════════════════════════════════════════ -->
+<header class="doc-header">
+  <div class="doc-brand">
+    <div class="brand-name">INNOVATE <span class="brand-accent">Real Estate</span></div>
+    <div class="brand-sub">1309 Professional Drive · Myrtle Beach, SC 29577</div>
+  </div>
+  <div class="doc-title-block">
+    <div class="doc-eyebrow">PrimeMLS-095 Rev. F · Exhibit A</div>
+    <div class="doc-title">Specialty Data Feed — Field Request</div>
+  </div>
+</header>
+
+<!-- ══ META STRIP ════════════════════════════════════════════════════════ -->
+<div class="meta-strip">
+  <div class="meta-item">
+    <span class="meta-label">MLS</span>
+    <span class="meta-value">PrimeMLS, Inc.</span>
+  </div>
+  <div class="meta-item">
+    <span class="meta-label">Vendor</span>
+    <span class="meta-value">INNOVATE Real Estate</span>
+  </div>
+  <div class="meta-item">
+    <span class="meta-label">Effective Date</span>
+    <span class="meta-value">June 23, 2026</span>
+  </div>
+  <div class="meta-item">
+    <span class="meta-label">Feed Type</span>
+    <span class="meta-value">RETS Standard</span>
+  </div>
+  <div class="meta-item">
+    <span class="meta-label">Contact</span>
+    <span class="meta-value">darren@InnovateOnline.com</span>
+  </div>
+</div>
+
+<!-- ══ DOCUMENT BODY ══════════════════════════════════════════════════════ -->
+<div class="doc-body">
+
+  <!-- Schema manifest -->
+  <div class="manifest">
+    <div class="manifest-title">// data feed schema manifest</div>
+    <div class="manifest-stats">
+      <div class="mstat">
+        <span class="mstat-n">96</span>
+        <span class="mstat-l">Fields Requested</span>
+      </div>
+      <div class="mstat">
+        <span class="mstat-n">4</span>
+        <span class="mstat-l">Entity Types</span>
+      </div>
+      <div class="mstat">
+        <span class="mstat-n">2</span>
+        <span class="mstat-l">Products</span>
+      </div>
+      <div class="mstat">
+        <span class="mstat-n">NH VT ME MA CT RI</span>
+        <span class="mstat-l">States Covered</span>
+      </div>
+    </div>
+    <div class="manifest-products">
+      <div class="prod-card">
+        <div class="prod-label">Product 1 — IDX Website</div>
+        <div class="prod-url">growwithinnovate.com</div>
+        <div class="prod-desc">Public-facing property search. Displays active listings to consumers browsing INNOVATE agent sites nationwide.</div>
+      </div>
+      <div class="prod-card">
+        <div class="prod-label">Product 2 — Broker Back Office</div>
+        <div class="prod-url">advantage.innovateonline.com</div>
+        <div class="prod-desc">Internal CRM and recruiting platform. Agent and office roster data is used by brokers for market analysis and agent recruiting — not displayed publicly.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Purpose -->
+  <div class="purpose-block">
+    The fields listed below are requested pursuant to the PrimeMLS Specialty Data Feed Agreement (PrimeMLS-095 Rev. F) executed June 23, 2026. All data will be used exclusively for the VENDOR products described in Exhibit B: <strong>IDX Website</strong> and <strong>Broker Back Office Management</strong>. Agent, office, and transaction records accessed for broker back-office use are visible only to authenticated INNOVATE staff and will not be displayed publicly or redistributed. Listing expiration date fields, if granted, will be handled in accordance with PrimeMLS policy and will not be disclosed outside the listing firm.
+  </div>
+
+  <!-- ══ SECTION 1: PROPERTY LISTINGS ══ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Property Listings</div>
+      <div class="section-entity">Resource: Property</div>
+      <div class="section-count">62 fields</div>
+    </div>
+    <p class="section-note">Used by both products. IDX fields power the public-facing property search on growwithinnovate.com. Sold/transaction fields (ClosePrice, CloseDate, CumulativeDaysOnMarket) are used internally in the CRM for market analytics and agent production tracking — they are never displayed per-property to the public.</p>
+    <div class="exhibit-note"><strong>Note on PrivateRemarks:</strong> This field is requested for broker back-office use only. INNOVATE will restrict display of PrivateRemarks to authenticated admin/broker users and will not surface this field on any public-facing page.</div>
+
+    <table class="field-table">
+      <thead>
+        <tr>
+          <th style="width:240px">Field Name</th>
+          <th style="width:80px">Type</th>
+          <th style="width:90px">Used For</th>
+          <th>Description / Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="field-name">ListingKey</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Unique identifier for the listing record</td></tr>
+        <tr><td class="field-name">ListingId</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">MLS number displayed to consumers</td></tr>
+        <tr><td class="field-name">ModificationTimestamp</td><td class="field-type">DateTime</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Last modification date/time for incremental sync</td></tr>
+        <tr><td class="field-name">ListingStatus</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Active, Under Agreement, Sold, Withdrawn, Expired, Cancelled</td></tr>
+        <tr><td class="field-name">StandardStatus</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Normalized status for display filtering</td></tr>
+        <tr><td class="field-name">PropertyType</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Residential, Commercial, Land, etc.</td></tr>
+        <tr><td class="field-name">PropertySubType</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Single Family, Condo, Townhouse, etc.</td></tr>
+        <tr><td class="field-name">UnparsedAddress</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Full address string for display</td></tr>
+        <tr><td class="field-name">StreetNumber</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">House/street number</td></tr>
+        <tr><td class="field-name">StreetDirPrefix</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Directional prefix (N, S, E, W)</td></tr>
+        <tr><td class="field-name">StreetName</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Street name</td></tr>
+        <tr><td class="field-name">StreetSuffix</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Street type (Dr, Ln, Blvd, etc.)</td></tr>
+        <tr><td class="field-name">StreetDirSuffix</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Directional suffix</td></tr>
+        <tr><td class="field-name">UnitNumber</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Unit/apartment number</td></tr>
+        <tr><td class="field-name">City</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Municipality name for search filtering</td></tr>
+        <tr><td class="field-name">StateOrProvince</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">State abbreviation</td></tr>
+        <tr><td class="field-name">PostalCode</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">ZIP/postal code for geographic filtering</td></tr>
+        <tr><td class="field-name">CountyOrParish</td><td class="field-type">String</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">County for market area segmentation</td></tr>
+        <tr><td class="field-name">Latitude</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Geographic coordinate for map display</td></tr>
+        <tr><td class="field-name">Longitude</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Geographic coordinate for map display</td></tr>
+        <tr><td class="field-name">ListPrice</td><td class="field-type">Decimal</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Current list price for display and search filters</td></tr>
+        <tr><td class="field-name">OriginalListPrice</td><td class="field-type">Decimal</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Original asking price for price-reduction analysis</td></tr>
+        <tr><td class="field-name">ClosePrice</td><td class="field-type">Decimal</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Final sold price for agent production scoring</td></tr>
+        <tr><td class="field-name">ListingContractDate</td><td class="field-type">Date</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Date listing agreement signed</td></tr>
+        <tr><td class="field-name">PurchaseContractDate</td><td class="field-type">Date</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Date offer accepted; contract timeline tracking</td></tr>
+        <tr><td class="field-name">CloseDate</td><td class="field-type">Date</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Settlement date for production and volume calculations</td></tr>
+        <tr><td class="field-name">DaysOnMarket</td><td class="field-type">Integer</td><td><span class="usage-badge use-both">IDX + CRM</span></td><td class="field-desc">Days since listing date for market health display</td></tr>
+        <tr><td class="field-name">CumulativeDaysOnMarket</td><td class="field-type">Integer</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Total DOM including re-lists for recruiting analytics</td></tr>
+        <tr><td class="field-name">BedroomsTotal</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Bedroom count for search filters and display</td></tr>
+        <tr><td class="field-name">BathroomsFull</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Full bathroom count</td></tr>
+        <tr><td class="field-name">BathroomsHalf</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Half bathroom count</td></tr>
+        <tr><td class="field-name">BathroomsTotalInteger</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Total bathrooms combined for display</td></tr>
+        <tr><td class="field-name">LivingArea</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Interior square footage for search and display</td></tr>
+        <tr><td class="field-name">LotSizeArea</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Lot size in specified units</td></tr>
+        <tr><td class="field-name">LotSizeUnits</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Square Feet, Acres, etc.</td></tr>
+        <tr><td class="field-name">LotSizeSquareFeet</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Lot size normalized to square feet</td></tr>
+        <tr><td class="field-name">YearBuilt</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Year of original construction</td></tr>
+        <tr><td class="field-name">GarageSpaces</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Enclosed garage capacity</td></tr>
+        <tr><td class="field-name">ParkingTotal</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Total parking spaces including driveway</td></tr>
+        <tr><td class="field-name">PoolPrivateYN</td><td class="field-type">Boolean</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Private in-ground or above-ground pool present</td></tr>
+        <tr><td class="field-name">WaterfrontYN</td><td class="field-type">Boolean</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Property fronts a body of water</td></tr>
+        <tr><td class="field-name">WaterfrontFeatures</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Lake, River, Ocean, etc.</td></tr>
+        <tr><td class="field-name">View</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">View features for search filtering</td></tr>
+        <tr><td class="field-name">Heating</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Heat source and delivery type</td></tr>
+        <tr><td class="field-name">Cooling</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Cooling system type</td></tr>
+        <tr><td class="field-name">Basement</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Basement type and finish</td></tr>
+        <tr><td class="field-name">Levels</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Number of floors/stories in the home</td></tr>
+        <tr><td class="field-name">ArchitecturalStyle</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Colonial, Cape Cod, Ranch, Contemporary, etc.</td></tr>
+        <tr><td class="field-name">InteriorFeatures</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Interior amenity list for detail page display</td></tr>
+        <tr><td class="field-name">ExteriorFeatures</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Exterior amenity list (deck, porch, fence, etc.)</td></tr>
+        <tr><td class="field-name">Appliances</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Included appliances for display</td></tr>
+        <tr><td class="field-name">PublicRemarks</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Agent-written listing description shown to consumers</td></tr>
+        <tr><td class="field-name">PrivateRemarks</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM only</span></td><td class="field-desc">Broker/member remarks — restricted to authenticated staff, not displayed publicly</td></tr>
+        <tr><td class="field-name">VirtualTourURLUnbranded</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Unbranded virtual tour link for detail pages</td></tr>
+        <tr><td class="field-name">TaxAnnualAmount</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Annual property tax for display</td></tr>
+        <tr><td class="field-name">TaxYear</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Tax year for the TaxAnnualAmount value</td></tr>
+        <tr><td class="field-name">AssociationYN</td><td class="field-type">Boolean</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">HOA exists</td></tr>
+        <tr><td class="field-name">AssociationFee</td><td class="field-type">Decimal</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Periodic HOA fee amount</td></tr>
+        <tr><td class="field-name">AssociationFeeFrequency</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Monthly, Quarterly, Annually</td></tr>
+        <tr><td class="field-name">SubdivisionName</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Development or community name</td></tr>
+        <tr><td class="field-name">SchoolElementary</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Assigned elementary school for detail pages</td></tr>
+        <tr><td class="field-name">SchoolMiddleOrJunior</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Assigned middle school</td></tr>
+        <tr><td class="field-name">SchoolHigh</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Assigned high school</td></tr>
+        <tr><td class="field-name">NewConstructionYN</td><td class="field-type">Boolean</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">New construction search filter flag</td></tr>
+        <tr><td class="field-name">ListAgentMlsId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Links listing to listing agent for production attribution</td></tr>
+        <tr><td class="field-name">BuyerAgentMlsId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Links sold transaction to buyer's agent for recruiting score</td></tr>
+        <tr><td class="field-name">ListOfficeMlsId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Links listing to brokerage office for office production</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══ SECTION 2: MEDIA ══ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Media &amp; Photos</div>
+      <div class="section-entity">Resource: Media</div>
+      <div class="section-count">7 fields</div>
+    </div>
+    <p class="section-note">Photos are displayed on growwithinnovate.com listing detail pages. Images are fetched from the PrimeMLS-provided URLs and are not redistributed or re-hosted.</p>
+    <table class="field-table">
+      <thead>
+        <tr>
+          <th style="width:240px">Field Name</th>
+          <th style="width:80px">Type</th>
+          <th style="width:90px">Used For</th>
+          <th>Description / Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="field-name">MediaKey</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Unique identifier for each media object</td></tr>
+        <tr><td class="field-name">MediaURL</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Direct URL for listing photo display</td></tr>
+        <tr><td class="field-name">MediaCategory</td><td class="field-type">String</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Photo, FloorPlan, Video, etc.</td></tr>
+        <tr><td class="field-name">Order</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Sort order for photo carousel display</td></tr>
+        <tr><td class="field-name">ModificationTimestamp</td><td class="field-type">DateTime</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Last-changed timestamp for incremental photo sync</td></tr>
+        <tr><td class="field-name">ImageHeight</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Pixel height for responsive layout sizing</td></tr>
+        <tr><td class="field-name">ImageWidth</td><td class="field-type">Integer</td><td><span class="usage-badge use-idx">IDX</span></td><td class="field-desc">Pixel width for responsive layout sizing</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══ SECTION 3: MEMBER/AGENT ══ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Agent &amp; Member Records</div>
+      <div class="section-entity">Resource: Member</div>
+      <div class="section-count">17 fields</div>
+    </div>
+    <p class="section-note">Agent and member data are used exclusively within advantage.innovateonline.com for broker recruiting analytics and market intelligence. These records are visible only to authenticated INNOVATE brokers and staff. Member contact information is never displayed publicly, redistributed, or used for marketing to PrimeMLS members without prior written consent.</p>
+    <table class="field-table">
+      <thead>
+        <tr>
+          <th style="width:240px">Field Name</th>
+          <th style="width:80px">Type</th>
+          <th style="width:90px">Used For</th>
+          <th>Description / Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="field-name">MemberKey</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Unique identifier for agent/member record</td></tr>
+        <tr><td class="field-name">MemberMlsId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">MLS agent ID for joining listings to agent records</td></tr>
+        <tr><td class="field-name">MemberFirstName</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">First name for broker-facing roster display</td></tr>
+        <tr><td class="field-name">MemberLastName</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Last name for broker-facing roster display</td></tr>
+        <tr><td class="field-name">MemberEmail</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Contact email for recruiting outreach by authorized brokers</td></tr>
+        <tr><td class="field-name">MemberDirectPhone</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Direct phone for broker recruiting contact</td></tr>
+        <tr><td class="field-name">MemberOfficePhone</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Office phone number</td></tr>
+        <tr><td class="field-name">MemberStatus</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Active or Inactive — used to filter current agents</td></tr>
+        <tr><td class="field-name">MemberType</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Agent, Broker, Appraiser, etc.</td></tr>
+        <tr><td class="field-name">MemberStateLicense</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">State license number for compliance verification</td></tr>
+        <tr><td class="field-name">MemberNationalAssociationId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">NAR NRDS ID for cross-MLS identity resolution</td></tr>
+        <tr><td class="field-name">MemberJoinDate</td><td class="field-type">Date</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">MLS join date for tenure-based analysis</td></tr>
+        <tr><td class="field-name">MemberAddress1</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Business address for geographic market assignment</td></tr>
+        <tr><td class="field-name">MemberCity</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">City for geographic market segmentation</td></tr>
+        <tr><td class="field-name">MemberStateOrProvince</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">State for multi-state broker operations</td></tr>
+        <tr><td class="field-name">MemberPostalCode</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">ZIP code for market radius calculations</td></tr>
+        <tr><td class="field-name">OfficeKey</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Links agent to office record for hierarchy analysis</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══ SECTION 4: OFFICE ══ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Office Records</div>
+      <div class="section-entity">Resource: Office</div>
+      <div class="section-count">10 fields</div>
+    </div>
+    <p class="section-note">Office records are used in the broker back-office CRM to understand brokerage structure, identify target firms for recruiting, and analyze market share by office. Not displayed publicly.</p>
+    <table class="field-table">
+      <thead>
+        <tr>
+          <th style="width:240px">Field Name</th>
+          <th style="width:80px">Type</th>
+          <th style="width:90px">Used For</th>
+          <th>Description / Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="field-name">OfficeKey</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Unique identifier for office record</td></tr>
+        <tr><td class="field-name">OfficeMlsId</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">MLS office ID for joining listings and agents</td></tr>
+        <tr><td class="field-name">OfficeName</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Brokerage name for recruiting context and market display</td></tr>
+        <tr><td class="field-name">OfficeAddress1</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Office street address</td></tr>
+        <tr><td class="field-name">OfficeCity</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">City for geographic market analysis</td></tr>
+        <tr><td class="field-name">OfficeStateOrProvince</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">State for multi-state operations view</td></tr>
+        <tr><td class="field-name">OfficePostalCode</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">ZIP code for market proximity analysis</td></tr>
+        <tr><td class="field-name">OfficePhone</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Office main phone for recruiting outreach</td></tr>
+        <tr><td class="field-name">OfficeStatus</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Active or Inactive — filters current firms only</td></tr>
+        <tr><td class="field-name">OfficeBrokerKey</td><td class="field-type">String</td><td><span class="usage-badge use-crm">CRM</span></td><td class="field-desc">Links office to its broker-in-charge member record</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /doc-body -->
+
+<!-- ══ FOOTER ════════════════════════════════════════════════════════════ -->
+<footer class="doc-footer">
+  <div class="footer-note">
+    All fields requested are subject to PrimeMLS availability within the RETS system and PrimeMLS confidentiality determination. Fields marked as confidential by PrimeMLS will be handled per the Agreement. Listing expiration date fields, if accessible, will not be disclosed to any party outside the originating listing firm.
+  </div>
+  <div class="footer-ref">
+    PrimeMLS-095 Rev. F · Exhibit A<br>
+    INNOVATE Real Estate · darren@InnovateOnline.com<br>
+    Effective June 23, 2026
+  </div>
+</footer>
