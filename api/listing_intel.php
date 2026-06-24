@@ -186,11 +186,16 @@ if ($action === 'sync_prospects') {
          . '?token=' . urlencode($token)
          . '&zips='  . urlencode(implode(',', $allZips))
          . '&limit=500';
-    $ctx = stream_context_create(['http' => ['timeout' => 30, 'header' => "Accept: application/json\r\n"]]);
+    $ctx = stream_context_create(['http' => [
+        'timeout'       => 30,
+        'ignore_errors' => true,
+        'header'        => "Accept: application/json\r\n",
+    ]]);
     $raw = @file_get_contents($url, false, $ctx);
-    if ($raw === false) err('Could not reach CRM. Check server connectivity.');
+    if ($raw === false) err('Could not reach CRM at ' . $base . '. Check that the CRM server is running.');
     $data = json_decode($raw, true);
-    if (!isset($data['candidates'])) err('Unexpected CRM response');
+    if (isset($data['detail'])) err('CRM error: ' . $data['detail']);
+    if (!isset($data['candidates'])) err('Unexpected CRM response: ' . substr($raw, 0, 120));
 
     $candidates = $data['candidates'];
 
