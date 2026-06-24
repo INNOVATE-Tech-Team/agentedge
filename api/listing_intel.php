@@ -27,6 +27,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         je(['ok' => true, 'items' => $s->fetchAll(PDO::FETCH_ASSOC)]);
     }
 
+    if ($action === 'sync_status') {
+        // Summary counts for the prospects tab header
+        $sc = $db->prepare("SELECT COUNT(*) FROM listing_prospects WHERE agent_email=? AND status != 'dead'"); $sc->execute([$me]); $total = (int)$sc->fetchColumn();
+        $sc = $db->prepare("SELECT COUNT(*) FROM listing_prospects WHERE agent_email=? AND skip_traced=0 AND status != 'dead'"); $sc->execute([$me]); $needsTrace = (int)$sc->fetchColumn();
+        $sc = $db->prepare("SELECT MAX(updated_at) FROM listing_prospects WHERE agent_email=? AND source='auto'"); $sc->execute([$me]); $lastSync = $sc->fetchColumn() ?: null;
+        je(['ok' => true, 'total' => $total, 'needs_trace' => $needsTrace, 'last_sync' => $lastSync]);
+    }
+
     err('Unknown action');
 }
 
@@ -152,6 +160,105 @@ if ($action === 'log_outreach') {
            ->execute([$pid,$me]);
     }
 
+    je(['ok' => true]);
+}
+
+// ── sync_prospects ────────────────────────────────────────────────────────────
+if ($action === 'sync_prospects') {
+    $cfg   = cfg();
+    $base  = rtrim($cfg['crm_base'] ?? 'https://bold360.vip/api', '/');
+    $token = $cfg['crm_token'] ?? '';
+    if (!$token) err('CRM token not configured');
+
+    // Collect all zip codes across this agent's farms
+    $sf = $db->prepare("SELECT zip_codes FROM listing_farms WHERE agent_email=?");
+    $sf->execute([$me]);
+    $allZips = [];
+    foreach ($sf->fetchAll(PDO::FETCH_COLUMN) as $json) {
+        foreach ((json_decode($json, true) ?: []) as $z) {
+            if ($z) $allZips[] = $z;
+        }
+    }
+    $allZips = array_unique($allZips);
+    if (empty($allZips)) err('No zip codes defined in your farms. Add farm areas first.');
+
+    $url = $base . '/public/listing-intel/seller-candidates'
+         . '?token=' . urlencode($token)
+         . '&zips='  . urlencode(implode(',', $allZips))
+         . '&limit=500';
+    $ctx = stream_context_create(['http' => ['timeout' => 30, 'header' => "Accept: application/json\r\n"]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) err('Could not reach CRM. Check server connectivity.');
+    $data = json_decode($raw, true);
+    if (!isset($data['candidates'])) err('Unexpected CRM response');
+
+    $candidates = $data['candidates'];
+
+    // Map zip → farm_id for linking
+    $sf = $db->prepare("SELECT id, zip_codes FROM listing_farms WHERE agent_email=?");
+    $sf->execute([$me]);
+    $zipToFarm = [];
+    foreach ($sf->fetchAll(PDO::FETCH_ASSOC) as $f) {
+        foreach ((json_decode($f['zip_codes'], true) ?: []) as $z) {
+            $zipToFarm[$z] = $f['id'];
+        }
+    }
+
+    $inserted = 0; $updated = 0;
+    $check  = $db->prepare("SELECT id, status FROM listing_prospects WHERE agent_email=? AND address=? AND zip=?");
+    $insert = $db->prepare("INSERT INTO listing_prospects
+        (agent_email,farm_id,owner_name,address,city,zip,source,status,
+         seller_score,est_value,purchase_price,purchase_date,years_owned,velocity)
+        VALUES (?,?,'',?,?,?,'auto','new',?,?,?,?,?,?)");
+    $update = $db->prepare("UPDATE listing_prospects SET
+        seller_score=?,est_value=?,purchase_price=?,purchase_date=?,years_owned=?,velocity=?,farm_id=?,updated_at=datetime('now')
+        WHERE agent_email=? AND address=? AND zip=? AND status='new'");
+
+    foreach ($candidates as $cand) {
+        $addr  = trim($cand['address'] ?? '');
+        $zip   = trim($cand['zip'] ?? '');
+        if (!$addr || !$zip) continue;
+        $farmId = $zipToFarm[$zip] ?? null;
+        $score  = (int)($cand['seller_score'] ?? 0);
+        $val    = (int)($cand['est_value'] ?? 0);
+        $pp     = (int)($cand['purchase_price'] ?? 0);
+        $pd     = $cand['purchase_date'] ?? '';
+        $yo     = (int)($cand['years_owned'] ?? 0);
+        $vel    = (int)($cand['neighborhood_velocity'] ?? 0);
+        $city   = trim($cand['city'] ?? '');
+
+        $check->execute([$me, $addr, $zip]);
+        $row = $check->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            $insert->execute([$me, $farmId, $addr, $city, $zip, $score, $val, $pp, $pd, $yo, $vel]);
+            $inserted++;
+        } else {
+            $update->execute([$score, $val, $pp, $pd, $yo, $vel, $farmId, $me, $addr, $zip]);
+            $updated++;
+        }
+    }
+
+    je(['ok' => true, 'inserted' => $inserted, 'updated' => $updated, 'total' => count($candidates)]);
+}
+
+// ── mark_skip_traced ──────────────────────────────────────────────────────────
+if ($action === 'mark_skip_traced') {
+    $pid       = (int)($body['prospect_id'] ?? 0);
+    $ownerName = trim($body['owner_name'] ?? '');
+    $phone     = trim($body['phone'] ?? '');
+    $email     = trim($body['email'] ?? '');
+    if (!$pid) err('Missing prospect_id');
+    $s = $db->prepare("SELECT id FROM listing_prospects WHERE id=? AND agent_email=?");
+    $s->execute([$pid, $me]);
+    if (!$s->fetch()) err('Not found', 404);
+    $db->prepare("UPDATE listing_prospects SET
+        skip_traced=1, skip_traced_at=datetime('now'),
+        owner_name=CASE WHEN ?!='' THEN ? ELSE owner_name END,
+        phone=CASE WHEN ?!='' THEN ? ELSE phone END,
+        email=CASE WHEN ?!='' THEN ? ELSE email END,
+        updated_at=datetime('now')
+        WHERE id=? AND agent_email=?")
+       ->execute([$ownerName,$ownerName,$phone,$phone,$email,$email,$pid,$me]);
     je(['ok' => true]);
 }
 

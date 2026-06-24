@@ -10,11 +10,11 @@ $me = $agent['email'];
 $db = local_db();
 
 // Summary counts for overview tiles
-$farmCount   = (int)$db->prepare("SELECT COUNT(*) FROM listing_farms WHERE agent_email=?")->execute([$me]) ? 0 : 0;
 $sc = $db->prepare("SELECT COUNT(*) FROM listing_farms WHERE agent_email=?"); $sc->execute([$me]); $farmCount = (int)$sc->fetchColumn();
 $sc = $db->prepare("SELECT COUNT(*) FROM listing_prospects WHERE agent_email=? AND status != 'dead'"); $sc->execute([$me]); $activeProspects = (int)$sc->fetchColumn();
 $sc = $db->prepare("SELECT COUNT(*) FROM listing_outreach WHERE agent_email=? AND logged_at >= date('now','-7 days')"); $sc->execute([$me]); $weeklyTouches = (int)$sc->fetchColumn();
-$sc = $db->prepare("SELECT COUNT(*) FROM listing_prospects WHERE agent_email=? AND status='active'"); $sc->execute([$me]); $hotCount = (int)$sc->fetchColumn();
+$sc = $db->prepare("SELECT COUNT(*) FROM listing_prospects WHERE agent_email=? AND skip_traced=0 AND status!='dead'"); $sc->execute([$me]); $needsTrace = (int)$sc->fetchColumn();
+$sc = $db->prepare("SELECT MAX(updated_at) FROM listing_prospects WHERE agent_email=? AND source='auto'"); $sc->execute([$me]); $lastSync = $sc->fetchColumn() ?: null;
 
 // Farms for this agent
 $sf = $db->prepare("SELECT * FROM listing_farms WHERE agent_email=? ORDER BY name"); $sf->execute([$me]); $farms = $sf->fetchAll(PDO::FETCH_ASSOC);
@@ -150,8 +150,12 @@ function money(int $n): string { return $n ? '$'.number_format($n) : '—'; }
   <div class="content">
     <header class="content-top">
       <div class="content-title">Listing Intel</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary btn-sm" onclick="openProspectModal()">+ Add Prospect</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <?php if ($lastSync): ?>
+        <span style="font-size:11px;color:var(--faint)">Last sync: <?= date('M j g:ia', strtotime($lastSync)) ?></span>
+        <?php endif; ?>
+        <button class="btn btn-primary btn-sm" id="sync-btn" onclick="syncProspects()">&#8635; Sync Farm Prospects</button>
+        <button class="btn btn-ghost btn-sm" onclick="openProspectModal()">+ Add Manually</button>
       </div>
     </header>
 
@@ -165,11 +169,11 @@ function money(int $n): string { return $n ? '$'.number_format($n) : '—'; }
         </div>
         <div class="li-tile">
           <div class="li-tile-val"><?= $activeProspects ?></div>
-          <div class="li-tile-lbl">Active Prospects</div>
+          <div class="li-tile-lbl">Candidates</div>
         </div>
         <div class="li-tile hot">
-          <div class="li-tile-val"><?= $hotCount ?></div>
-          <div class="li-tile-lbl">Hot Leads</div>
+          <div class="li-tile-val"><?= $needsTrace ?></div>
+          <div class="li-tile-lbl">Need Skip Trace</div>
         </div>
         <div class="li-tile green">
           <div class="li-tile-val"><?= $weeklyTouches ?></div>
@@ -186,56 +190,70 @@ function money(int $n): string { return $n ? '$'.number_format($n) : '—'; }
 
       <!-- ── PROSPECTS ──────────────────────────────────────────────────── -->
       <div class="li-pane active" id="pane-prospects">
-        <?php if (empty($prospects)): ?>
+        <?php if (empty($farms)): ?>
+        <div class="li-empty">
+          <div class="li-empty-icon">🗺️</div>
+          <div class="li-empty-msg">Set up a farm area first, then sync to auto-generate your prospect list.</div>
+          <button class="btn btn-primary" onclick="switchTab('farms', null); openFarmModal()">+ Add Farm</button>
+        </div>
+        <?php elseif (empty($prospects)): ?>
         <div class="li-empty">
           <div class="li-empty-icon">🏡</div>
-          <div class="li-empty-msg">No prospects yet. Add your first one or pull from the Expired Pipeline.</div>
-          <button class="btn btn-primary" onclick="openProspectModal()">+ Add Prospect</button>
+          <div class="li-empty-msg">No prospects yet. Sync your farms to pull candidates from MLS data.</div>
+          <button class="btn btn-primary" onclick="syncProspects()">&#8635; Sync Farm Prospects</button>
         </div>
         <?php else: ?>
-        <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
-          <input type="search" id="prospect-search" class="exp-search" placeholder="Search prospects…" oninput="filterProspects()">
-          <select id="prospect-status-filter" class="form-select" style="width:160px" onchange="filterProspects()">
+        <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="search" id="prospect-search" class="exp-search" placeholder="Search address, city…" oninput="filterProspects()">
+          <select id="prospect-status-filter" class="form-select" style="width:150px" onchange="filterProspects()">
             <option value="">All statuses</option>
             <option value="new">New</option>
             <option value="contacted">Contacted</option>
             <option value="active">Active</option>
             <option value="dead">Dead</option>
           </select>
-          <select id="prospect-source-filter" class="form-select" style="width:160px" onchange="filterProspects()">
-            <option value="">All sources</option>
-            <option value="manual">Manual</option>
-            <option value="expired">Expired</option>
-            <option value="fsbo">FSBO</option>
-            <option value="equity">Equity</option>
+          <select id="prospect-trace-filter" class="form-select" style="width:170px" onchange="filterProspects()">
+            <option value="">All</option>
+            <option value="0">Needs Skip Trace</option>
+            <option value="1">Skip Traced</option>
           </select>
+          <span style="font-size:12px;color:var(--faint);margin-left:auto"><?= $activeProspects ?> candidate<?= $activeProspects != 1 ? 's' : '' ?></span>
         </div>
         <div class="card" style="padding:0;overflow:hidden">
           <table class="li-tbl" id="prospect-table">
             <thead><tr>
-              <th>Owner / Address</th>
-              <th>Farm</th>
-              <th>Source</th>
-              <th>Status</th>
+              <th>Address</th>
+              <th>Owner</th>
+              <th>Yrs Owned</th>
               <th>Score</th>
               <th class="num">Est. Value</th>
-              <th>Last Touch</th>
+              <th>Skip Trace</th>
+              <th>Status</th>
               <th></th>
             </tr></thead>
             <tbody>
             <?php foreach ($prospects as $p):
               $scoreClass = $p['seller_score'] >= 75 ? 'hot' : ($p['seller_score'] >= 45 ? 'warm' : '');
-              $lastTouch = $p['last_touch'] ? date('M j', strtotime($p['last_touch'])) : 'Never';
+              $lastTouch = !empty($p['last_touch']) ? date('M j', strtotime($p['last_touch'])) : 'Never';
+              $traced = !empty($p['skip_traced']);
             ?>
-            <tr data-status="<?= h($p['status']) ?>" data-source="<?= h($p['source']) ?>"
-                data-search="<?= h(strtolower($p['owner_name'].' '.$p['address'].' '.$p['city'])) ?>">
+            <tr data-status="<?= h($p['status']) ?>" data-traced="<?= $traced ? '1' : '0' ?>"
+                data-search="<?= h(strtolower($p['address'].' '.$p['city'].' '.($p['owner_name'] ?? ''))) ?>">
               <td>
-                <div style="font-weight:700"><?= h($p['owner_name']) ?></div>
-                <div style="font-size:11px;color:var(--faint)"><?= h($p['address']) ?><?= $p['city'] ? ', '.h($p['city']) : '' ?></div>
+                <div style="font-weight:600"><?= h($p['address']) ?></div>
+                <div style="font-size:11px;color:var(--faint)"><?= h($p['city']) ?><?= $p['zip'] ? ' '.$p['zip'] : '' ?></div>
               </td>
-              <td style="font-size:12px;color:var(--faint)"><?= h($p['farm_name'] ?? '—') ?></td>
-              <td><span class="badge badge-<?= h($p['source']) ?>"><?= h($p['source']) ?></span></td>
-              <td><span class="badge badge-<?= h($p['status']) ?>"><?= h($p['status']) ?></span></td>
+              <td>
+                <?php if ($traced && $p['owner_name']): ?>
+                  <div style="font-weight:700"><?= h($p['owner_name']) ?></div>
+                  <?php if ($p['phone']): ?><div style="font-size:11px;color:var(--faint)"><?= h($p['phone']) ?></div><?php endif; ?>
+                <?php else: ?>
+                  <span style="font-size:11px;color:#bbb;font-style:italic">Not traced</span>
+                <?php endif; ?>
+              </td>
+              <td style="font-size:13px;font-weight:700;color:<?= ($p['years_owned'] >= 5 && $p['years_owned'] <= 7) ? '#e05d00' : 'var(--ink)' ?>">
+                <?= $p['years_owned'] ? $p['years_owned'].'y' : '—' ?>
+              </td>
               <td>
                 <div class="score-wrap">
                   <div class="score-bar"><div class="score-fill <?= $scoreClass ?>" style="width:<?= $p['seller_score'] ?>%"></div></div>
@@ -243,15 +261,19 @@ function money(int $n): string { return $n ? '$'.number_format($n) : '—'; }
                 </div>
               </td>
               <td class="num" style="font-weight:700"><?= money((int)$p['est_value']) ?></td>
-              <td style="font-size:12px;color:var(--faint)">
-                <?= h($lastTouch) ?>
-                <?php if ($p['touch_count'] > 0): ?>
-                <span style="font-size:10px;color:#bbb"> (<?= $p['touch_count'] ?>x)</span>
+              <td>
+                <?php if ($traced): ?>
+                  <span class="badge badge-active">Traced</span>
+                <?php else: ?>
+                  <button class="btn btn-ghost btn-sm" onclick='openSkipTraceModal(<?= $p['id'] ?>, <?= json_encode($p['address']) ?>)'>Skip Trace</button>
                 <?php endif; ?>
               </td>
+              <td><span class="badge badge-<?= h($p['status']) ?>"><?= h($p['status']) ?></span></td>
               <td>
                 <div style="display:flex;gap:4px">
-                  <button class="btn btn-ghost btn-sm" onclick='openOutreachModal(<?= $p['id'] ?>, <?= json_encode($p['owner_name']) ?>)'>Log</button>
+                  <?php if ($traced): ?>
+                  <button class="btn btn-ghost btn-sm" onclick='openOutreachModal(<?= $p['id'] ?>, <?= json_encode($p['owner_name'] ?: $p['address']) ?>)'>Log</button>
+                  <?php endif; ?>
                   <button class="btn btn-ghost btn-sm" onclick='editProspect(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)'>Edit</button>
                 </div>
               </td>
@@ -491,6 +513,35 @@ function money(int $n): string { return $n ? '$'.number_format($n) : '—'; }
   </div>
 </div>
 
+<!-- ── SKIP TRACE MODAL ───────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="skiptrace-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeSkipTraceModal()">×</button>
+    <h3>Mark Skip Traced</h3>
+    <div class="sub" id="skiptrace-modal-sub">Enter the contact info you found for this property owner.</div>
+    <form id="skiptrace-form">
+      <input type="hidden" id="st-prospect-id" value="">
+      <div class="form-row">
+        <label>Owner Name</label>
+        <input type="text" id="st-owner" class="form-input" placeholder="John Smith">
+      </div>
+      <div class="form-row">
+        <label>Phone</label>
+        <input type="text" id="st-phone" class="form-input" placeholder="(843) 555-0100">
+      </div>
+      <div class="form-row">
+        <label>Email</label>
+        <input type="email" id="st-email" class="form-input" placeholder="owner@email.com">
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Save &amp; Mark Traced</button>
+        <button type="button" class="btn btn-ghost" onclick="closeSkipTraceModal()">Cancel</button>
+      </div>
+      <div id="skiptrace-error" style="color:var(--red);font-size:12px;margin-top:10px;display:none"></div>
+    </form>
+  </div>
+</div>
+
 <!-- ── OUTREACH LOG MODAL ─────────────────────────────────────────────────── -->
 <div class="modal-overlay" id="outreach-overlay">
   <div class="modal">
@@ -724,15 +775,74 @@ document.getElementById('outreach-form').addEventListener('submit', async e => {
     }
 });
 
+// ── Sync farm prospects ──────────────────────────────────────────────────────
+async function syncProspects() {
+    const btn = document.getElementById('sync-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    try {
+        const r = await fetch('api/listing_intel.php', {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'sync_prospects'}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            const msg = `Synced: ${d.inserted} new, ${d.updated} updated (${d.total} candidates scored)`;
+            alert(msg);
+            location.reload();
+        } else {
+            alert('Sync failed: ' + (d.error || 'Unknown error'));
+            btn.disabled = false; btn.textContent = '↻ Sync Farm Prospects';
+        }
+    } catch(err) {
+        alert('Sync error: ' + err.message);
+        btn.disabled = false; btn.textContent = '↻ Sync Farm Prospects';
+    }
+}
+
+// ── Skip trace modal ─────────────────────────────────────────────────────────
+function openSkipTraceModal(prospectId, address) {
+    document.getElementById('st-prospect-id').value = prospectId;
+    document.getElementById('skiptrace-modal-sub').textContent = address;
+    document.getElementById('st-owner').value = '';
+    document.getElementById('st-phone').value = '';
+    document.getElementById('st-email').value = '';
+    document.getElementById('skiptrace-error').style.display = 'none';
+    document.getElementById('skiptrace-overlay').classList.add('open');
+}
+function closeSkipTraceModal() { document.getElementById('skiptrace-overlay').classList.remove('open'); }
+document.getElementById('skiptrace-overlay').addEventListener('click', e => { if (e.target.id === 'skiptrace-overlay') closeSkipTraceModal(); });
+document.getElementById('skiptrace-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = {
+        action: 'mark_skip_traced',
+        prospect_id: document.getElementById('st-prospect-id').value,
+        owner_name: document.getElementById('st-owner').value.trim(),
+        phone: document.getElementById('st-phone').value.trim(),
+        email: document.getElementById('st-email').value.trim(),
+    };
+    try {
+        const r = await fetch('api/listing_intel.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const d = await r.json();
+        if (d.ok) { closeSkipTraceModal(); location.reload(); }
+        else throw new Error(d.error || 'Save failed');
+    } catch(err) {
+        document.getElementById('skiptrace-error').textContent = err.message;
+        document.getElementById('skiptrace-error').style.display = 'block';
+    }
+});
+
 // ── Prospect filters ─────────────────────────────────────────────────────────
 function filterProspects() {
-    const q = document.getElementById('prospect-search').value.toLowerCase();
+    const q  = document.getElementById('prospect-search').value.toLowerCase();
     const st = document.getElementById('prospect-status-filter').value;
-    const src = document.getElementById('prospect-source-filter').value;
+    const tr = document.getElementById('prospect-trace-filter').value;
     document.querySelectorAll('#prospect-table tbody tr').forEach(row => {
-        const match = (!q || row.dataset.search.includes(q))
+        const match = (!q  || row.dataset.search.includes(q))
             && (!st || row.dataset.status === st)
-            && (!src || row.dataset.source === src);
+            && (!tr || row.dataset.traced === tr);
         row.style.display = match ? '' : 'none';
     });
 }

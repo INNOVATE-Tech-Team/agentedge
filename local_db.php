@@ -693,27 +693,41 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lf_email ON listing_farms(agent_email)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS listing_prospects (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_email  TEXT    NOT NULL,
-        farm_id      INTEGER,
-        owner_name   TEXT    NOT NULL,
-        address      TEXT    NOT NULL,
-        city         TEXT    NOT NULL DEFAULT '',
-        zip          TEXT    NOT NULL DEFAULT '',
-        phone        TEXT    NOT NULL DEFAULT '',
-        email        TEXT    NOT NULL DEFAULT '',
-        mls_number   TEXT    NOT NULL DEFAULT '',
-        source       TEXT    NOT NULL DEFAULT 'manual',   -- manual | expired | fsbo | equity
-        status       TEXT    NOT NULL DEFAULT 'new',      -- new | contacted | active | dead
-        seller_score INTEGER NOT NULL DEFAULT 0,
-        est_value    INTEGER NOT NULL DEFAULT 0,
-        last_contact TEXT    NOT NULL DEFAULT '',
-        notes        TEXT    NOT NULL DEFAULT '',
-        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-        updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email    TEXT    NOT NULL,
+        farm_id        INTEGER,
+        owner_name     TEXT    NOT NULL DEFAULT '',
+        address        TEXT    NOT NULL,
+        city           TEXT    NOT NULL DEFAULT '',
+        zip            TEXT    NOT NULL DEFAULT '',
+        phone          TEXT    NOT NULL DEFAULT '',
+        email          TEXT    NOT NULL DEFAULT '',
+        mls_number     TEXT    NOT NULL DEFAULT '',
+        source         TEXT    NOT NULL DEFAULT 'auto',    -- auto | expired | manual
+        status         TEXT    NOT NULL DEFAULT 'new',     -- new | contacted | active | dead
+        seller_score   INTEGER NOT NULL DEFAULT 0,
+        est_value      INTEGER NOT NULL DEFAULT 0,
+        purchase_price INTEGER NOT NULL DEFAULT 0,
+        purchase_date  TEXT    NOT NULL DEFAULT '',
+        years_owned    INTEGER NOT NULL DEFAULT 0,
+        velocity       INTEGER NOT NULL DEFAULT 0,
+        skip_traced    INTEGER NOT NULL DEFAULT 0,
+        skip_traced_at TEXT    NOT NULL DEFAULT '',
+        last_contact   TEXT    NOT NULL DEFAULT '',
+        notes          TEXT    NOT NULL DEFAULT '',
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lp_email  ON listing_prospects(agent_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lp_status ON listing_prospects(status)");
+    // Migrations for existing installs
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN purchase_price INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN purchase_date  TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN years_owned    INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN velocity       INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN skip_traced    INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE listing_prospects ADD COLUMN skip_traced_at TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("UPDATE listing_prospects SET owner_name='' WHERE owner_name IS NULL"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS listing_outreach (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
