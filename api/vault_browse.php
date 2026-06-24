@@ -11,7 +11,7 @@ $admin = !empty($perms['isAdmin']);
 $email = $agent['email'] ?? '';
 
 $folderId = $_GET['folder_id'] ?? '';
-if (!$folderId) { echo json_encode(['folders'=>[],'files']=[]); exit; }
+if (!$folderId) { echo json_encode(['folders'=>[], 'files'=>[]]); exit; }
 
 $db = local_db();
 
