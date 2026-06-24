@@ -640,6 +640,45 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_period ON budget_lines(period_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_dept   ON budget_lines(department)");
 
+    // ── MLS Integrations tracker ──────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_name         TEXT    NOT NULL,
+        mls_code         TEXT    NOT NULL DEFAULT '',
+        region           TEXT    NOT NULL DEFAULT '',
+        feed_type        TEXT    NOT NULL DEFAULT 'RETS',
+        status           TEXT    NOT NULL DEFAULT 'researching',
+        monthly_fee      REAL    NOT NULL DEFAULT 0,
+        products         TEXT    NOT NULL DEFAULT '',
+        application_date TEXT,
+        approval_date    TEXT,
+        go_live_date     TEXT,
+        agreement_url    TEXT,
+        contact_name     TEXT    NOT NULL DEFAULT '',
+        contact_org      TEXT    NOT NULL DEFAULT '',
+        contact_email    TEXT    NOT NULL DEFAULT '',
+        contact_phone    TEXT    NOT NULL DEFAULT '',
+        api_base_url     TEXT,
+        api_username     TEXT    NOT NULL DEFAULT '',
+        api_secret       TEXT    NOT NULL DEFAULT '',
+        api_key          TEXT    NOT NULL DEFAULT '',
+        notes            TEXT    NOT NULL DEFAULT '',
+        created_by       TEXT    NOT NULL DEFAULT '',
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    // Seed known MLS integrations on fresh installs
+    if ($pdo->query("SELECT COUNT(*) FROM mls_integrations")->fetchColumn() == 0) {
+        $mi = $pdo->prepare("INSERT INTO mls_integrations
+            (mls_name,mls_code,region,feed_type,status,monthly_fee,products,
+             go_live_date,contact_email,notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?)");
+        $mi->execute(['Coastal Carolinas Association of REALTORS','CCAR','SC – Coastal Carolinas','Trestle','active',0,'idx,crm','2024-01-01','','Trestle feed via CoreLogic. OriginatingSystemName = CCAR.']);
+        $mi->execute(['Consolidated MLS (Columbia SC)','CMLS','SC – Columbia','RETS','active',0,'crm','2026-05-01','','Paragon RETS feed. 5298 active agents + 1958 offices. Nightly cron 4:30am ET via ~/coastline-server/columbia.sh.']);
+        $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
+        $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
+    }
+
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
