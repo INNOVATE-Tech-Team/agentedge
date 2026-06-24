@@ -40,7 +40,7 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['intake',40],['calendar',50],['profile',60],['hud_submit',70],['vault',78],['university',85],['tickets',90]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['intake',40],['calendar',50],['profile',60],['hud_submit',70],['vault',78],['university',85],['tickets',90],['listing_intel',95]] as $r) {
             $ins->execute($r);
         }
     }
@@ -49,6 +49,7 @@ function local_db(): PDO {
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['university',85]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['market_centers',25]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['intake',40]);
+    $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['listing_intel',95]);
 
     // Market-center resource links (MLS, state tools, etc.)
     $pdo->exec("CREATE TABLE IF NOT EXISTS mc_resource_links (
@@ -678,6 +679,53 @@ function local_db(): PDO {
         $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
         $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
     }
+
+    // ── Listing Intelligence ──────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS listing_farms (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email  TEXT    NOT NULL,
+        name         TEXT    NOT NULL,
+        zip_codes    TEXT    NOT NULL DEFAULT '[]',
+        neighborhoods TEXT   NOT NULL DEFAULT '[]',
+        notes        TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lf_email ON listing_farms(agent_email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS listing_prospects (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email  TEXT    NOT NULL,
+        farm_id      INTEGER,
+        owner_name   TEXT    NOT NULL,
+        address      TEXT    NOT NULL,
+        city         TEXT    NOT NULL DEFAULT '',
+        zip          TEXT    NOT NULL DEFAULT '',
+        phone        TEXT    NOT NULL DEFAULT '',
+        email        TEXT    NOT NULL DEFAULT '',
+        mls_number   TEXT    NOT NULL DEFAULT '',
+        source       TEXT    NOT NULL DEFAULT 'manual',   -- manual | expired | fsbo | equity
+        status       TEXT    NOT NULL DEFAULT 'new',      -- new | contacted | active | dead
+        seller_score INTEGER NOT NULL DEFAULT 0,
+        est_value    INTEGER NOT NULL DEFAULT 0,
+        last_contact TEXT    NOT NULL DEFAULT '',
+        notes        TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lp_email  ON listing_prospects(agent_email)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lp_status ON listing_prospects(status)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS listing_outreach (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        prospect_id  INTEGER NOT NULL,
+        agent_email  TEXT    NOT NULL,
+        method       TEXT    NOT NULL DEFAULT 'call',   -- call | email | mail | text | door
+        outcome      TEXT    NOT NULL DEFAULT '',       -- no_answer | left_vm | spoke | interested | not_interested
+        notes        TEXT    NOT NULL DEFAULT '',
+        logged_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lo_prospect ON listing_outreach(prospect_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lo_agent    ON listing_outreach(agent_email)");
 
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (

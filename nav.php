@@ -38,8 +38,9 @@ function nav_items(): array {
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
         'university' => ['key' => 'university', 'label' => 'INNOVATE University',  'href' => 'university.php'],
-        'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',           'href' => 'tickets.php'],
-        'marketing'  => ['key' => 'marketing',  'label' => 'Marketing Studio',     'href' => 'sso_marketing.php', 'external' => true],
+        'tickets'        => ['key' => 'tickets',        'label' => 'My Tickets',       'href' => 'tickets.php'],
+        'listing_intel'  => ['key' => 'listing_intel',  'label' => 'Listing Intel',    'href' => 'listing_intel.php'],
+        'marketing'      => ['key' => 'marketing',      'label' => 'Marketing Studio', 'href' => 'sso_marketing.php', 'external' => true],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
