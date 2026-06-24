@@ -40,11 +40,12 @@ function local_db(): PDO {
     )");
     if ($pdo->query("SELECT COUNT(*) FROM nav_core_order")->fetchColumn() == 0) {
         $ins = $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)");
-        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['intake',40],['calendar',50],['profile',60],['hud_submit',70],['docs',80],['university',85],['tickets',90]] as $r) {
+        foreach ([['dashboard',10],['roster',20],['market_centers',25],['network',30],['intake',40],['calendar',50],['profile',60],['hud_submit',70],['vault',78],['university',85],['tickets',90]] as $r) {
             $ins->execute($r);
         }
     }
     // Ensure rows exist on existing installs
+    $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['vault',78]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['university',85]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['market_centers',25]);
     $pdo->prepare("INSERT OR IGNORE INTO nav_core_order (key,sort_ord) VALUES (?,?)")->execute(['intake',40]);
@@ -319,7 +320,7 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
 
-    // ── Document Library ──────────────────────────────────────────────────────
+    // ── Document Library (legacy simple Resources page) ───────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         parent_id  INTEGER,
@@ -346,6 +347,47 @@ function local_db(): PDO {
     if (!is_dir($docsDir)) @mkdir($docsDir, 0750, true);
     $docsHt = $docsDir . '/.htaccess';
     if (!file_exists($docsHt)) @file_put_contents($docsHt, "Deny from all\n");
+
+    // ── The Vault — department-aware document library (replaces intranet /docs) ─
+    // TEXT primary keys so UUIDs from the intranet migration carry over exactly.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS vault_depts (
+        slug     TEXT    PRIMARY KEY,
+        name     TEXT    NOT NULL,
+        sort_ord INTEGER NOT NULL DEFAULT 0
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS vault_user_depts (
+        email     TEXT NOT NULL,
+        dept_slug TEXT NOT NULL,
+        PRIMARY KEY (email, dept_slug)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_vud_email ON vault_user_depts(email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS vault_folders (
+        id          TEXT    PRIMARY KEY,
+        parent_id   TEXT,
+        name        TEXT    NOT NULL,
+        -- public = all logged-in agents; dept = only dept members + admin; admin = admin only
+        visibility  TEXT    NOT NULL DEFAULT 'public',
+        dept_slug   TEXT    NOT NULL DEFAULT '',
+        sort_ord    INTEGER NOT NULL DEFAULT 0,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_vf_parent ON vault_folders(parent_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_vf_dept   ON vault_folders(dept_slug)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS vault_files (
+        id          TEXT    PRIMARY KEY,
+        folder_id   TEXT,
+        name        TEXT    NOT NULL,
+        mime_type   TEXT    NOT NULL DEFAULT '',
+        size_bytes  INTEGER NOT NULL DEFAULT 0,
+        storage_key TEXT    NOT NULL,
+        uploaded_by TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_vfi_folder ON vault_files(folder_id)");
 
     // ── Support Tickets ───────────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_departments (

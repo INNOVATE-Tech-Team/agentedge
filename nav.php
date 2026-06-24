@@ -39,7 +39,7 @@ function nav_items(): array {
         'industry_events'   => ['key' => 'industry_events',   'label' => 'Industry Events',   'href' => 'industry_events.php'],
         'profile'    => ['key' => 'profile',    'label' => 'My Profile',       'href' => 'profile.php'],
         'hud_submit' => ['key' => 'hud_submit', 'label' => 'Submit HUD & Check', 'href' => 'hud_submit.php'],
-        'docs'       => ['key' => 'docs',       'label' => 'Resources',             'href' => 'docs.php'],
+        'vault'      => ['key' => 'vault',      'label' => 'The Vault',             'href' => 'vault.php'],
         'university' => ['key' => 'university', 'label' => 'INNOVATE University',  'href' => 'university.php'],
         'tickets'    => ['key' => 'tickets',    'label' => 'My Tickets',           'href' => 'tickets.php'],
         'marketing'  => ['key' => 'marketing',  'label' => 'Marketing Studio',     'href' => 'sso_marketing.php', 'external' => true],
@@ -71,6 +71,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
+        ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Events'],
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
