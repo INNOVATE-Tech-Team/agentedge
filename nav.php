@@ -165,10 +165,9 @@ function render_sidebar(string $current, array $agent): void {
         foreach ($deptOrder as $deptName) {
             $deptItems = $byDept[$deptName] ?? [];
             $visible   = array_values(array_filter($deptItems, fn($it) => empty($it['superOnly']) || $superAdmin));
-            $isActive  = ($deptName === $activeDept);
-            echo '<button class="sb-dept-toggle" onclick="toggleSbLinks(this)" aria-expanded="' . ($isActive ? 'true' : 'false') . '">'
+            echo '<button class="sb-dept-toggle" onclick="toggleSbLinks(this)" aria-expanded="true">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';
-            echo '<div class="sb-links-sub" style="' . ($isActive ? '' : 'display:none') . '">';
+            echo '<div class="sb-links-sub">';
             if (empty($visible)) {
                 echo '<span class="sb-dept-empty">No items</span>';
             }
