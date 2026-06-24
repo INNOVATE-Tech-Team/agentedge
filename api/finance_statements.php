@@ -100,7 +100,7 @@ Savings opportunity rules:
 - Be specific and realistic — don't invent savings that aren't visible in the data
 - If spending looks lean and efficient, say so and provide fewer but more targeted opportunities
 
-Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
+IMPORTANT: The "transactions" array must contain AT MOST 40 entries (prioritize the largest amounts). Keep descriptions concise. Return ONLY valid JSON — no markdown fences, no text outside the JSON object.
 PROMPT;
 
         // Build Claude message content
@@ -134,7 +134,7 @@ PROMPT;
 
         $payload = json_encode([
             'model'      => $model,
-            'max_tokens' => 4096,
+            'max_tokens' => 8192,
             'messages'   => [['role'=>'user','content'=>$messageContent]],
         ]);
 
