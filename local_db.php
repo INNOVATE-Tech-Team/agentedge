@@ -363,6 +363,21 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
 
+    // ── Company Email — audit log of broadcast emails sent from AgentEdge ────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS company_emails (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_email    TEXT    NOT NULL,
+        sender_role     TEXT    NOT NULL DEFAULT '',
+        audience        TEXT    NOT NULL,             -- all | admin | mc
+        target_mc_slug  TEXT    NOT NULL DEFAULT '',
+        subject         TEXT    NOT NULL,
+        body            TEXT    NOT NULL,
+        recipient_count INTEGER NOT NULL DEFAULT 0,
+        sent_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_company_emails_sent_at ON company_emails(sent_at)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_company_emails_sender ON company_emails(sender_email)");
+
     // ── Document Library (legacy simple Resources page) ───────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,

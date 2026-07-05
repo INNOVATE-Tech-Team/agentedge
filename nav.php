@@ -51,7 +51,14 @@ function nav_items(): array {
         $core = array_values($coreMap);
     }
 
-    return array_merge($core, $ext, [
+    // mc_leader/bic aren't admins, so they never see the admin-only Back Office
+    // section below — surface Company Email as a top-level item instead.
+    $leaderExtra = [];
+    if ((is_mc_leader() || is_bic()) && !is_admin()) {
+        $leaderExtra[] = ['key' => 'bo_company_email', 'label' => 'Company Email', 'href' => 'backoffice_email.php'];
+    }
+
+    return array_merge($core, $ext, $leaderExtra, [
         ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
     ]);
 }
@@ -75,6 +82,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Events'],
+        ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Events'],
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'press_release',             'label'=>'Press Release',       'href'=>'press_release.php',             'dept'=>'Events'],
         // ── Agent Development ───────────────────────────────────────────────────
