@@ -204,6 +204,24 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
 .btn-move-cancel{padding:3px 7px;border:1px solid #ccc;background:#fff;color:#555;
                  border-radius:4px;font-size:11px;cursor:pointer}
 
+/* Retention badge + inline editor */
+.retain-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+              padding:2px 8px;border-radius:4px;white-space:nowrap;border:0;cursor:pointer;font-family:inherit}
+.retain-badge.secure {background:#e8f5e9;color:#2e7d32}
+.retain-badge.watch  {background:#fff3e0;color:#c87800}
+.retain-badge.at_risk{background:#fdecea;color:#c0392b}
+.retain-edit-inline{display:none;align-items:center;gap:5px;margin-top:5px}
+.retain-edit-inline.open{display:flex;flex-wrap:wrap}
+.retain-edit-select{font-size:11px;padding:3px 6px;border:1px solid var(--green);border-radius:4px;background:#fff}
+.retain-edit-notes{font-size:11px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;min-width:140px}
+.btn-retain-save{padding:3px 9px;background:var(--green);color:#111;border:0;border-radius:4px;
+                 font-size:11px;font-weight:700;cursor:pointer}
+.btn-retain-cancel{padding:3px 7px;border:1px solid #ccc;background:#fff;color:#555;
+                   border-radius:4px;font-size:11px;cursor:pointer}
+.mc-retain-chip.secure {background:#eef5e8;color:#5b8e0d}
+.mc-retain-chip.watch  {background:#fff4e0;color:#a07221}
+.mc-retain-chip.at_risk{background:#fdecea;color:#c0392b}
+
 /* Add-agent button */
 .btn-add-agent{font-size:11px;font-weight:700;padding:4px 12px;background:var(--green);color:#111;
                border:0;border-radius:6px;cursor:pointer;white-space:nowrap;text-decoration:none}
@@ -389,6 +407,12 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
         $mcBic    = $isUnassigned ? '' : ($mcMeta[$mc]['bic_email']      ?? '');
         $mcLeader = $isUnassigned ? '' : ($mcMeta[$mc]['mc_leader_email'] ?? '');
         $mcEditId = 'mc-edit-' . md5($mc);
+
+        // Retention rate for this group: % of agents not flagged at_risk.
+        $mcRiskCount = 0;
+        foreach ($agents as $a) { if (($a['retention_status'] ?? 'secure') === 'at_risk') $mcRiskCount++; }
+        $mcRetainPct = count($agents) ? (int)round((count($agents) - $mcRiskCount) / count($agents) * 100) : 100;
+        $mcRetainTier = $mcRetainPct >= 90 ? 'secure' : ($mcRetainPct >= 75 ? 'watch' : 'at_risk');
       ?>
       <div>
         <div class="mc-heading<?= $isUnassigned ? ' mc-heading-unassigned' : '' ?>"
@@ -402,6 +426,9 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
           <?php endif; ?>
           <?php if (!$isUnassigned && $mcLeader): ?>
           <span class="mc-role-chip mc-leader-chip">Leader: <?= htmlspecialchars($mcLeader) ?></span>
+          <?php endif; ?>
+          <?php if (!$isUnassigned): ?>
+          <span class="mc-role-chip mc-retain-chip <?= $mcRetainTier ?>">Retention: <?= $mcRetainPct ?>%</span>
           <?php endif; ?>
           <?php if (!$isUnassigned && is_super_admin()): ?>
           <div style="margin-left:auto;display:flex;gap:5px;flex-shrink:0">
@@ -454,6 +481,7 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
               <th>Volume</th>
               <th>Deals</th>
               <?php if ($activeState==='SC'): ?><th>License Expires</th><?php endif; ?>
+              <th>Retention</th>
               <th style="width:40px"></th>
             </tr>
           </thead>
@@ -495,6 +523,26 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
                 ?>
               </td>
               <?php endif; ?>
+              <td>
+                <?php
+                $rStatus = $a['retention_status'] ?? 'secure';
+                $rNotes  = $a['retention_notes']   ?? '';
+                $rLabel  = ['secure'=>'Secure','watch'=>'Watch','at_risk'=>'At Risk'][$rStatus] ?? 'Secure';
+                ?>
+                <button class="retain-badge <?= htmlspecialchars($rStatus) ?>" title="<?= htmlspecialchars($rNotes) ?>"
+                        onclick="openRetentionEdit(<?= $a['id'] ?>)"><?= htmlspecialchars($rLabel) ?></button>
+                <div class="retain-edit-inline" id="retain-edit-<?= $a['id'] ?>">
+                  <select class="retain-edit-select">
+                    <option value="secure"  <?= $rStatus==='secure' ?'selected':'' ?>>Secure</option>
+                    <option value="watch"   <?= $rStatus==='watch'  ?'selected':'' ?>>Watch</option>
+                    <option value="at_risk" <?= $rStatus==='at_risk'?'selected':'' ?>>At Risk</option>
+                  </select>
+                  <input type="text" class="retain-edit-notes" placeholder="Notes (optional)" maxlength="200"
+                         value="<?= htmlspecialchars($rNotes) ?>">
+                  <button class="btn-retain-save" onclick="saveRetention(<?= $a['id'] ?>)">Save</button>
+                  <button class="btn-retain-cancel" onclick="closeRetentionEdit(<?= $a['id'] ?>)">✕</button>
+                </div>
+              </td>
               <td>
                 <button class="btn-remove" title="Remove from roster"
                         onclick="removeAgent(<?= $a['id'] ?>, <?= json_encode($a['agent_name']) ?>)">✕</button>
@@ -813,6 +861,44 @@ function saveMoveMC(rosterId) {
         method:'POST', credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({action:'move_mc', id:rosterId, mc_name:mcName})
+    })
+    .then(r => r.json())
+    .then(d => {
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
+        if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+        window.location.reload();
+    })
+    .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
+}
+
+// ── Retention status per agent ────────────────────────────────────────────────
+function openRetentionEdit(rosterId) {
+    document.querySelectorAll('.retain-edit-inline.open').forEach(el => {
+        if (el.id !== 'retain-edit-' + rosterId) el.classList.remove('open');
+    });
+    const wrap = document.getElementById('retain-edit-' + rosterId);
+    const isOpen = wrap.classList.contains('open');
+    if (isOpen) { wrap.classList.remove('open'); return; }
+    wrap.classList.add('open');
+    wrap.querySelector('.retain-edit-select').focus();
+}
+
+function closeRetentionEdit(rosterId) {
+    document.getElementById('retain-edit-' + rosterId).classList.remove('open');
+}
+
+function saveRetention(rosterId) {
+    const wrap   = document.getElementById('retain-edit-' + rosterId);
+    const status = wrap.querySelector('.retain-edit-select').value;
+    const notes  = wrap.querySelector('.retain-edit-notes').value;
+
+    const saveBtn = wrap.querySelector('.btn-retain-save');
+    saveBtn.disabled = true; saveBtn.textContent = '…';
+
+    fetch('api/retention_action.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'update', id:rosterId, retention_status:status, retention_notes:notes})
     })
     .then(r => r.json())
     .then(d => {
