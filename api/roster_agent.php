@@ -4,6 +4,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/roster.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -30,19 +31,10 @@ if ($action === 'add') {
     if (!$name || !in_array($state, $validStates)) {
         echo json_encode(['ok'=>false,'error'=>'Name and valid state required']); exit;
     }
-    if ($exp && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp)) $exp = '';
 
-    $stmt = $db->prepare(
-        "INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp,active,added_at,added_by)
-         VALUES (?,?,?,?,1,datetime('now'),?)"
-    );
-    $stmt->execute([$name, $state, $mc, $exp, $by]);
-    $id = (int)$db->lastInsertId();
+    $result = add_or_reactivate_roster_agent($db, $name, $state, $mc, $exp, null, $by);
 
-    $db->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
-       ->execute([$name, $state, $mc, $exp, 'added', $by]);
-
-    echo json_encode(['ok'=>true, 'id'=>$id, 'agent_name'=>$name, 'state_code'=>$state, 'market_center'=>$mc, 'license_exp'=>$exp]);
+    echo json_encode(['ok'=>true, 'id'=>$result['id'], 'agent_name'=>$name, 'state_code'=>$state, 'market_center'=>$mc, 'license_exp'=>$exp]);
     exit;
 }
 
