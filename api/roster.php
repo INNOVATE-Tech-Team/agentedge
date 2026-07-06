@@ -24,16 +24,20 @@ function fetch_json(string $url): ?array {
 
 // Build a name→MC map from the local roster (the authoritative source).
 // Key is lowercased agent name; value is "ST - MC Name" or just "MC Name".
-$localMC = [];
+// $localRows (unfiltered) is kept so agents with no CRM match can still be
+// unioned into the feed below — innovate_roster has no email column, so
+// name is the only join key we have against the CRM's fullName field.
+$localMC   = [];
+$localRows = [];
 try {
-    $rows = local_db()->query(
-        "SELECT agent_name, state_code, market_center FROM innovate_roster WHERE active=1 AND market_center != ''"
+    $localRows = local_db()->query(
+        "SELECT agent_name, state_code, market_center FROM innovate_roster WHERE active=1"
     )->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($rows as $r) {
+    foreach ($localRows as $r) {
         $key = strtolower(trim($r['agent_name']));
         $mc  = trim($r['market_center']);
         $st  = trim($r['state_code']);
-        $localMC[$key] = $st ? "$st - $mc" : $mc;
+        if ($mc !== '') $localMC[$key] = $st ? "$st - $mc" : $mc;
     }
 } catch (\Exception $e) {}
 
@@ -41,8 +45,10 @@ $data = fetch_json($url);
 
 if ($data !== null) {
     $agents = [];
+    $seenNames = [];
     foreach ($data as $a) {
         $name = trim($a['fullName'] ?? ($a['email'] ?? 'Agent'));
+        $seenNames[strtolower($name)] = true;
         // Prefer local MC assignment; fall back to CRM field
         $mc = $localMC[strtolower($name)] ?? null;
         if ($mc === null) {
@@ -61,6 +67,30 @@ if ($data !== null) {
             'social'       => $a['social'] ?? new stdClass(),
         ];
     }
+
+    // Agents that exist in the local roster (e.g. added via Back Office →
+    // Agent Roster → "+ Add Agent") but have no matching CRM record yet —
+    // still show them here so they're not silently invisible to the team
+    // until someone remembers to also add them in the CRM.
+    foreach ($localRows as $r) {
+        $name = trim($r['agent_name']);
+        $key  = strtolower($name);
+        if ($name === '' || isset($seenNames[$key])) continue;
+        $seenNames[$key] = true;
+        $mc = trim($r['market_center']);
+        $st = trim($r['state_code']);
+        $agents[] = [
+            'id'           => null,
+            'name'         => $name,
+            'marketCenter' => $mc !== '' ? ($st ? "$st - $mc" : $mc) : '',
+            'brokerage'    => 'INNOVATE Real Estate',
+            'email'        => '',
+            'phone'        => '',
+            'social'       => new stdClass(),
+            'localOnly'    => true,
+        ];
+    }
+
     echo json_encode(['agents' => $agents, 'count' => count($agents), 'source' => 'crm']);
     exit;
 }

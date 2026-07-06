@@ -46,9 +46,14 @@ function roleBadge(email) {
   return `<span class="role-badge-sm role-${esc(cur.role)}">${esc((typeof ROLE_LABELS !== 'undefined' ? ROLE_LABELS[cur.role] : null) || cur.role)}</span> `;
 }
 
+function localOnlyBadge(a) {
+  if (!a.localOnly) return '';
+  return ' <span title="Added in Back Office → Agent Roster, but not yet in the CRM — email/phone/socials won\'t show until it\'s added there too" style="font-size:10px;background:#fff3e0;color:#c87800;padding:1px 6px;border-radius:4px;font-weight:700;letter-spacing:.02em">LOCAL</span>';
+}
+
 function agentCells(a) {
   return `
-    <td>${esc(a.name)}</td>
+    <td>${esc(a.name)}${localOnlyBadge(a)}</td>
     <td>${esc(a.marketCenter) || '<span class="muted">Unassigned</span>'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>
