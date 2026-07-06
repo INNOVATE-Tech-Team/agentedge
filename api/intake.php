@@ -10,6 +10,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/crypto.php';
 
 function intake_json_out(array $d, int $code = 200): void {
     http_response_code($code);
@@ -80,6 +81,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $st = $pdo->prepare("SELECT * FROM agent_intake WHERE email=?");
     $st->execute([$email]);
     $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    // Never send the encrypted (or decrypted) tax ID back to the browser —
+    // only a last-4 hint so the form can show "on file" without exposing it.
+    if (array_key_exists('personal_tax_id_enc', $row)) {
+        $row['personal_tax_id_last4'] = tax_id_last4($row['personal_tax_id_enc']);
+        unset($row['personal_tax_id_enc']);
+    }
+    if (array_key_exists('corporate_tax_id_enc', $row)) {
+        $row['corporate_tax_id_last4'] = tax_id_last4($row['corporate_tax_id_enc']);
+        unset($row['corporate_tax_id_enc']);
+    }
 
     $fst = $pdo->prepare(
         "SELECT file_key, orig_name, size_bytes FROM agent_intake_files WHERE agent_email=? ORDER BY uploaded_at"
@@ -169,11 +181,39 @@ $fields = [
     'mailing_address', 'spouse_name', 'emergency_name', 'emergency_phone', 'bio',
     'tshirt_size', 'is_military', 'first_responder', 'is_teacher',
     'phone_last4', 'referring_agent', 'languages',
+    'personal_email', 'commissions_email',
+    'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
+    'drivers_license', 'gender',
+    'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'email_signature',
+    'corporation_start', 'corporation_end', 'career_start',
+    'prior_occupation', 'prior_affiliation', 'specialty',
+    'full_time', 'show_on_internet',
+    'personal_tax_id_enc', 'corporate_tax_id_enc',
 ];
+
+// The GET above never sends the real tax ID back to the browser (only a
+// last-4 hint), so a re-save with the field left blank must NOT clobber the
+// already-stored encrypted value — only overwrite it when a new value is typed.
+$preserveIfBlank = ['personal_tax_id_enc', 'corporate_tax_id_enc'];
+
+$resolveField = function (string $f) use ($fv, $body): string {
+    switch ($f) {
+        case 'full_time':
+        case 'show_on_internet':
+            return isset($body[$f]) ? ($body[$f] ? '1' : '0') : '1';
+        case 'personal_tax_id_enc':
+            return tax_id_encrypt($fv('personal_tax_id'));
+        case 'corporate_tax_id_enc':
+            return tax_id_encrypt($fv('corporate_tax_id'));
+        default:
+            return $fv($f);
+    }
+};
 
 $required = [
     'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
-    'office_location', 'birthday', 'mailing_address', 'emergency_name', 'emergency_phone', 'bio',
+    'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
+    'emergency_name', 'emergency_phone', 'bio',
 ];
 $complete = true;
 foreach ($required as $r) if ($fv($r) === '') { $complete = false; break; }
@@ -187,7 +227,12 @@ $isSubmitted  = $complete || $wasSubmitted;
 $now  = date('Y-m-d H:i:s');
 $cols = implode(',', $fields);
 $phs  = implode(',', array_fill(0, count($fields), '?'));
-$upds = implode(',', array_map(fn($f) => "$f=excluded.$f", $fields));
+$upds = implode(',', array_map(function (string $f) use ($preserveIfBlank): string {
+    if (in_array($f, $preserveIfBlank, true)) {
+        return "$f = CASE WHEN excluded.$f <> '' THEN excluded.$f ELSE agent_intake.$f END";
+    }
+    return "$f=excluded.$f";
+}, $fields));
 
 $pdo->prepare(
     "INSERT INTO agent_intake (email,$cols,submitted,submitted_at,updated_at)
@@ -200,7 +245,7 @@ $pdo->prepare(
          updated_at   = excluded.updated_at"
 )->execute(array_merge(
     [$email],
-    array_map($fv, $fields),
+    array_map($resolveField, $fields),
     [$isSubmitted ? 1 : 0, ($isSubmitted && !$wasSubmitted) ? $now : null, $now]
 ));
 

@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/notifications.php';
+require_once __DIR__ . '/../lib/crypto.php';
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -25,7 +27,7 @@ try {
     // ── Required fields check ─────────────────────────────────────────────────
     $required = [
         'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
-        'office_location', 'birthday', 'mailing_address',
+        'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
         'emergency_name', 'emergency_phone', 'bio',
     ];
     foreach ($required as $field) {
@@ -52,7 +54,32 @@ try {
         'mailing_address', 'spouse_name', 'emergency_name', 'emergency_phone', 'bio',
         'tshirt_size', 'is_military', 'first_responder', 'is_teacher',
         'phone_last4', 'referring_agent', 'languages',
+        'personal_email', 'commissions_email',
+        'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
+        'drivers_license', 'gender',
+        'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'email_signature',
+        'corporation_start', 'corporation_end', 'career_start',
+        'prior_occupation', 'prior_affiliation', 'specialty',
+        'full_time', 'show_on_internet',
+        'personal_tax_id_enc', 'corporate_tax_id_enc',
     ];
+
+    // full_time/show_on_internet are checkboxes (default checked); the two
+    // tax ID columns hold an encrypted value derived from a differently-named
+    // plaintext body field, never the plaintext itself.
+    $resolveField = function (string $f) use ($fv, $body): string {
+        switch ($f) {
+            case 'full_time':
+            case 'show_on_internet':
+                return isset($body[$f]) ? ($body[$f] ? '1' : '0') : '1';
+            case 'personal_tax_id_enc':
+                return tax_id_encrypt($fv('personal_tax_id'));
+            case 'corporate_tax_id_enc':
+                return tax_id_encrypt($fv('corporate_tax_id'));
+            default:
+                return $fv($f);
+        }
+    };
 
     $cols = implode(',', $fields);
     $phs  = implode(',', array_fill(0, count($fields), '?'));
@@ -66,7 +93,7 @@ try {
              $upds, submitted=1,
              submitted_at=COALESCE(agent_intake.submitted_at, excluded.submitted_at),
              updated_at=excluded.updated_at"
-    )->execute(array_merge([$email], array_map($fv, $fields), [$now, $now]));
+    )->execute(array_merge([$email], array_map($resolveField, $fields), [$now, $now]));
 
     // ── Add to onboard_queue if not already present ───────────────────────────
     $exists = local_db()->prepare("SELECT id FROM onboard_queue WHERE LOWER(agent_email)=?");
@@ -84,6 +111,25 @@ try {
             'Submitted via public onboarding intake form',
         ]);
     }
+
+    // ── Email notification ────────────────────────────────────────────────────
+    $submitterName  = $fv('full_name');
+    $submitterEmail = $email;
+    $submitterPhone = $fv('phone');
+    $officeLocation = $fv('office_location');
+
+    $subject = "New Intake Form Submission — {$submitterName}";
+    $body    = "A new agent has submitted the onboarding intake form.\n\n"
+             . "Name:   {$submitterName}\n"
+             . "Email:  {$submitterEmail}\n"
+             . "Phone:  {$submitterPhone}\n"
+             . "Office: {$officeLocation}\n\n"
+             . "View their profile in AgentEdge:\n"
+             . "https://agentedge.innovateonline.com/backoffice_agents.php";
+
+    $c = cfg();
+    send_email_sendgrid('onboarding@innovateonline.com', $subject, $body, $c);
+    send_email_sendgrid('darren@innovateonline.com',     $subject, $body, $c);
 
     echo json_encode(['ok' => true]);
 

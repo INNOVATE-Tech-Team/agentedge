@@ -77,9 +77,12 @@ return [
     'google_redirect_uri'  => '',
 
     // DotLoop — transaction management. Apply for API access at info.dotloop.com/developers.
-    // After approval, register redirect URI: https://agentedge.bold360.vip/dotloop_callback.php
+    // In the DotLoop Partner Portal, register the redirect URI below.
+    // The redirect URI defaults to https://agentedge.innovateonline.com/dotloop_callback.php
+    // if this key is left blank — only set it if you need to override that.
     'dotloop_client_id'     => '',
     'dotloop_client_secret' => '',
+    'dotloop_redirect_uri'  => '',   // leave blank to use the production default
 
     // Trestle MLS API — used by the Open House Portal to auto-fill listing
     // details when an agent enters an MLS number.
@@ -87,6 +90,12 @@ return [
     // OAuth2 client credentials flow; tokens are cached automatically.
     'trestle_client_id'     => '',
     'trestle_client_secret' => '',
+
+    // Regrid Parcel API — company account (shared by all agents), powers Listing
+    // Intel's farm sync (owner/mailing address, sale history, assessed value).
+    // Sign up at https://regrid.com/api (1-week free trial), get your token at
+    // app.regrid.com → Account → API. Leave blank to show the "coming soon" banner.
+    'regrid_api_key' => '',
 
     // SendGrid — transactional email for announcements and other agent notifications.
     // Get API key at: app.sendgrid.com → Settings → API Keys → Create API Key (Mail Send)
@@ -111,6 +120,12 @@ return [
     // spending and generate savings recommendations. Get a key at console.anthropic.com.
     'anthropic_api_key' => '',
 
+    // Onboarding / offboarding notifications — comma-separated list of email addresses
+    // that receive a copy of every new onboarding or offboarding email. The admin who
+    // creates the record always receives a copy; add your broker, marketing lead, etc.
+    // Example: 'broker@innovateonline.com,marketing@innovateonline.com'
+    'onboard_notify_emails' => '',
+
     // Follow Up Boss — auto-provisions new agents. Get key at: FUB → Admin → API
     'fub_api_key' => '',
 
@@ -118,4 +133,11 @@ return [
     // Get from Constellation1 support.
     'c1_api_token' => '',
     'c1_api_salt'  => '',
+
+    // Tax ID encryption — encrypts personal SSN / corporate EIN entered on the
+    // intake form before they're stored in local_db(). Generate a unique key
+    // per environment with: openssl rand -base64 32
+    // Never reuse the same key across dev/staging/production, and never commit
+    // a real key — config.php is git-ignored, this sample file is not.
+    'tax_id_encryption_key' => '',
 ];
