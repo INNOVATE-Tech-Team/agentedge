@@ -101,6 +101,22 @@ $pendingCount = count($pendingAgents);
 .btn-detail-link:hover{border-color:var(--green);color:#5b8e0d;background:#f0f8e8}
 .detail-meta{font-size:11px;color:var(--faint);margin-left:auto}
 .bio-preview{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal-box{background:#fff;border-radius:10px;max-width:860px;width:94%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.25)}
+.modal-header{padding:16px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.modal-header h3{margin:0;font-size:15px}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--faint);line-height:1;padding:2px 6px}
+.modal-body{padding:20px 22px;overflow-y:auto;flex:1}
+.modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center}
+.em-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin-bottom:6px}
+.em-field label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-bottom:3px}
+.em-field input,.em-field select,.em-field textarea{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box;font-family:inherit}
+.em-field textarea{min-height:70px;resize:vertical}
+.em-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:14px 0 4px;padding-top:10px;border-top:1px solid var(--border)}
+.em-section:first-child{margin-top:0;padding-top:0;border-top:none}
+.em-full{grid-column:1/-1}
+.em-check label{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;font-weight:600;color:var(--ink)}
+.em-check input{width:auto!important}
 .ag-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .table-wrap{overflow-x:auto}
 .no-results{padding:32px;text-align:center;color:var(--faint);font-size:13px}
@@ -339,6 +355,7 @@ $pendingCount = count($pendingAgents);
                   <?php endif; ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
                   <a href="intake.php" target="_blank" class="btn-detail-link">View Intake Form →</a>
+                  <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
                 </div>
 
               </div>
@@ -392,6 +409,124 @@ $pendingCount = count($pendingAgents);
 
   </div>
 </main>
+
+<div class="modal-overlay" id="editModalOverlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Edit Profile — <span id="em-agent-name"></span></h3>
+      <button type="button" class="modal-close" onclick="closeEditModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="em-grid">
+        <div class="em-section">Contact Information</div>
+        <div class="em-field"><label>Full Name</label><input id="em-full_name"></div>
+        <div class="em-field"><label>Phone</label><input id="em-phone"></div>
+        <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
+        <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
+        <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
+
+        <div class="em-section">Address</div>
+        <div class="em-field em-full"><label>Address Line 1</label><input id="em-address_line1"></div>
+        <div class="em-field em-full"><label>Address Line 2</label><input id="em-address_line2"></div>
+        <div class="em-field"><label>City</label><input id="em-city"></div>
+        <div class="em-field"><label>State</label><input id="em-state"></div>
+        <div class="em-field"><label>Zip</label><input id="em-zip"></div>
+        <div class="em-field"><label>Country</label><input id="em-country"></div>
+
+        <div class="em-section">License &amp; Certifications</div>
+        <div class="em-field"><label>License Number</label><input id="em-license_number"></div>
+        <div class="em-field"><label>License State</label><input id="em-license_state"></div>
+        <div class="em-field"><label>License Expiration</label><input id="em-license_exp" type="date"></div>
+        <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
+        <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
+        <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+
+        <div class="em-section">MLS Information</div>
+        <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
+        <div class="em-field"><label>MLS ID</label><input id="em-mls_id"></div>
+
+        <div class="em-section">INNOVATE Office</div>
+        <div class="em-field em-full"><label>Office Location</label><input id="em-office_location"></div>
+
+        <div class="em-section">Professional Background</div>
+        <div class="em-field">
+          <label>Specialty</label>
+          <select id="em-specialty">
+            <option value=""></option>
+            <option value="Residential">Residential</option>
+            <option value="Commercial">Commercial</option>
+            <option value="Luxury">Luxury</option>
+            <option value="Land/Farm">Land/Farm</option>
+            <option value="New Construction">New Construction</option>
+            <option value="Property Management">Property Management</option>
+            <option value="Relocation">Relocation</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="em-field"><label>Career Start</label><input id="em-career_start" type="date"></div>
+        <div class="em-field"><label>Prior Occupation</label><input id="em-prior_occupation"></div>
+        <div class="em-field"><label>Prior Affiliation</label><input id="em-prior_affiliation"></div>
+        <div class="em-field em-check"><label><input type="checkbox" id="em-full_time"> Full-Time Agent</label></div>
+        <div class="em-field em-check"><label><input type="checkbox" id="em-show_on_internet"> Show on Website</label></div>
+
+        <div class="em-section">Business Entity &amp; Tax IDs</div>
+        <div class="em-field"><label>Personal Tax ID / SSN <span id="em-personal-tax-hint" style="text-transform:none;font-weight:400"></span></label><input id="em-personal_tax_id" placeholder="Leave blank to keep existing"></div>
+        <div class="em-field"><label>Corporate Tax ID / EIN <span id="em-corporate-tax-hint" style="text-transform:none;font-weight:400"></span></label><input id="em-corporate_tax_id" placeholder="Leave blank to keep existing"></div>
+        <div class="em-field"><label>Corporation Start</label><input id="em-corporation_start" type="date"></div>
+        <div class="em-field"><label>Corporation End</label><input id="em-corporation_end" type="date"></div>
+
+        <div class="em-section">Personal Information</div>
+        <div class="em-field"><label>Birthday</label><input id="em-birthday" type="date"></div>
+        <div class="em-field"><label>Spouse / SO Name</label><input id="em-spouse_name"></div>
+        <div class="em-field">
+          <label>Gender</label>
+          <select id="em-gender">
+            <option value=""></option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Prefer not to say">Prefer not to say</option>
+          </select>
+        </div>
+        <div class="em-field"><label>Driver's License #</label><input id="em-drivers_license"></div>
+        <div class="em-field">
+          <label>T-Shirt Size</label>
+          <select id="em-tshirt_size">
+            <option value=""></option>
+            <option value="XS">XS</option><option value="S">S</option><option value="M">M</option>
+            <option value="L">L</option><option value="XL">XL</option><option value="2XL">2XL</option><option value="3XL">3XL</option>
+          </select>
+        </div>
+        <div class="em-field"><label>Military</label><input id="em-is_military" placeholder="veteran / active / blank"></div>
+        <div class="em-field"><label>First Responder</label><input id="em-first_responder" placeholder="e.g. paramedic, or blank"></div>
+        <div class="em-field"><label>Teacher</label><input id="em-is_teacher" placeholder="no / current / former"></div>
+        <div class="em-field"><label>Languages</label><input id="em-languages"></div>
+
+        <div class="em-section">Emergency Contact</div>
+        <div class="em-field"><label>Emergency Contact Name</label><input id="em-emergency_name"></div>
+        <div class="em-field"><label>Emergency Contact Phone</label><input id="em-emergency_phone"></div>
+
+        <div class="em-section">Online Presence</div>
+        <div class="em-field"><label>Website</label><input id="em-website"></div>
+        <div class="em-field"><label>Additional Websites</label><input id="em-additional_websites"></div>
+        <div class="em-field"><label>Facebook</label><input id="em-facebook"></div>
+        <div class="em-field"><label>LinkedIn</label><input id="em-linkedin"></div>
+        <div class="em-field"><label>Skype</label><input id="em-skype"></div>
+        <div class="em-field em-full"><label>Email Signature</label><textarea id="em-email_signature"></textarea></div>
+
+        <div class="em-section">Bio &amp; Marketing</div>
+        <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
+        <div class="em-field em-full"><label>Bio</label><textarea id="em-bio" style="min-height:110px"></textarea></div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-save" id="em-save-btn" onclick="saveEditModal()">Save Changes</button>
+      <button type="button" class="btn-detail-link" onclick="closeEditModal()">Cancel</button>
+      <span id="em-save-msg" style="font-size:12px;color:var(--faint)"></span>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -450,13 +585,22 @@ $pendingCount = count($pendingAgents);
   window.revealTaxId = function (email, field, spanId) {
     var span = document.getElementById(spanId);
     if (!span) return;
+    if (!span.dataset.maskedHtml) span.dataset.maskedHtml = span.innerHTML;
     var btn = span.querySelector('button');
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     fetch('api/tax_id_reveal.php?email=' + encodeURIComponent(email) + '&field=' + field, { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (res.ok) {
-          span.textContent = res.value || '(none on file)';
+          span.textContent = (res.value || '(none on file)') + ' ';
+          var hideBtn = document.createElement('button');
+          hideBtn.type = 'button';
+          hideBtn.className = 'btn-detail-link';
+          hideBtn.style.padding = '2px 8px';
+          hideBtn.style.fontSize = '10px';
+          hideBtn.textContent = 'Hide';
+          hideBtn.onclick = function () { span.innerHTML = span.dataset.maskedHtml; };
+          span.appendChild(hideBtn);
         } else {
           span.textContent = 'Error: ' + (res.error || 'reveal failed');
         }
@@ -488,6 +632,115 @@ $pendingCount = count($pendingAgents);
         if (res.ok) setTimeout(function () { msg.textContent = ''; }, 3000);
       })
       .catch(function () { msg.textContent = 'Network error.'; });
+  };
+
+  var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone_last4',
+    'address_line1','address_line2','city','state','zip','country',
+    'license_number','license_state','license_exp','nar_number',
+    'mls_board','mls_id','office_location',
+    'specialty','career_start','prior_occupation','prior_affiliation',
+    'corporation_start','corporation_end',
+    'birthday','spouse_name','gender','drivers_license','tshirt_size',
+    'is_military','first_responder','is_teacher','languages',
+    'emergency_name','emergency_phone',
+    'website','additional_websites','facebook','linkedin','skype','email_signature',
+    'referring_agent','bio'];
+  var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
+  var emCurrentEmail = null;
+  // agent_extra's MM-DD birthday (calendar reminder) is a different field from
+  // agent_intake's full-date birthday shown in this modal — round-trip it
+  // untouched so saving the modal never blanks it out.
+  var emExtraBirthday = '';
+
+  window.openEditModal = function (email, name) {
+    emCurrentEmail = email;
+    document.getElementById('em-agent-name').textContent = name;
+    document.getElementById('em-save-msg').textContent = 'Loading…';
+    document.getElementById('editModalOverlay').style.display = 'flex';
+
+    Promise.all([
+      fetch('api/intake.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' }).then(function (r) { return r.json(); }),
+      fetch('api/agent_extra.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' }).then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      var intake = results[0].intake || {};
+      var extra = results[1] || {};
+      emExtraBirthday = extra.birthday || '';
+
+      EM_FIELDS.forEach(function (key) {
+        var node = document.getElementById('em-' + key);
+        if (node) node.value = intake[key] || '';
+      });
+      EM_CHECK_FIELDS.forEach(function (key) {
+        var node = document.getElementById('em-' + key);
+        if (node) node.checked = intake[key] === undefined ? true : Number(intake[key]) === 1;
+      });
+      document.getElementById('em-hire_date').value = extra.hire_date || '';
+      document.getElementById('em-license_renewal').value = extra.license_renewal || '';
+      document.getElementById('em-personal_tax_id').value = '';
+      document.getElementById('em-corporate_tax_id').value = '';
+      document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
+      document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
+      document.getElementById('em-save-msg').textContent = '';
+    }).catch(function () {
+      document.getElementById('em-save-msg').textContent = 'Failed to load agent data.';
+    });
+  };
+
+  window.closeEditModal = function () {
+    document.getElementById('editModalOverlay').style.display = 'none';
+    emCurrentEmail = null;
+  };
+
+  window.saveEditModal = function () {
+    if (!emCurrentEmail) return;
+    var msg = document.getElementById('em-save-msg');
+    var btn = document.getElementById('em-save-btn');
+    btn.disabled = true;
+    msg.textContent = 'Saving…';
+
+    var payload = { email: emCurrentEmail };
+    EM_FIELDS.forEach(function (key) {
+      var node = document.getElementById('em-' + key);
+      if (node) payload[key] = node.value;
+    });
+    EM_CHECK_FIELDS.forEach(function (key) {
+      var node = document.getElementById('em-' + key);
+      if (node) payload[key] = node.checked;
+    });
+    payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
+    payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
+
+    var extraPayload = {
+      email: emCurrentEmail,
+      birthday: emExtraBirthday,
+      hire_date: document.getElementById('em-hire_date').value,
+      license_renewal: document.getElementById('em-license_renewal').value
+    };
+
+    Promise.all([
+      fetch('api/intake.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) { return r.json(); }),
+      fetch('api/agent_extra.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(extraPayload)
+      }).then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      btn.disabled = false;
+      var intakeRes = results[0], extraRes = results[1];
+      if (intakeRes.ok && extraRes.ok) {
+        msg.textContent = 'Saved ✓ Reloading…';
+        setTimeout(function () { location.reload(); }, 600);
+      } else {
+        msg.textContent = intakeRes.error || extraRes.error || 'Save failed.';
+      }
+    }).catch(function () {
+      btn.disabled = false;
+      msg.textContent = 'Network error.';
+    });
   };
 
   window.toggleDetail = function (detailId, btn) {
