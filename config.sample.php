@@ -61,6 +61,9 @@ return [
     // Shared token that unlocks contact details (email/phone) and lets agents
     // save profile edits. Must match AGENTEDGE_TOKEN in the CRM's environment.
     // Leave blank to show the roster without contact info and disable editing.
+    // Also validates the reverse direction: the CRM calling INTO AgentEdge at
+    // api/onboard_push.php (Add to Team → onboarding queue) and
+    // api/roster_export.php (retention_status overlay) uses this same value.
     'crm_token' => '',
 
     // Google OAuth — lets any @innovateonline.com agent sign in with one click.

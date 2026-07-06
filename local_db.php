@@ -129,6 +129,9 @@ function local_db(): PDO {
         status        TEXT    NOT NULL DEFAULT 'active',
         notes         TEXT
     )");
+    // Migration: add tracking columns to existing installs (no-op if already present)
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN state_code         TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN canonical_agent_id TEXT"); } catch (\Exception $e) {}
 
     // Per-step provisioning status for each queued agent
     $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_steps (
@@ -623,6 +626,10 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN retention_status TEXT NOT NULL DEFAULT 'secure'"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN retention_notes  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN last_contact_at  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Links a roster row back to coastline's canonical_agents.id when the agent
+    // came through the Add-to-Team → onboarding flow (exact-match key instead
+    // of name matching). Null for legacy rows added manually.
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN canonical_agent_id TEXT"); } catch (\Exception $e) {}
 
     // Roster change log — every add/remove writes a row here for weekly reports.
     $pdo->exec("CREATE TABLE IF NOT EXISTS roster_changes (

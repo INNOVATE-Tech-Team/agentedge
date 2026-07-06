@@ -67,6 +67,15 @@ $toolsJson = json_encode(array_values($tools));
                 <input type="text" id="ob-mc" placeholder="Myrtle Beach">
               </div>
               <div class="field">
+                <label>License State</label>
+                <select id="ob-state">
+                  <option value="">Select state…</option>
+                  <?php foreach (['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'] as $st): ?>
+                    <option value="<?= h($st) ?>"><?= h($st) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="field">
                 <label>Role</label>
                 <select id="ob-role">
                   <option value="agent">Agent</option>

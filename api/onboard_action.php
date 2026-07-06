@@ -7,6 +7,8 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../onboard_tools.php';
+require_once __DIR__ . '/../lib/onboarding.php';
+require_once __DIR__ . '/../lib/roster.php';
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 
@@ -127,49 +129,32 @@ if ($action === 'add_to_queue') {
         json_out(['ok'=>false,'error'=>'agent_email and agent_name are required']);
     }
 
-    $now = date('Y-m-d H:i:s');
-    $ins = $pdo->prepare(
-        "INSERT INTO onboard_queue
-            (agent_email, agent_name, market_center, start_date, sponsor, role, added_by, added_at, notes)
-         VALUES (?,?,?,?,?,?,?,?,?)"
-    );
-    $ins->execute([
+    $result = queue_onboarding_agent(
+        $pdo,
         $email,
         $name,
-        trim($body['market_center'] ?? ''),
-        trim($body['start_date']    ?? ''),
-        trim($body['sponsor']       ?? ''),
-        trim($body['role']          ?? 'agent'),
+        $body['market_center'] ?? '',
+        $body['state_code']    ?? '',
+        null,
         $agent['email'],
-        $now,
-        trim($body['notes']         ?? ''),
-    ]);
-    $queueId = (int)$pdo->lastInsertId();
-
-    // Insert a step row for each tool
-    $stepIns = $pdo->prepare(
-        "INSERT OR IGNORE INTO onboard_steps
-            (queue_id, tool_key, tool_label, is_auto, status, done_by, done_at)
-         VALUES (?,?,?,?,?,?,?)"
+        $body['start_date'] ?? '',
+        $body['sponsor']    ?? '',
+        $body['role']       ?? 'agent',
+        $body['notes']      ?? ''
     );
-    foreach (onboard_tools() as $t) {
-        // agentedge step is done immediately
-        $isDone  = $t['key'] === 'agentedge';
-        $status  = $isDone ? 'done'    : 'pending';
-        $doneBy  = $isDone ? $agent['email'] : null;
-        $doneAt  = $isDone ? $now       : null;
-        $stepIns->execute([
-            $queueId,
-            $t['key'],
-            $t['label'],
-            $t['is_auto'] ? 1 : 0,
-            $status,
-            $doneBy,
-            $doneAt,
-        ]);
-    }
 
-    json_out(['ok'=>true,'id'=>$queueId]);
+    json_out(['ok'=>true,'id'=>$result['id']]);
+}
+
+// ── POST: set_state ───────────────────────────────────────────────────────────
+if ($action === 'set_state') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $state   = strtoupper(trim($body['state_code'] ?? ''));
+    if (!$queueId || !in_array($state, ONBOARD_VALID_STATES, true)) {
+        json_out(['ok'=>false,'error'=>'queue_id and a valid state_code are required']);
+    }
+    $pdo->prepare("UPDATE onboard_queue SET state_code = ? WHERE id = ?")->execute([$state, $queueId]);
+    json_out(['ok'=>true]);
 }
 
 // ── POST: mark_done ───────────────────────────────────────────────────────────
@@ -241,6 +226,26 @@ if ($action === 'provision') {
 // ── POST: complete_onboarding ─────────────────────────────────────────────────
 if ($action === 'complete_onboarding') {
     $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT * FROM onboard_queue WHERE id = ?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+
+    $state = strtoupper(trim($row['state_code'] ?? ''));
+    if (!in_array($state, ROSTER_VALID_STATES, true)) {
+        json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
+    }
+
+    add_or_reactivate_roster_agent(
+        $pdo,
+        $row['agent_name'],
+        $state,
+        $row['market_center'] ?? '',
+        '',
+        $row['canonical_agent_id'] ?? null,
+        $agent['email']
+    );
+
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);
     json_out(['ok'=>true]);
