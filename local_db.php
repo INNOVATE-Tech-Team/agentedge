@@ -274,6 +274,39 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN cal_token        TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
 
+    // AgentEdge's own login credentials — the local replacement for Perfex
+    // tblstaff auth, checked first in attempt_login() (auth.php) before
+    // falling back to the Perfex bridge. Deliberately just email+hash —
+    // display identity (name/photo) is resolved fresh from tblstaff/
+    // innovate_roster on each login rather than cached here.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_passwords (
+        email         TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        updated_at    TEXT NOT NULL DEFAULT ''
+    )");
+
+    // Login audit trail — every successful sign-in, password or Google.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS login_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        email        TEXT    NOT NULL DEFAULT '',
+        name         TEXT    NOT NULL DEFAULT '',
+        method       TEXT    NOT NULL DEFAULT 'password',
+        ip           TEXT    NOT NULL DEFAULT '',
+        user_agent   TEXT    NOT NULL DEFAULT '',
+        logged_in_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Forgot-password reset tokens — single-use, short-lived. Also doubles as
+    // the "set your initial password" link for agents provisioned directly in
+    // AgentEdge (no Perfex account to fall back on).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        token      TEXT PRIMARY KEY,
+        email      TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at    TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_prt_email ON password_reset_tokens(email)");
+
     // HUD & Check document submissions
     $pdo->exec("CREATE TABLE IF NOT EXISTS hud_submissions (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -329,93 +362,6 @@ function local_db(): PDO {
         submitted_at        TEXT,
         updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     )");
-    // Migration: personal/contact details + online presence fields
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_email      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN commissions_email   TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line1       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line2       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN city                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN state               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN zip                 TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN country             TEXT NOT NULL DEFAULT 'United States'"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN drivers_license     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN gender              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN website             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN additional_websites TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN facebook            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN linkedin            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN skype               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN email_signature     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    // Migration: professional background + entity/tax fields (self-reported by the agent)
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_tax_id_enc  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporate_tax_id_enc TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_start    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_end      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN career_start         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_occupation     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_affiliation    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN specialty            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN full_time            INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN show_on_internet     INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
-
-    // Exit interview — self-service form filled out by a departing agent while
-    // their AgentEdge login is still active (offboarding step 'exit_interview',
-    // before the 'agentedge' step deactivates their account). See exit_interview.php
-    // / api/exit_interview.php.
-    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_exit_interview (
-        email               TEXT PRIMARY KEY,
-        queue_id            INTEGER NOT NULL,
-        satisfaction_rating INTEGER,
-        feedback_management TEXT NOT NULL DEFAULT '',
-        feedback_support    TEXT NOT NULL DEFAULT '',
-        feedback_training   TEXT NOT NULL DEFAULT '',
-        next_destination    TEXT NOT NULL DEFAULT '',
-        would_recommend     TEXT NOT NULL DEFAULT '',
-        suggestions         TEXT NOT NULL DEFAULT '',
-        submitted           INTEGER NOT NULL DEFAULT 0,
-        submitted_at        TEXT,
-        updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
-    )");
-
-    // Staff-managed fields — set by admin/HR, not self-reported by the agent
-    // (1099 classification, team/coach/manager assignment, termination date).
-    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_admin (
-        email           TEXT PRIMARY KEY,
-        tax_1099_type   TEXT    NOT NULL DEFAULT '',
-        gets_1099       INTEGER NOT NULL DEFAULT 1,
-        terminated_date TEXT    NOT NULL DEFAULT '',
-        agent_team      TEXT    NOT NULL DEFAULT '',
-        coached_by      TEXT    NOT NULL DEFAULT '',
-        managed_by      TEXT    NOT NULL DEFAULT '',
-        updated_by      TEXT    NOT NULL DEFAULT '',
-        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    // Recruit Source — who recruited this agent, picked from the live agent
-    // roster. Overrides the CRM's recruit_source_agent_id when building the
-    // Network tree (see api/network_tree.php), since AgentEdge can't write
-    // back to the Perfex database.
-    try { $pdo->exec("ALTER TABLE agent_admin ADD COLUMN recruit_source_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-
-    // Free-form staff notes about an agent, shown on the Agent Profile page's
-    // Notes tab (agent_profile.php).
-    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_notes (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        email      TEXT    NOT NULL,
-        note       TEXT    NOT NULL,
-        created_by TEXT    NOT NULL DEFAULT '',
-        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
-
-    // Audit trail — every time an admin reveals a full (decrypted) tax ID.
-    $pdo->exec("CREATE TABLE IF NOT EXISTS tax_id_access_log (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        admin_email   TEXT    NOT NULL,
-        target_email  TEXT    NOT NULL,
-        field         TEXT    NOT NULL,   -- personal | corporate
-        accessed_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tax_id_log_target ON tax_id_access_log(target_email)");
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
@@ -448,6 +394,27 @@ function local_db(): PDO {
     if (!is_dir($hsDir)) @mkdir($hsDir, 0750, true);
     $hsHt  = $hsDir . '/.htaccess';
     if (!file_exists($hsHt)) @file_put_contents($hsHt, "Deny from all\n");
+
+    // Per-agent documents — Documents tab on agent_profile.php. Populated
+    // automatically by the PandaDoc signing webhook (source='pandadoc') and/or
+    // manually by an admin (source='manual').
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_documents (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        email        TEXT    NOT NULL,
+        name         TEXT    NOT NULL,
+        source       TEXT    NOT NULL DEFAULT 'manual',
+        external_ref TEXT    NOT NULL DEFAULT '',
+        mime_type    TEXT    NOT NULL DEFAULT '',
+        size_bytes   INTEGER NOT NULL DEFAULT 0,
+        storage_key  TEXT    NOT NULL,
+        uploaded_by  TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_documents_email ON agent_documents(email)");
+    $adDir = $dir . '/agent_documents';
+    if (!is_dir($adDir)) @mkdir($adDir, 0750, true);
+    $adHt  = $adDir . '/.htaccess';
+    if (!file_exists($adHt)) @file_put_contents($adHt, "Deny from all\n");
 
     // Agents imported via CSV upload (not yet in CRM).
     $pdo->exec("CREATE TABLE IF NOT EXISTS imported_agents (
@@ -535,51 +502,6 @@ function local_db(): PDO {
         sent_at    TEXT
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
-    // is_html: body is already-formatted HTML (e.g. from a rich-text editor) rather
-    // than plain text — skips the nl2br/htmlspecialchars conversion when sending.
-    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN is_html INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
-
-    // ── Company Email — audit log of broadcast emails sent from AgentEdge ────
-    $pdo->exec("CREATE TABLE IF NOT EXISTS company_emails (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        sender_email    TEXT    NOT NULL,
-        sender_role     TEXT    NOT NULL DEFAULT '',
-        audience        TEXT    NOT NULL,             -- all | admin | mc
-        target_mc_slug  TEXT    NOT NULL DEFAULT '',
-        subject         TEXT    NOT NULL,
-        body            TEXT    NOT NULL,
-        recipient_count INTEGER NOT NULL DEFAULT 0,
-        sent_at         TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_company_emails_sent_at ON company_emails(sent_at)");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_company_emails_sender ON company_emails(sender_email)");
-
-    // ── Company Email — per-sender signature block (photo comes from agent_intake_files) ─
-    $pdo->exec("CREATE TABLE IF NOT EXISTS email_signatures (
-        email        TEXT PRIMARY KEY,
-        title        TEXT NOT NULL DEFAULT '',
-        phone        TEXT NOT NULL DEFAULT '',
-        calendar_url TEXT NOT NULL DEFAULT '',
-        website_url  TEXT NOT NULL DEFAULT '',
-        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-    )");
-
-    // ── Company Email — scheduled sends, processed by cron/process_email_queue.php ─
-    $pdo->exec("CREATE TABLE IF NOT EXISTS scheduled_emails (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        sender_email    TEXT    NOT NULL,
-        sender_role     TEXT    NOT NULL DEFAULT '',
-        audience        TEXT    NOT NULL,             -- all | admin | mc | person
-        target_mc_slug  TEXT    NOT NULL DEFAULT '',
-        target_email    TEXT    NOT NULL DEFAULT '',
-        subject         TEXT    NOT NULL,
-        body            TEXT    NOT NULL,
-        send_at         TEXT    NOT NULL,
-        status          TEXT    NOT NULL DEFAULT 'pending',  -- pending | sent | failed | canceled
-        recipient_count INTEGER NOT NULL DEFAULT 0,
-        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sched_email_due ON scheduled_emails(status, send_at)");
 
     // ── Document Library (legacy simple Resources page) ───────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
@@ -888,13 +810,6 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_state ON market_centers(state_code)");
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    // Office address + geocoded coordinates, used to compute recruiting-prospect distance.
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN address      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN city         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN zip          TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lat          REAL"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lng          REAL"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN geocoded_at  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Per-state automation status for the State Rosters page.
     $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
@@ -951,29 +866,6 @@ function local_db(): PDO {
         changed_at    TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_roster_chg_at ON roster_changes(changed_at)");
-
-    // Recruiting prospects — agents at other brokerages INNOVATE is trying to recruit.
-    // Distinct from innovate_roster (existing/active INNOVATE agents).
-    $pdo->exec("CREATE TABLE IF NOT EXISTS recruit_prospects (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        full_name         TEXT    NOT NULL,
-        current_brokerage TEXT    NOT NULL DEFAULT '',
-        phone             TEXT    NOT NULL DEFAULT '',
-        email             TEXT    NOT NULL DEFAULT '',
-        address           TEXT    NOT NULL DEFAULT '',
-        city              TEXT    NOT NULL DEFAULT '',
-        state             TEXT    NOT NULL DEFAULT '',
-        zip               TEXT    NOT NULL DEFAULT '',
-        lat               REAL,
-        lng               REAL,
-        geocoded_at       TEXT    NOT NULL DEFAULT '',
-        status            TEXT    NOT NULL DEFAULT 'new',
-        notes             TEXT    NOT NULL DEFAULT '',
-        added_at          TEXT    NOT NULL DEFAULT (datetime('now')),
-        added_by          TEXT    NOT NULL DEFAULT '',
-        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_prospects_status ON recruit_prospects(status)");
 
     // Seed nav_ext_links from defaults
     if ($pdo->query("SELECT COUNT(*) FROM nav_ext_links")->fetchColumn() == 0) {
@@ -1220,90 +1112,6 @@ function local_db(): PDO {
         capacity INTEGER
     )");
 
-    // ── Event Planner: MC award events + company conferences ─────────────────
-    $pdo->exec("CREATE TABLE IF NOT EXISTS ep_events (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        title        TEXT    NOT NULL,
-        event_type   TEXT    NOT NULL DEFAULT 'mc_award',   -- mc_award | conference
-        mc_slug      TEXT    NOT NULL DEFAULT '',            -- '' = company-wide
-        description  TEXT    NOT NULL DEFAULT '',
-        location     TEXT    NOT NULL DEFAULT '',
-        start_date   TEXT    NOT NULL,
-        end_date     TEXT    NOT NULL DEFAULT '',
-        start_time   TEXT    NOT NULL DEFAULT '',
-        capacity     INTEGER,
-        status       TEXT    NOT NULL DEFAULT 'draft',        -- draft | published | cancelled
-        public_token TEXT    NOT NULL UNIQUE,
-        created_by   TEXT    NOT NULL DEFAULT '',
-        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-        updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_events_mc ON ep_events(mc_slug)");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_events_token ON ep_events(public_token)");
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN image_key TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN room_block_hotel  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN room_block_rate   TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN room_block_code   TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN room_block_url    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN room_block_cutoff TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-
-    // Ensure event image directory exists alongside the database
-    $epImgDir = $dir . '/ep_event_images';
-    if (!is_dir($epImgDir)) @mkdir($epImgDir, 0755, true);
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS ep_registrations (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id      INTEGER NOT NULL,
-        name          TEXT    NOT NULL,
-        email         TEXT    NOT NULL,
-        phone         TEXT    NOT NULL DEFAULT '',
-        guest_count   INTEGER NOT NULL DEFAULT 0,
-        source        TEXT    NOT NULL DEFAULT 'public',      -- public | internal
-        status        TEXT    NOT NULL DEFAULT 'registered',  -- registered | cancelled
-        registered_at TEXT    NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(event_id, email)
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_reg_event ON ep_registrations(event_id)");
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS ep_sessions (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id     INTEGER NOT NULL,
-        title        TEXT    NOT NULL,
-        description  TEXT    NOT NULL DEFAULT '',
-        session_date TEXT    NOT NULL DEFAULT '',
-        start_time   TEXT    NOT NULL DEFAULT '',
-        end_time     TEXT    NOT NULL DEFAULT '',
-        room         TEXT    NOT NULL DEFAULT '',
-        speaker      TEXT    NOT NULL DEFAULT '',
-        sort_ord     INTEGER NOT NULL DEFAULT 0,
-        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_sessions_event ON ep_sessions(event_id)");
-    try { $pdo->exec("ALTER TABLE ep_sessions ADD COLUMN track TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS ep_recommendations (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id    INTEGER NOT NULL,
-        name        TEXT    NOT NULL,
-        category    TEXT    NOT NULL DEFAULT 'other',   -- food | attraction | nightlife | shopping | other
-        description TEXT    NOT NULL DEFAULT '',
-        url         TEXT    NOT NULL DEFAULT '',
-        sort_ord    INTEGER NOT NULL DEFAULT 0,
-        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_recs_event ON ep_recommendations(event_id)");
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS ep_invites (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id    INTEGER NOT NULL,
-        email       TEXT    NOT NULL,
-        invited_by  TEXT    NOT NULL DEFAULT '',
-        status      TEXT    NOT NULL DEFAULT 'queued',
-        invited_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(event_id, email)
-    )");
-    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ep_invites_event ON ep_invites(event_id)");
-
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1357,26 +1165,6 @@ function local_db(): PDO {
         $backfill->execute(['Regional Business Press','Providence Business News','Rhode Island business journal','Advertising@PBN.com (paid release/People-on-the-Move submission at pbn.com)','New market opening — Cranston, RI. Consider a paid release or People on the Move for the branch leader.',170,'RI','Providence Business News']);
     }
 
-    // ── Strategic Intent (Attract & Empower) — 5-year planning submissions ───
-    $pdo->exec("CREATE TABLE IF NOT EXISTS strategic_intent_responses (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        name             TEXT    NOT NULL,
-        email            TEXT    NOT NULL DEFAULT '',
-        market_center    TEXT    NOT NULL DEFAULT '',
-        role             TEXT    NOT NULL DEFAULT '',  -- bic | recruiter | mcl
-        vision           TEXT    NOT NULL DEFAULT '',
-        personal_reasons TEXT    NOT NULL DEFAULT '',
-        timeframe_years  INTEGER NOT NULL DEFAULT 5,
-        timeframe_why    TEXT    NOT NULL DEFAULT '',
-        milestones       TEXT    NOT NULL DEFAULT '[]',
-        hurdles          TEXT    NOT NULL DEFAULT '',
-        gaps             TEXT    NOT NULL DEFAULT '',
-        projects         TEXT    NOT NULL DEFAULT '[]',
-        reinforcement    TEXT    NOT NULL DEFAULT '',
-        accountability   TEXT    NOT NULL DEFAULT '',
-        submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
-    )");
-
     // ── Suggestions — attachments (screenshots/documents) ─────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS suggestion_files (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1395,6 +1183,66 @@ function local_db(): PDO {
     $sugUploadsHt = $sugUploadsDir . '/.htaccess';
     if (!file_exists($sugUploadsHt)) @file_put_contents($sugUploadsHt, "Deny from all\n");
 
+    // Exit interview — self-service form filled out by a departing agent while
+    // their AgentEdge login is still active (offboarding step 'exit_interview',
+    // before the 'agentedge' step deactivates their account). See exit_interview.php
+    // / api/exit_interview.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_exit_interview (
+        email               TEXT PRIMARY KEY,
+        queue_id            INTEGER NOT NULL,
+        satisfaction_rating INTEGER,
+        feedback_management TEXT NOT NULL DEFAULT '',
+        feedback_support    TEXT NOT NULL DEFAULT '',
+        feedback_training   TEXT NOT NULL DEFAULT '',
+        next_destination    TEXT NOT NULL DEFAULT '',
+        would_recommend     TEXT NOT NULL DEFAULT '',
+        suggestions         TEXT NOT NULL DEFAULT '',
+        submitted           INTEGER NOT NULL DEFAULT 0,
+        submitted_at        TEXT,
+        updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Office address + geocoded coordinates, used to compute recruiting-prospect distance.
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN address      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN city         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN zip          TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lat          REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lng          REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN geocoded_at  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Recruiting prospects — agents at other brokerages INNOVATE is trying to recruit.
+    // Distinct from innovate_roster (existing/active INNOVATE agents).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS recruit_prospects (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        full_name         TEXT    NOT NULL,
+        current_brokerage TEXT    NOT NULL DEFAULT '',
+        phone             TEXT    NOT NULL DEFAULT '',
+        email             TEXT    NOT NULL DEFAULT '',
+        address           TEXT    NOT NULL DEFAULT '',
+        city              TEXT    NOT NULL DEFAULT '',
+        state             TEXT    NOT NULL DEFAULT '',
+        zip               TEXT    NOT NULL DEFAULT '',
+        lat               REAL,
+        lng               REAL,
+        geocoded_at       TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'new',
+        notes             TEXT    NOT NULL DEFAULT '',
+        added_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        added_by          TEXT    NOT NULL DEFAULT '',
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_prospects_status ON recruit_prospects(status)");
+
+    // Free-form staff notes about an agent, shown on the Agent Profile page's
+    // Notes tab (agent_profile.php).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_notes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        email      TEXT    NOT NULL,
+        note       TEXT    NOT NULL,
+        created_by TEXT    NOT NULL DEFAULT '',
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
     return $pdo;
 }
 

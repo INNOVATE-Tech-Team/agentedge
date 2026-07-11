@@ -118,6 +118,32 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
     return ['ok'=>true,'document_id'=>$docId];
 }
 
+// Downloads the final PDF for a completed document. Uses the plain /download
+// endpoint (not /download-protected) since that one requires a production
+// API key and 401s on a sandbox key — this repo's key may be either.
+function pandadoc_download_document(string $docId): array {
+    $c      = cfg();
+    $apiKey = $c['pandadoc_api_key'] ?? '';
+    if ($apiKey === '') return ['ok'=>false,'error'=>'PandaDoc API key not configured'];
+
+    $opts = [
+        'method'        => 'GET',
+        'timeout'       => 30,
+        'header'        => "Authorization: API-Key {$apiKey}\r\nAccept: application/pdf\r\n",
+        'ignore_errors' => true,
+    ];
+    $ctx  = stream_context_create(['http' => $opts]);
+    $raw  = @file_get_contents("https://api.pandadoc.com/public/v1/documents/{$docId}/download", false, $ctx);
+    $code = 0;
+    if (!empty($http_response_header[0])) {
+        preg_match('#\s(\d{3})\s#', $http_response_header[0], $m) && ($code = (int)$m[1]);
+    }
+    if ($code < 200 || $code >= 300 || $raw === false) {
+        return ['ok'=>false,'error'=>"Download failed: HTTP {$code}"];
+    }
+    return ['ok'=>true,'bytes'=>$raw];
+}
+
 // Verifies an inbound webhook request came from PandaDoc: the signature
 // arrives as a ?signature= query param — an HMAC-SHA256 hex digest of the
 // raw request body, keyed with the shared key from the Developer Dashboard.

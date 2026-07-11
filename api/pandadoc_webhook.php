@@ -48,6 +48,30 @@ foreach ($events as $evt) {
     $q->execute([$docId]);
     $queueId = $q->fetchColumn();
     if ($queueId) {
+        $qe = $pdo->prepare("SELECT agent_email FROM onboard_queue WHERE id=?");
+        $qe->execute([$queueId]);
+        $agentEmail = strtolower(trim($qe->fetchColumn() ?: ''));
+
+        // Only fetch+store the PDF once per document, even if this webhook
+        // fires more than once for the same completion.
+        $already = $pdo->prepare("SELECT COUNT(*) FROM agent_documents WHERE source='pandadoc' AND external_ref=?");
+        $already->execute([$docId]);
+        if ($agentEmail !== '' && (int)$already->fetchColumn() === 0) {
+            try {
+                $dl = pandadoc_download_document($docId);
+                if ($dl['ok']) {
+                    $cfgDir  = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
+                    $dataDir = $cfgDir ?: (__DIR__ . '/../data');
+                    $key     = bin2hex(random_bytes(16)) . '.pdf';
+                    file_put_contents($dataDir . '/agent_documents/' . $key, $dl['bytes']);
+                    $pdo->prepare(
+                        "INSERT INTO agent_documents (email, name, source, external_ref, mime_type, size_bytes, storage_key, uploaded_by)
+                         VALUES (?,?,?,?,?,?,?,?)"
+                    )->execute([$agentEmail, 'Onboarding Agreement', 'pandadoc', $docId, 'application/pdf', strlen($dl['bytes']), $key, 'pandadoc-webhook']);
+                }
+            } catch (\Throwable $e) {}
+        }
+
         try {
             require_once __DIR__ . '/../lib/notifications.php';
             maybe_notify_next_actionable_step($pdo, 'onboard', (int)$queueId);
