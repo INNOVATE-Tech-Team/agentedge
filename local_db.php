@@ -853,6 +853,12 @@ function local_db(): PDO {
     // came through the Add-to-Team → onboarding flow (exact-match key instead
     // of name matching). Null for legacy rows added manually.
     try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN canonical_agent_id TEXT"); } catch (\Exception $e) {}
+    // Email/phone stored directly on the roster row (editable via Back Office →
+    // Agent Roster → Edit) — api/roster.php prefers these over a Perfex tblstaff
+    // lookup, and sync_roster_identity() (lib/roster.php) keeps them in sync
+    // across an agent's other-state rows.
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN phone TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Roster change log — every add/remove writes a row here for weekly reports.
     $pdo->exec("CREATE TABLE IF NOT EXISTS roster_changes (
