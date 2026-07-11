@@ -1,7 +1,8 @@
 <?php
-// Change the logged-in agent's own password (Perfex tblstaff), via the login
-// bridge — Lightsail can't reach the Perfex DB directly, so this can't be a
-// direct UPDATE the way db.php's read-only queries are. See bridge/verify.php.
+// Change the logged-in agent's own password — writes to AgentEdge's local
+// agent_credentials table (see auth.php's local_credential_lookup()/
+// backfill_local_credential()), replacing the old bridge-only implementation
+// that depended on Perfex tblstaff being writable.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
@@ -25,21 +26,38 @@ if (strlen($new) < 8) {
     echo json_encode(['ok' => false, 'error' => 'New password must be at least 8 characters.']); exit;
 }
 
-$c = cfg();
-if (empty($c['auth_bridge_url'])) {
-    echo json_encode(['ok' => false, 'error' => "Password changes aren't available in preview mode."]);
-    exit;
+$email = strtolower(trim($me['email']));
+
+// Verify the current password the same way attempt_login() would: local
+// credential first, falling back to the Perfex-backed path only if this
+// agent has no local row yet.
+$cred = local_credential_lookup($email);
+if ($cred) {
+    if (!password_verify($current, $cred['password_hash'])) {
+        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']);
+        exit;
+    }
+} else {
+    $reverify = attempt_login($email, $current);
+    if (!$reverify) {
+        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']);
+        exit;
+    }
+    // attempt_login() already backfilled agent_credentials on that successful
+    // verify above — re-fetch so the update below targets the real row.
+    $cred = local_credential_lookup($email);
 }
 
-$res = bridge_request('change_password', [
-    'email'            => $me['email'],
-    'current_password' => $current,
-    'new_password'     => $new,
+local_db()->prepare(
+    "INSERT INTO agent_credentials (email, password_hash, staffid, name, photo, source, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'local', datetime('now'))
+     ON CONFLICT(email) DO UPDATE SET password_hash=excluded.password_hash, updated_at=excluded.updated_at"
+)->execute([
+    $email,
+    password_hash($new, PASSWORD_BCRYPT),
+    (int)($cred['staffid'] ?? $me['id'] ?? 0),
+    (string)($cred['name'] ?? $me['name'] ?? ''),
+    $cred['photo'] ?? ($me['photo'] ?? null),
 ]);
 
-if (is_array($res) && !empty($res['ok'])) {
-    echo json_encode(['ok' => true]);
-} else {
-    $err = is_array($res) ? ($res['error'] ?? 'Password change failed.') : 'Could not reach the login server.';
-    echo json_encode(['ok' => false, 'error' => $err]);
-}
+echo json_encode(['ok' => true]);

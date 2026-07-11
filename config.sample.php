@@ -33,11 +33,6 @@ return [
     // on bold360.vip (no local Perfex DB) until the Darwin / tx feed is wired.
     'sample_dashboard' => false,
 
-    // Where the login's "Forgot password?" link sends agents. Resets happen in
-    // the Perfex back office (the password's source of truth). Blank = default
-    // to the back-office login at https://agents.innovateonline.com/admin.
-    'reset_url' => '',
-
     // Intranet ticket API — "Get Support" button in AgentEdge submits tickets to
     // everythinginnovate.com. Set intranet_ticket_url to the intranet base URL
     // and intranet_ticket_token to the same value as AGENTEDGE_TICKET_TOKEN in
