@@ -9,6 +9,13 @@ $agent = require_login();
 $perms = current_perms();
 if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
+function dv(string $val): string {
+    if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
+    return '<span class="dg-value">' . h($val) . '</span>';
+}
+function dvBool($val): string {
+    return '<span class="dg-value">' . ($val ? 'Yes' : 'No') . '</span>';
+}
 
 $intakeAgents = local_db()->query(
     "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
@@ -19,7 +26,7 @@ $intakeAgents = local_db()->query(
             i.personal_email, i.commissions_email,
             i.address_line1, i.address_line2, i.city, i.state, i.zip, i.country,
             i.drivers_license, i.gender,
-            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype, i.email_signature,
+            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype,
             i.specialty, i.career_start, i.prior_occupation, i.prior_affiliation,
             i.full_time, i.show_on_internet,
             i.corporation_start, i.corporation_end,
@@ -27,13 +34,21 @@ $intakeAgents = local_db()->query(
             i.submitted, i.submitted_at, i.updated_at,
             e.hire_date, e.license_renewal,
             ar.role,
-            aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by
+            aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by,
+            aa.recruit_source_email
      FROM agent_intake i
      LEFT JOIN agent_extra e ON e.email = i.email
      LEFT JOIN agent_roles ar ON ar.email = i.email
      LEFT JOIN agent_admin aa ON aa.email = i.email
      ORDER BY i.submitted DESC, i.updated_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
+
+$additionalLicensesByEmail = [];
+foreach (local_db()->query(
+    "SELECT agent_email, license_number, license_state, license_exp FROM agent_intake_licenses ORDER BY agent_email, id"
+)->fetchAll(PDO::FETCH_ASSOC) as $lic) {
+    $additionalLicensesByEmail[strtolower($lic['agent_email'])][] = $lic;
+}
 
 $pendingAgents = local_db()->query(
     "SELECT q.agent_email as email, q.agent_name as full_name, q.market_center as office_location,
@@ -60,7 +75,8 @@ $pendingCount = count($pendingAgents);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agent Profiles — AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 .bo-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
 .rs-tile{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;min-width:110px}
@@ -123,12 +139,16 @@ $pendingCount = count($pendingAgents);
 </style>
 </head>
 <body>
+<div class="layout">
 <?php render_sidebar('backoffice_agents', $agent); ?>
-<main class="main-content">
-  <div class="content-inner">
-
-    <p class="bo-eyebrow">Back Office</p>
-    <h1 class="content-title">Agent Profiles</h1>
+<div class="content">
+  <div class="content-top">
+    <div>
+      <div class="bo-eyebrow">Back Office</div>
+      <div class="content-title">Agent Profiles</div>
+    </div>
+  </div>
+  <div class="wrap">
 
     <div class="roster-summary">
       <div class="rs-tile">
@@ -186,14 +206,6 @@ $pendingCount = count($pendingAgents);
   $detailId = 'detail-' . $idx;
   $emailLower = strtolower($a['email']);
   $hs = $hsCount[$emailLower] ?? 0;
-
-  function dv(string $val): string {
-      if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
-      return '<span class="dg-value">' . h($val) . '</span>';
-  }
-  function dvBool($val): string {
-      return '<span class="dg-value">' . ($val ? 'Yes' : 'No') . '</span>';
-  }
 ?>
           <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>"
               data-search="<?= h(strtolower($a['full_name'] . ' ' . $a['email'] . ' ' . $a['office_location'])) ?>">
@@ -270,6 +282,17 @@ $pendingCount = count($pendingAgents);
                 <div class="dg-field"><span class="dg-label">NAR Number</span><?= dv($a['nar_number']) ?></div>
                 <div class="dg-field"><span class="dg-label">Hire Date</span><?= dv($a['hire_date'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">License Renewal</span><?= dv($a['license_renewal'] ?? '') ?></div>
+                <?php $extraLicenses = $additionalLicensesByEmail[$emailLower] ?? []; ?>
+                <?php if ($extraLicenses): ?>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">Additional Licenses</span>
+                  <span class="dg-value">
+                    <?php foreach ($extraLicenses as $lic): ?>
+                      <?= h(trim($lic['license_number'] . ' — ' . $lic['license_state'] . ' ' . ($lic['license_exp'] ? '(exp. ' . $lic['license_exp'] . ')' : ''))) ?><br>
+                    <?php endforeach; ?>
+                  </span>
+                </div>
+                <?php endif; ?>
 
                 <div class="dg-section">MLS</div>
                 <div class="dg-field"><span class="dg-label">MLS Board</span><?= dv($a['mls_board']) ?></div>
@@ -293,7 +316,6 @@ $pendingCount = count($pendingAgents);
                 <div class="dg-field"><span class="dg-label">Facebook</span><?= dv($a['facebook'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">LinkedIn</span><?= dv($a['linkedin'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Skype</span><?= dv($a['skype'] ?? '') ?></div>
-                <div class="dg-field" style="grid-column:1/-1"><span class="dg-label">Email Signature</span><?= dv($a['email_signature'] ?? '') ?></div>
 
                 <div class="dg-section">Bio &amp; Marketing</div>
                 <div class="dg-field"><span class="dg-label">Referring Agent</span><?= dv($a['referring_agent']) ?></div>
@@ -342,6 +364,12 @@ $pendingCount = count($pendingAgents);
                   <span class="dg-label">Managed By</span>
                   <input type="text" id="admin-managed-<?= $idx ?>" value="<?= h($a['managed_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
                 </div>
+                <div class="dg-field">
+                  <span class="dg-label">Recruit Source</span>
+                  <select id="admin-recruitsrc-<?= $idx ?>" class="rs-select" data-current="<?= h($a['recruit_source_email'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                  </select>
+                </div>
                 <div class="dg-field" style="grid-column:1/-1">
                   <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
                   <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
@@ -356,6 +384,7 @@ $pendingCount = count($pendingAgents);
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
                   <a href="intake.php" target="_blank" class="btn-detail-link">View Intake Form →</a>
                   <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
+                  <a href="agent_profile.php?email=<?= h($a['email']) ?>" class="btn-detail-link">View Full Profile →</a>
                 </div>
 
               </div>
@@ -408,7 +437,8 @@ $pendingCount = count($pendingAgents);
     </div>
 
   </div>
-</main>
+</div>
+</div>
 
 <div class="modal-overlay" id="editModalOverlay" style="display:none">
   <div class="modal-box">
@@ -512,7 +542,6 @@ $pendingCount = count($pendingAgents);
         <div class="em-field"><label>Facebook</label><input id="em-facebook"></div>
         <div class="em-field"><label>LinkedIn</label><input id="em-linkedin"></div>
         <div class="em-field"><label>Skype</label><input id="em-skype"></div>
-        <div class="em-field em-full"><label>Email Signature</label><textarea id="em-email_signature"></textarea></div>
 
         <div class="em-section">Bio &amp; Marketing</div>
         <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
@@ -608,6 +637,26 @@ $pendingCount = count($pendingAgents);
       .catch(function () { span.textContent = 'Network error.'; });
   };
 
+  // Recruit Source — populate every row's dropdown from the live agent
+  // roster (fetched once, not per-row) so it always reflects who's currently
+  // active rather than a static list baked into the page.
+  fetch('api/roster.php', { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var agents = (d.agents || []).filter(function (a) { return a.email; })
+        .sort(function (a, b) { return a.name.localeCompare(b.name); });
+      var opts = '<option value="">— none —</option>' + agents.map(function (a) {
+        return '<option value="' + a.email.toLowerCase() + '">' + (a.name.replace(/[&<>"]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        })) + '</option>';
+      }).join('');
+      document.querySelectorAll('.rs-select').forEach(function (sel) {
+        sel.innerHTML = opts;
+        sel.value = (sel.dataset.current || '').toLowerCase();
+      });
+    })
+    .catch(function () {});
+
   window.saveAdminFields = function (email, idx) {
     var msg = document.getElementById('admin-save-msg-' + idx);
     msg.textContent = 'Saving…';
@@ -618,7 +667,8 @@ $pendingCount = count($pendingAgents);
       terminated_date: document.getElementById('admin-terminated-' + idx).value,
       agent_team: document.getElementById('admin-team-' + idx).value,
       coached_by: document.getElementById('admin-coached-' + idx).value,
-      managed_by: document.getElementById('admin-managed-' + idx).value
+      managed_by: document.getElementById('admin-managed-' + idx).value,
+      recruit_source_email: document.getElementById('admin-recruitsrc-' + idx).value
     };
     fetch('api/agent_admin.php', {
       method: 'POST',
@@ -643,7 +693,7 @@ $pendingCount = count($pendingAgents);
     'birthday','spouse_name','gender','drivers_license','tshirt_size',
     'is_military','first_responder','is_teacher','languages',
     'emergency_name','emergency_phone',
-    'website','additional_websites','facebook','linkedin','skype','email_signature',
+    'website','additional_websites','facebook','linkedin','skype',
     'referring_agent','bio'];
   var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
   var emCurrentEmail = null;
