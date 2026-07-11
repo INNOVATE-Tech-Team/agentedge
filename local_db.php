@@ -911,6 +911,56 @@ function local_db(): PDO {
         $backfill->execute(['Regional Business Press','Providence Business News','Rhode Island business journal','Advertising@PBN.com (paid release/People-on-the-Move submission at pbn.com)','New market opening — Cranston, RI. Consider a paid release or People on the Move for the branch leader.',170,'RI','Providence Business News']);
     }
 
+
+    // Exit interview — self-service form filled out by a departing agent while
+    // their AgentEdge login is still active (offboarding step 'exit_interview',
+    // before the 'agentedge' step deactivates their account). See exit_interview.php
+    // / api/exit_interview.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_exit_interview (
+        email               TEXT PRIMARY KEY,
+        queue_id            INTEGER NOT NULL,
+        satisfaction_rating INTEGER,
+        feedback_management TEXT NOT NULL DEFAULT '',
+        feedback_support    TEXT NOT NULL DEFAULT '',
+        feedback_training   TEXT NOT NULL DEFAULT '',
+        next_destination    TEXT NOT NULL DEFAULT '',
+        would_recommend     TEXT NOT NULL DEFAULT '',
+        suggestions         TEXT NOT NULL DEFAULT '',
+        submitted           INTEGER NOT NULL DEFAULT 0,
+        submitted_at        TEXT,
+        updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Office address + geocoded coordinates, used to compute recruiting-prospect distance.
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN address      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN city         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN zip          TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lat          REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN lng          REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN geocoded_at  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Recruiting prospects — agents at other brokerages INNOVATE is trying to recruit.
+    // Distinct from innovate_roster (existing/active INNOVATE agents).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS recruit_prospects (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        full_name         TEXT    NOT NULL,
+        current_brokerage TEXT    NOT NULL DEFAULT '',
+        phone             TEXT    NOT NULL DEFAULT '',
+        email             TEXT    NOT NULL DEFAULT '',
+        address           TEXT    NOT NULL DEFAULT '',
+        city              TEXT    NOT NULL DEFAULT '',
+        state             TEXT    NOT NULL DEFAULT '',
+        zip               TEXT    NOT NULL DEFAULT '',
+        lat               REAL,
+        lng               REAL,
+        geocoded_at       TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'new',
+        notes             TEXT    NOT NULL DEFAULT '',
+        added_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        added_by          TEXT    NOT NULL DEFAULT '',
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_prospects_status ON recruit_prospects(status)");
     return $pdo;
 }
 
