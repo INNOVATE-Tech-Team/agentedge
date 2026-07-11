@@ -5,6 +5,9 @@ config.php
 # SQLite database and user-uploaded files — never commit these.
 # On the server these live at local_db_dir (outside the repo) to survive deploys.
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/hud_uploads/
 data/docs/
 data/uni/
+data/headshots/

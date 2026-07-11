@@ -28,6 +28,7 @@ $list_price  = (int)str_replace([',','$'], '', $_POST['list_price'] ?? '0');
 $image_url   = trim($_POST['image_url']    ?? '');
 $vacate      = !empty($_POST['vacate'])    ? 1 : 0;
 $visible     = !empty($_POST['visible'])   ? 1 : 0;
+$no_schedule = ($vacate && !empty($_POST['no_schedule'])) ? 1 : 0;
 
 // Allowed property types
 $validTypes = ['Residential','Condo','Townhouse','Land','Commercial'];
@@ -57,47 +58,51 @@ if ($id > 0) {
     $db->prepare("UPDATE oh_listings SET
         mls_number=?, address=?, city=?, state=?, zip=?,
         property_type=?, list_price=?, image_url=?,
-        vacate=?, visible=?
+        vacate=?, visible=?, no_schedule=?
         WHERE id=?")->execute([
         $mls_number, $address, $city, $state, $zip,
         $prop_type, $list_price ?: null, $image_url,
-        $vacate, $visible,
+        $vacate, $visible, $no_schedule,
         $id,
     ]);
     $listing_id = $id;
 } else {
     // Insert new listing
     $ins = $db->prepare("INSERT INTO oh_listings
-        (mls_number, address, city, state, zip, property_type, list_price, listing_agent_email, listing_agent_name, image_url, vacate, visible)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+        (mls_number, address, city, state, zip, property_type, list_price, listing_agent_email, listing_agent_name, image_url, vacate, visible, no_schedule)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
     $ins->execute([
         $mls_number, $address, $city, $state, $zip,
         $prop_type, $list_price ?: null,
         $email, $name,
-        $image_url, $vacate, $visible,
+        $image_url, $vacate, $visible, $no_schedule,
     ]);
     $listing_id = (int)$db->lastInsertId();
 }
 
-// Delete all existing slots for this listing and re-insert
+// Delete all existing slots for this listing and re-insert.
+// When no_schedule is set, the listing is intentionally left with zero slots
+// ("available anytime") — skip re-inserting from the posted form.
 $db->prepare("DELETE FROM oh_slots WHERE listing_id=?")->execute([$listing_id]);
 
-$dates      = $_POST['dates']       ?? [];
-$starts     = $_POST['start_times'] ?? [];
-$ends       = $_POST['end_times']   ?? [];
-$count      = min(count($dates), count($starts), count($ends));
+if (!$no_schedule) {
+    $dates      = $_POST['dates']       ?? [];
+    $starts     = $_POST['start_times'] ?? [];
+    $ends       = $_POST['end_times']   ?? [];
+    $count      = min(count($dates), count($starts), count($ends));
 
-$insSlot = $db->prepare("INSERT INTO oh_slots (listing_id, slot_date, start_time, end_time) VALUES (?,?,?,?)");
-for ($i = 0; $i < $count; $i++) {
-    $d = trim($dates[$i]);
-    $s = trim($starts[$i]);
-    $e = trim($ends[$i]);
-    if ($d === '' || $s === '' || $e === '') continue;
-    // Basic date/time validation
-    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) continue;
-    if (!preg_match('/^\d{2}:\d{2}$/', $s))       continue;
-    if (!preg_match('/^\d{2}:\d{2}$/', $e))       continue;
-    $insSlot->execute([$listing_id, $d, $s, $e]);
+    $insSlot = $db->prepare("INSERT INTO oh_slots (listing_id, slot_date, start_time, end_time) VALUES (?,?,?,?)");
+    for ($i = 0; $i < $count; $i++) {
+        $d = trim($dates[$i]);
+        $s = trim($starts[$i]);
+        $e = trim($ends[$i]);
+        if ($d === '' || $s === '' || $e === '') continue;
+        // Basic date/time validation
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) continue;
+        if (!preg_match('/^\d{2}:\d{2}$/', $s))       continue;
+        if (!preg_match('/^\d{2}:\d{2}$/', $e))       continue;
+        $insSlot->execute([$listing_id, $d, $s, $e]);
+    }
 }
 
 header('Location: openhouse_mine.php?ok=saved');

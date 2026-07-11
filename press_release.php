@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $perms = current_perms();
@@ -8,6 +9,64 @@ if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 
 $agentName  = htmlspecialchars($agent['name']  ?? '');
 $agentEmail = htmlspecialchars($agent['email'] ?? '');
+
+function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
+
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+$csrf = $_SESSION['csrf'];
+
+// ── Handle contact CRUD ──────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (($_POST['csrf'] ?? '') !== $csrf) die('Invalid CSRF token.');
+
+    $db     = local_db();
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add_contact') {
+        $category = trim($_POST['category'] ?? '');
+        $outlet   = trim($_POST['outlet'] ?? '');
+        $beat     = trim($_POST['beat'] ?? '');
+        $how      = trim($_POST['how'] ?? '');
+        $note     = trim($_POST['note'] ?? '');
+        $state    = strtoupper(trim($_POST['state'] ?? ''));
+        if ($category && $outlet) {
+            $s = $db->prepare("SELECT COUNT(*), COALESCE(MAX(sort_ord),0) FROM press_contacts WHERE category=?");
+            $s->execute([$category]);
+            [$catCount, $catMax] = $s->fetch(PDO::FETCH_NUM);
+            $ord = $catCount > 0
+                ? $catMax + 10
+                : (int)$db->query("SELECT COALESCE(MAX(sort_ord),0)+100 FROM press_contacts")->fetchColumn();
+            $db->prepare("INSERT INTO press_contacts (category,outlet,beat,how,note,sort_ord,state) VALUES (?,?,?,?,?,?,?)")
+               ->execute([$category,$outlet,$beat,$how,$note,$ord,$state]);
+        }
+    } elseif ($action === 'update_contact') {
+        $id       = (int)($_POST['id'] ?? 0);
+        $category = trim($_POST['category'] ?? '');
+        $outlet   = trim($_POST['outlet'] ?? '');
+        $beat     = trim($_POST['beat'] ?? '');
+        $how      = trim($_POST['how'] ?? '');
+        $note     = trim($_POST['note'] ?? '');
+        $state    = strtoupper(trim($_POST['state'] ?? ''));
+        if ($id && $category && $outlet) {
+            $db->prepare("UPDATE press_contacts SET category=?,outlet=?,beat=?,how=?,note=?,state=? WHERE id=?")
+               ->execute([$category,$outlet,$beat,$how,$note,$state,$id]);
+        }
+    } elseif ($action === 'delete_contact') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id) $db->prepare("DELETE FROM press_contacts WHERE id=?")->execute([$id]);
+    }
+
+    header('Location: press_release.php?tab=contacts');
+    exit;
+}
+
+$contactRows = local_db()->query("SELECT * FROM press_contacts ORDER BY sort_ord, id")->fetchAll(PDO::FETCH_ASSOC);
+$contactsByCategory = [];
+foreach ($contactRows as $row) { $contactsByCategory[$row['category']][] = $row; }
+$contactStates = array_values(array_unique(array_filter(array_column($contactRows, 'state'))));
+sort($contactStates);
+
+$activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
 ?>
 <!doctype html>
 <html lang="en">
@@ -105,11 +164,29 @@ $agentEmail = htmlspecialchars($agent['email'] ?? '');
     .ct-beat { font-size: 11px; color: #aaa; margin-bottom: 4px; }
     .ct-how  { font-family: monospace; font-size: 10.5px; color: #5b8e0d; }
     .ct-note2{ font-size: 10px; color: #bbb; font-style: italic; margin-top: 3px; line-height: 1.5; }
+    .ct-out  { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .ct-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .ct-actions a, .ct-del { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; text-decoration: none; }
+    .ct-actions a { color: #999; }
+    .ct-actions a:hover { color: #5b8e0d; }
+    .ct-del { color: #c0392b; background: none; border: none; padding: 0; font-family: inherit; }
+    .ct-del:hover { text-decoration: underline; }
+    .ct-edit-form { padding: 11px 0; margin-bottom: 11px; border-bottom: 1px solid #f5f5f5; }
+    .ct-edit-form input, .ct-edit-form textarea { width: 100%; padding: 6px 8px; margin-bottom: 6px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; box-sizing: border-box; font-family: inherit; }
+    .ct-edit-form textarea { min-height: 44px; resize: vertical; }
+    .ct-edit-btns { display: flex; gap: 6px; }
+    .ct-edit-btns button { padding: 6px 12px; font-size: 11px; }
+    .ct-add { max-width: 640px; margin-top: 28px; background: #fff; border: 1px solid #e8e8e8; border-radius: 8px; padding: 18px; }
+    .ct-add-h { font-size: 9px; font-weight: 800; color: #82C112; text-transform: uppercase; letter-spacing: .17em; padding-bottom: 10px; border-bottom: 1px solid #f2f2f2; margin-bottom: 14px; }
+    .ct-add-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .ct-add-form input { padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; box-sizing: border-box; font-family: inherit; }
+    .ct-add-form button { grid-column: 1 / -1; justify-self: start; }
 
     @media (max-width: 960px) {
       .pr-split { grid-template-columns: 1fr; }
       .pr-preview-pane { display: none; }
       .ct-grid { grid-template-columns: 1fr; }
+      .ct-add-form { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -123,12 +200,12 @@ $agentEmail = htmlspecialchars($agent['email'] ?? '');
     <main class="wrap">
 
       <div class="pr-tabs">
-        <button class="pr-tab active" onclick="prShowTab('builder',this)">Builder</button>
-        <button class="pr-tab"        onclick="prShowTab('contacts',this)">Who to Pitch</button>
+        <button class="pr-tab<?= $activeTab === 'builder'  ? ' active' : '' ?>" onclick="prShowTab('builder',this)">Builder</button>
+        <button class="pr-tab<?= $activeTab === 'contacts' ? ' active' : '' ?>" onclick="prShowTab('contacts',this)">Who to Pitch</button>
       </div>
 
       <!-- ══ BUILDER ══ -->
-      <div id="pr-builder">
+      <div id="pr-builder" style="<?= $activeTab === 'contacts' ? 'display:none' : '' ?>">
         <div class="pr-split">
 
           <!-- Form -->
@@ -186,113 +263,85 @@ $agentEmail = htmlspecialchars($agent['email'] ?? '');
       </div><!-- /builder -->
 
       <!-- ══ CONTACTS ══ -->
-      <div id="pr-contacts" style="display:none">
+      <div id="pr-contacts" style="<?= $activeTab === 'contacts' ? '' : 'display:none' ?>">
         <p class="ct-note">Reporters, editors, and wire services most likely to cover INNOVATE news — organized by beat. Lead with the outlet that fits your story type; don't blast all of them at once.</p>
+
+        <?php if ($contactStates): ?>
+        <div class="pr-tabs" id="ct-state-tabs">
+          <button class="pr-tab active" data-state="" onclick="ctFilterState('',this)">All States</button>
+<?php foreach ($contactStates as $st): ?>
+          <button class="pr-tab" data-state="<?= h($st) ?>" onclick="ctFilterState('<?= h($st) ?>',this)"><?= h($st) ?></button>
+<?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
         <div class="ct-grid">
-
+<?php foreach ($contactsByCategory as $category => $entries): ?>
           <div class="ct-cat">
-            <div class="ct-ch">National Real Estate Trade</div>
-            <div class="ct-e">
-              <div class="ct-out">Inman News</div>
-              <div class="ct-beat">Brokerage growth, agent recruitment, industry trends</div>
-              <div class="ct-how">tips@inman.com</div>
-              <div class="ct-note2">Highest reach for brokerage expansion. Lead with agent count + growth data.</div>
+            <div class="ct-ch"><?= h($category) ?></div>
+<?php foreach ($entries as $c): $cid = (int)$c['id']; ?>
+            <div class="ct-e" id="ct-view-<?= $cid ?>" data-state="<?= h($c['state']) ?>">
+              <div class="ct-out">
+                <span><?= h($c['outlet']) ?></span>
+                <div class="ct-actions">
+                  <a onclick="ctToggle(<?= $cid ?>)">Edit</a>
+                  <form method="post" style="display:inline" onsubmit="return confirm('Delete this contact?');">
+                    <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+                    <input type="hidden" name="action" value="delete_contact">
+                    <input type="hidden" name="id" value="<?= $cid ?>">
+                    <button type="submit" class="ct-del">Delete</button>
+                  </form>
+                </div>
+              </div>
+<?php if ($c['beat'] !== ''): ?>              <div class="ct-beat"><?= h($c['beat']) ?></div>
+<?php endif; ?>
+<?php if ($c['how'] !== ''): ?>              <div class="ct-how"><?= h($c['how']) ?></div>
+<?php endif; ?>
+<?php if ($c['note'] !== ''): ?>              <div class="ct-note2"><?= h($c['note']) ?></div>
+<?php endif; ?>
             </div>
-            <div class="ct-e">
-              <div class="ct-out">RISMedia</div>
-              <div class="ct-beat">Real estate leadership, independent brokerages</div>
-              <div class="ct-how">press@rismedia.com</div>
-              <div class="ct-note2">Receptive to regional brokerages with compelling agent value props.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">HousingWire</div>
-              <div class="ct-beat">Brokerage tech, market data</div>
-              <div class="ct-how">editorial@housingwire.com</div>
-              <div class="ct-note2">Best for tech announcements and market data stories.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">RealTrends</div>
-              <div class="ct-beat">Brokerage rankings, agent productivity</div>
-              <div class="ct-how">info@realtrends.com</div>
-              <div class="ct-note2">Submit when crossing volume milestones or for rankings consideration.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">The Real Deal</div>
-              <div class="ct-beat">Market moves, notable hires, brokerage competition</div>
-              <div class="ct-how">tips@therealdeal.com</div>
-              <div class="ct-note2">Skews large markets — use for major expansions or exec hires.</div>
-            </div>
+            <form class="ct-edit-form" id="ct-edit-<?= $cid ?>" method="post" style="display:none" data-state="<?= h($c['state']) ?>">
+              <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+              <input type="hidden" name="action" value="update_contact">
+              <input type="hidden" name="id" value="<?= $cid ?>">
+              <input type="text" name="category" value="<?= h($c['category']) ?>" placeholder="Category" required>
+              <input type="text" name="outlet" value="<?= h($c['outlet']) ?>" placeholder="Outlet" required>
+              <input type="text" name="beat" value="<?= h($c['beat']) ?>" placeholder="Beat">
+              <input type="text" name="how" value="<?= h($c['how']) ?>" placeholder="Email / how to pitch">
+              <input type="text" name="state" value="<?= h($c['state']) ?>" placeholder="State (optional, e.g. PA) — blank = national" list="ct-states">
+              <textarea name="note" placeholder="Note"><?= h($c['note']) ?></textarea>
+              <div class="ct-edit-btns">
+                <button type="submit" class="btn-pr-primary">Save</button>
+                <button type="button" class="btn-pr-sec" onclick="ctToggle(<?= $cid ?>)">Cancel</button>
+              </div>
+            </form>
+<?php endforeach; ?>
           </div>
-
-          <div class="ct-cat">
-            <div class="ct-ch">Regional Business Press</div>
-            <div class="ct-e">
-              <div class="ct-out">Myrtle Beach Sun News</div>
-              <div class="ct-beat">Local business, real estate, coastal SC economy</div>
-              <div class="ct-how">business@myrtlebeachsun.com</div>
-              <div class="ct-note2">Home market — pitch everything. Quote local agent counts and SC data.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">The State (Columbia, SC)</div>
-              <div class="ct-beat">SC business, economy, commercial real estate</div>
-              <div class="ct-how">newsdesk@thestate.com</div>
-              <div class="ct-note2">Strong for statewide growth stories and Columbia/Upstate expansion.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">Post and Courier (Charleston)</div>
-              <div class="ct-beat">Charleston real estate, SC business</div>
-              <div class="ct-how">business@postandcourier.com</div>
-              <div class="ct-note2">One of SC's most credible papers — any SC-wide news belongs here.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">Charlotte Observer</div>
-              <div class="ct-beat">Carolinas business, real estate, expansion</div>
-              <div class="ct-how">business@charlotteobserver.com</div>
-              <div class="ct-note2">Covers NC + greater Carolinas. Best for NC market expansion stories.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">Business North Carolina</div>
-              <div class="ct-beat">NC business, growth companies</div>
-              <div class="ct-how">editor@businessnc.com</div>
-              <div class="ct-note2">Monthly magazine — submit 6–8 weeks ahead for print consideration.</div>
-            </div>
-          </div>
-
-          <div class="ct-cat">
-            <div class="ct-ch">Wire Services &amp; Industry</div>
-            <div class="ct-e">
-              <div class="ct-out">PR Newswire</div>
-              <div class="ct-beat">Broad distribution to hundreds of outlets</div>
-              <div class="ct-how">prnewswire.com (submit online)</div>
-              <div class="ct-note2">~$350–700/release. Best ROI for milestones. Ask for SE regional circuit.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">Business Wire</div>
-              <div class="ct-beat">Financial and trade press distribution</div>
-              <div class="ct-how">businesswire.com (submit online)</div>
-              <div class="ct-note2">Preferred by financial journalists; use for investor-audience stories.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">EIN Presswire</div>
-              <div class="ct-beat">Broad online distribution, affordable</div>
-              <div class="ct-how">einpresswire.com (submit online)</div>
-              <div class="ct-note2">Free tier available. Good for SEO pickup on routine announcements.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">Broker Agent Magazine</div>
-              <div class="ct-beat">Independent brokerage, agent recruiting</div>
-              <div class="ct-how">editorial@brokeragentmagazine.com</div>
-              <div class="ct-note2">Directly reaches agents evaluating brokerage moves — prime for recruiting news.</div>
-            </div>
-            <div class="ct-e">
-              <div class="ct-out">NAR Newsroom / Realtor Magazine</div>
-              <div class="ct-beat">NAR member news, market data</div>
-              <div class="ct-how">newsroom@nar.realtor</div>
-              <div class="ct-note2">Use for MLS data, compliance, and agent advocacy stories.</div>
-            </div>
-          </div>
-
+<?php endforeach; ?>
         </div><!-- /ct-grid -->
+
+        <div class="ct-add">
+          <div class="ct-add-h">Add a Contact</div>
+          <form class="ct-add-form" method="post">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <input type="hidden" name="action" value="add_contact">
+            <input type="text" name="category" list="ct-categories" placeholder="Category" required>
+            <datalist id="ct-categories">
+<?php foreach (array_keys($contactsByCategory) as $cat): ?>              <option value="<?= h($cat) ?>">
+<?php endforeach; ?>
+            </datalist>
+            <input type="text" name="outlet" placeholder="Outlet name" required>
+            <input type="text" name="beat" placeholder="Beat">
+            <input type="text" name="how" placeholder="Email / how to pitch">
+            <input type="text" name="state" placeholder="State (optional, e.g. PA) — blank = national" list="ct-states">
+            <datalist id="ct-states">
+<?php foreach ($contactStates as $st): ?>              <option value="<?= h($st) ?>">
+<?php endforeach; ?>
+            </datalist>
+            <input type="text" name="note" placeholder="Note (optional)">
+            <button type="submit" class="btn-pr-primary">Add Contact</button>
+          </form>
+        </div>
       </div><!-- /contacts -->
 
     </main>
@@ -437,6 +486,32 @@ function prShowTab(tab, btn) {
   document.getElementById('pr-contacts').style.display = tab === 'contacts' ? '' : 'none';
   document.querySelectorAll('.pr-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+}
+
+function ctToggle(id) {
+  const view = document.getElementById('ct-view-' + id);
+  const edit = document.getElementById('ct-edit-' + id);
+  const editing = edit.style.display !== 'none';
+  view.style.display = editing ? '' : 'none';
+  edit.style.display = editing ? 'none' : '';
+}
+
+// Filters contact cards by state. A specific state shows that state's contacts
+// plus national ones (blank state) — a national outlet is relevant everywhere.
+// "All States" shows everything, including every state-specific contact.
+function ctFilterState(state, btn) {
+  document.querySelectorAll('#ct-state-tabs .pr-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const matches = el => state === '' || (el.dataset.state || '') === '' || el.dataset.state === state;
+
+  document.querySelectorAll('.ct-e').forEach(el => { el.style.display = matches(el) ? '' : 'none'; });
+  document.querySelectorAll('.ct-edit-form').forEach(el => { if (!matches(el)) el.style.display = 'none'; });
+
+  document.querySelectorAll('.ct-cat').forEach(col => {
+    const anyVisible = [...col.querySelectorAll('.ct-e')].some(e => e.style.display !== 'none');
+    col.style.display = anyVisible ? '' : 'none';
+  });
 }
 
 // Set today's date and wire live preview

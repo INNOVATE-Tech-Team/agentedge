@@ -11,6 +11,7 @@ $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Resources — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .breadcrumb{display:flex;gap:4px;align-items:center;font-size:12px;color:#888;margin-bottom:14px;flex-wrap:wrap}
@@ -87,12 +88,14 @@ function renderGrid(folders,files){
       <div class="doc-name">${esc(f.name)}</div>
     </div>`;
   });
+  const inlineMimes=['application/pdf','text/html'];
   files.forEach(f=>{
+    const viewable = inlineMimes.includes(f.mime_type);
     html+=`<div class="doc-item">
       <div class="doc-icon">${fileIcon(f.mime_type)}</div>
       <div class="doc-name">${esc(f.name)}</div>
       <div class="doc-meta">${fmtSize(f.size_bytes)}</div>
-      <a class="doc-dl" href="api/doc_download.php?id=${f.id}">Download</a>
+      <a class="doc-dl" href="api/doc_download.php?id=${f.id}" target="_blank" rel="noopener">${viewable?'View':'Download'}</a>
     </div>`;
   });
   grid.innerHTML=html;

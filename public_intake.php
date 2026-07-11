@@ -1,6 +1,10 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/local_db.php';
+
+$intakeMarketCenters = local_db()
+    ->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
+    ->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!doctype html>
 <html lang="en">
@@ -57,6 +61,22 @@ require_once __DIR__ . '/local_db.php';
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     .form-grid .field.full { grid-column: 1 / -1; }
     @media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+
+    /* Office checkbox list */
+    .office-checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; max-height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 7px; padding: 10px 12px; }
+    @media (max-width: 520px) { .office-checklist { grid-template-columns: 1fr; } }
+    .office-checklist label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #333; padding: 3px 0; text-transform: none; font-weight: 400; letter-spacing: 0; }
+    .office-checklist input[type=checkbox] { width: auto; margin: 0; }
+    .office-checklist.invalid { border-color: #e53935; }
+
+    /* Additional licenses */
+    .license-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0 10px; align-items: end; margin-bottom: 10px; }
+    @media (max-width: 520px) { .license-row { grid-template-columns: 1fr; } }
+    .license-row .field { margin-bottom: 0; }
+    .btn-remove-license { border: 1px solid #ddd; background: #fff; color: #888; border-radius: 7px; padding: 9px 12px; font-size: 13px; cursor: pointer; height: fit-content; }
+    .btn-remove-license:hover { border-color: #e53935; color: #e53935; }
+    .btn-add-license { border: 1px dashed #82C112; background: #f0f5e8; color: #5b8e0d; border-radius: 7px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
+    .btn-add-license:hover { background: #e4f0d8; }
 
     /* Submit */
     .form-actions { margin-top: 24px; }
@@ -121,6 +141,14 @@ require_once __DIR__ . '/local_db.php';
           <label>Last 4 digits of SS# <span class="opt">(for payroll)</span></label>
           <input type="text" id="f-phone_last4" name="phone_last4" maxlength="4" pattern="[0-9]{4}" placeholder="e.g. 1234">
         </div>
+        <div class="field">
+          <label>Personal Email <span class="opt">(optional)</span></label>
+          <input type="email" id="f-personal_email" name="personal_email" placeholder="you@personal.com">
+        </div>
+        <div class="field">
+          <label>Commissions Email <span class="opt">(optional)</span></label>
+          <input type="email" id="f-commissions_email" name="commissions_email" placeholder="Where commission notices should go">
+        </div>
       </div>
 
       <!-- License & Certifications -->
@@ -143,6 +171,8 @@ require_once __DIR__ . '/local_db.php';
           <input type="text" id="f-nar_number" name="nar_number" required>
         </div>
       </div>
+      <div id="additional-licenses"></div>
+      <button type="button" class="btn-add-license" id="btn-add-license">+ Add Another License</button>
 
       <!-- MLS Information -->
       <div class="form-section-h">MLS Information</div>
@@ -166,27 +196,79 @@ require_once __DIR__ . '/local_db.php';
       <div class="form-section-h">INNOVATE Office</div>
       <div class="form-grid">
         <div class="field full">
-          <label>Office Location</label>
-          <select id="f-office_location" name="office_location" required>
-            <option value="">— Select your office —</option>
-            <option value="Myrtle Beach">Myrtle Beach</option>
-            <option value="Surfside Beach">Surfside Beach</option>
-            <option value="Pawleys Island">Pawleys Island</option>
-            <option value="North Myrtle Beach">North Myrtle Beach</option>
-            <option value="Conway">Conway</option>
-            <option value="Little River">Little River</option>
-            <option value="Longs/Loris">Longs/Loris</option>
-            <option value="Columbia">Columbia</option>
-            <option value="Lexington">Lexington</option>
-            <option value="Chapin/Newberry">Chapin/Newberry</option>
-            <option value="Florence">Florence</option>
-            <option value="Sumter">Sumter</option>
-            <option value="Augusta">Augusta</option>
-            <option value="Charlotte">Charlotte</option>
-            <option value="Wilmington">Wilmington</option>
-            <option value="Greenville">Greenville</option>
-            <option value="Remote">Remote</option>
+          <label>Which INNOVATE office(s) are you joining? <span class="opt">(check all that apply)</span></label>
+          <div class="office-checklist" id="office-checklist">
+            <?php foreach ($intakeMarketCenters as $mc): ?>
+            <label>
+              <input type="checkbox" name="office_locations" value="<?= htmlspecialchars($mc['name'], ENT_QUOTES) ?>">
+              <?= htmlspecialchars($mc['name'], ENT_QUOTES) ?><?= $mc['state_code'] ? ' (' . htmlspecialchars($mc['state_code'], ENT_QUOTES) . ')' : '' ?>
+            </label>
+            <?php endforeach; ?>
+          </div>
+        </div>
+      </div>
+
+      <!-- Professional Background -->
+      <div class="form-section-h">Professional Background <span class="opt">(optional)</span></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Specialty <span class="opt">(optional)</span></label>
+          <select id="f-specialty" name="specialty">
+            <option value="">— Select —</option>
+            <option value="Residential">Residential</option>
+            <option value="Commercial">Commercial</option>
+            <option value="Luxury">Luxury</option>
+            <option value="Land/Farm">Land/Farm</option>
+            <option value="New Construction">New Construction</option>
+            <option value="Property Management">Property Management</option>
+            <option value="Relocation">Relocation</option>
+            <option value="Other">Other</option>
           </select>
+        </div>
+        <div class="field">
+          <label>Career Start Date <span class="opt">(optional)</span></label>
+          <input type="date" id="f-career_start" name="career_start">
+        </div>
+        <div class="field">
+          <label>Prior Occupation <span class="opt">(optional)</span></label>
+          <input type="text" id="f-prior_occupation" name="prior_occupation" placeholder="What did you do before real estate?">
+        </div>
+        <div class="field">
+          <label>Prior Affiliation <span class="opt">(optional)</span></label>
+          <input type="text" id="f-prior_affiliation" name="prior_affiliation" placeholder="Previous brokerage, if any">
+        </div>
+        <div class="field">
+          <label>
+            <input type="checkbox" id="f-full_time" name="full_time" checked style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle">
+            Full-Time Agent
+          </label>
+        </div>
+        <div class="field">
+          <label>
+            <input type="checkbox" id="f-show_on_internet" name="show_on_internet" checked style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle">
+            Show my profile on the company website
+          </label>
+        </div>
+      </div>
+
+      <!-- Business Entity & Tax Info -->
+      <div class="form-section-h">Business Entity &amp; Tax Info <span class="opt">(optional)</span></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Personal Tax ID / SSN <span class="opt">(optional, encrypted)</span></label>
+          <input type="text" id="f-personal_tax_id" name="personal_tax_id" placeholder="For payroll — stored encrypted">
+        </div>
+        <div class="field">
+          <label>Corporate Tax ID / EIN <span class="opt">(optional, if you operate as an LLC/S-Corp)</span></label>
+          <input type="text" id="f-corporate_tax_id" name="corporate_tax_id" placeholder="Stored encrypted">
+        </div>
+        <div class="field">
+          <label>Corporation Start Date <span class="opt">(optional)</span></label>
+          <input type="date" id="f-corporation_start" name="corporation_start">
+        </div>
+        <div class="field">
+          <label>Corporation End Date <span class="opt">(optional)</span></label>
+          <input type="date" id="f-corporation_end" name="corporation_end">
         </div>
       </div>
 
@@ -201,9 +283,42 @@ require_once __DIR__ . '/local_db.php';
           <label>Spouse/Partner Name <span class="opt">(optional)</span></label>
           <input type="text" id="f-spouse_name" name="spouse_name" placeholder="Optional">
         </div>
+        <div class="field">
+          <label>Gender <span class="opt">(optional)</span></label>
+          <select id="f-gender" name="gender">
+            <option value="">— Select —</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Prefer not to say">Prefer not to say</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Driver's License # <span class="opt">(optional)</span></label>
+          <input type="text" id="f-drivers_license" name="drivers_license" placeholder="Optional">
+        </div>
         <div class="field full">
-          <label>Mailing Address</label>
-          <textarea id="f-mailing_address" name="mailing_address" rows="3" required placeholder="Street, City, State, ZIP"></textarea>
+          <label>Address Line 1</label>
+          <input type="text" id="f-address_line1" name="address_line1" required placeholder="Street address">
+        </div>
+        <div class="field full">
+          <label>Address Line 2 <span class="opt">(optional)</span></label>
+          <input type="text" id="f-address_line2" name="address_line2" placeholder="Apt, suite, etc.">
+        </div>
+        <div class="field">
+          <label>City</label>
+          <input type="text" id="f-city" name="city" required>
+        </div>
+        <div class="field">
+          <label>State</label>
+          <input type="text" id="f-state" name="state" required placeholder="e.g. SC">
+        </div>
+        <div class="field">
+          <label>Zip/Postal Code</label>
+          <input type="text" id="f-zip" name="zip" required>
+        </div>
+        <div class="field">
+          <label>Country</label>
+          <input type="text" id="f-country" name="country" value="United States">
         </div>
         <div class="field">
           <label>T-Shirt Size</label>
@@ -242,8 +357,8 @@ require_once __DIR__ . '/local_db.php';
           </select>
         </div>
         <div class="field">
-          <label>Referring Agent <span class="opt">(optional)</span></label>
-          <input type="text" id="f-referring_agent" name="referring_agent" placeholder="Who referred you?">
+          <label>Which agent was the reason you decided to join INNOVATE?</label>
+          <input type="text" id="f-referring_agent" name="referring_agent" required placeholder="Enter N/A if it was not a specific agent">
         </div>
         <div class="field">
           <label>Languages Spoken <span class="opt">(optional)</span></label>
@@ -261,6 +376,31 @@ require_once __DIR__ . '/local_db.php';
         <div class="field">
           <label>Emergency Contact Phone</label>
           <input type="tel" id="f-emergency_phone" name="emergency_phone" required placeholder="(843) 555-0100">
+        </div>
+      </div>
+
+      <!-- Online Presence -->
+      <div class="form-section-h">Online Presence <span class="opt">(optional)</span></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Website <span class="opt">(optional)</span></label>
+          <input type="text" id="f-website" name="website" placeholder="https://">
+        </div>
+        <div class="field">
+          <label>Additional Websites <span class="opt">(optional)</span></label>
+          <input type="text" id="f-additional_websites" name="additional_websites" placeholder="https://">
+        </div>
+        <div class="field">
+          <label>Facebook <span class="opt">(optional)</span></label>
+          <input type="text" id="f-facebook" name="facebook" placeholder="https://facebook.com/...">
+        </div>
+        <div class="field">
+          <label>LinkedIn <span class="opt">(optional)</span></label>
+          <input type="text" id="f-linkedin" name="linkedin" placeholder="https://linkedin.com/in/...">
+        </div>
+        <div class="field">
+          <label>Skype <span class="opt">(optional)</span></label>
+          <input type="text" id="f-skype" name="skype" placeholder="Skype username">
         </div>
       </div>
 
@@ -294,10 +434,14 @@ require_once __DIR__ . '/local_db.php';
 
 <script>
 (function () {
-  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','office_location','birthday','mailing_address','emergency_name','emergency_phone','bio'];
-  var TOTAL = REQUIRED_IDS.length;
+  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
+  var TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
 
   function el(id) { return document.getElementById(id); }
+
+  function officeChecked() {
+    return document.querySelectorAll('#office-checklist input:checked').length > 0;
+  }
 
   function calcProgress() {
     var done = 0;
@@ -305,6 +449,7 @@ require_once __DIR__ . '/local_db.php';
       var node = el('f-' + id);
       if (node && node.value && node.value.trim() !== '') done++;
     });
+    if (officeChecked()) done++;
     return done;
   }
 
@@ -342,6 +487,43 @@ require_once __DIR__ . '/local_db.php';
     node.addEventListener('change', updateProgress);
   });
 
+  // Additional licenses — repeatable rows
+  var licenseRowCount = 0;
+  function addLicenseRow() {
+    licenseRowCount++;
+    var idx = licenseRowCount;
+    var row = document.createElement('div');
+    row.className = 'license-row';
+    row.dataset.licenseRow = idx;
+    row.innerHTML =
+      '<div class="field"><label>Real Estate License #</label><input type="text" class="al-number"></div>' +
+      '<div class="field"><label>License State</label><input type="text" class="al-state" placeholder="e.g. SC, NC"></div>' +
+      '<div class="field"><label>License Expiration Date</label><input type="date" class="al-exp"></div>' +
+      '<button type="button" class="btn-remove-license">Remove</button>';
+    row.querySelector('.btn-remove-license').addEventListener('click', function() { row.remove(); });
+    el('additional-licenses').appendChild(row);
+  }
+  el('btn-add-license').addEventListener('click', addLicenseRow);
+
+  function collectAdditionalLicenses() {
+    var out = [];
+    document.querySelectorAll('#additional-licenses .license-row').forEach(function(row) {
+      var number = row.querySelector('.al-number').value.trim();
+      var state  = row.querySelector('.al-state').value.trim();
+      var exp    = row.querySelector('.al-exp').value.trim();
+      if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+    });
+    return out;
+  }
+
+  // Office checklist — clear invalid styling once at least one box is checked
+  document.querySelectorAll('#office-checklist input').forEach(function(node) {
+    node.addEventListener('change', function() {
+      el('office-checklist').classList.toggle('invalid', !officeChecked());
+      updateProgress();
+    });
+  });
+
   el('intake-form').addEventListener('submit', function(e) {
     e.preventDefault();
 
@@ -354,6 +536,10 @@ require_once __DIR__ . '/local_db.php';
         missing.push(id);
       }
     });
+    if (!officeChecked()) {
+      el('office-checklist').classList.add('invalid');
+      missing.push('office_locations');
+    }
     if (missing.length > 0) {
       el('form-error').textContent = 'Please fill in all required fields before submitting.';
       // Scroll to first invalid field
@@ -388,16 +574,41 @@ require_once __DIR__ . '/local_db.php';
       nar_number:      el('f-nar_number').value.trim(),
       mls_board:       el('f-mls_board').value.trim(),
       mls_id:          el('f-mls_id').value.trim(),
-      office_location: el('f-office_location').value.trim(),
+      office_location: Array.from(document.querySelectorAll('#office-checklist input:checked')).map(function(n) { return n.value; }).join(', '),
+      additional_licenses: collectAdditionalLicenses(),
       birthday:        el('f-birthday').value.trim(),
-      mailing_address: el('f-mailing_address').value.trim(),
       spouse_name:     el('f-spouse_name').value.trim(),
+      gender:          el('f-gender').value.trim(),
+      drivers_license: el('f-drivers_license').value.trim(),
+      address_line1:   el('f-address_line1').value.trim(),
+      address_line2:   el('f-address_line2').value.trim(),
+      city:            el('f-city').value.trim(),
+      state:           el('f-state').value.trim(),
+      zip:             el('f-zip').value.trim(),
+      country:         el('f-country').value.trim(),
       tshirt_size:     el('f-tshirt_size').value.trim(),
       is_military:     el('f-is_military').value.trim(),
       first_responder: el('f-first_responder').value.trim(),
       is_teacher:      el('f-is_teacher').value.trim(),
       referring_agent: el('f-referring_agent').value.trim(),
       languages:       el('f-languages').value.trim(),
+      personal_email:      el('f-personal_email').value.trim(),
+      commissions_email:   el('f-commissions_email').value.trim(),
+      website:             el('f-website').value.trim(),
+      additional_websites: el('f-additional_websites').value.trim(),
+      facebook:            el('f-facebook').value.trim(),
+      linkedin:            el('f-linkedin').value.trim(),
+      skype:               el('f-skype').value.trim(),
+      specialty:           el('f-specialty').value.trim(),
+      career_start:        el('f-career_start').value.trim(),
+      prior_occupation:    el('f-prior_occupation').value.trim(),
+      prior_affiliation:   el('f-prior_affiliation').value.trim(),
+      full_time:           el('f-full_time').checked,
+      show_on_internet:    el('f-show_on_internet').checked,
+      personal_tax_id:     el('f-personal_tax_id').value.trim(),
+      corporate_tax_id:    el('f-corporate_tax_id').value.trim(),
+      corporation_start:   el('f-corporation_start').value.trim(),
+      corporation_end:     el('f-corporation_end').value.trim(),
       emergency_name:  el('f-emergency_name').value.trim(),
       emergency_phone: el('f-emergency_phone').value.trim(),
       bio:             el('f-bio').value.trim()

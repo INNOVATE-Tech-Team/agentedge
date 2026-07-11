@@ -149,6 +149,37 @@ if ($action === 'agent_lookup') {
     exit;
 }
 
+// ---- Change password (requires current password) --------------------------
+// NOTE: $DB_USER above must have UPDATE privilege on tblstaff.password for
+// this to work — "innovate_agentedge_ro" suggests a read-only grant today,
+// so this may need its own DB user (or an added grant) before it'll work.
+if ($action === 'change_password') {
+    $email    = trim((string)($in['email'] ?? ''));
+    $current  = (string)($in['current_password'] ?? '');
+    $newPass  = (string)($in['new_password'] ?? '');
+    if ($email === '' || $current === '' || $newPass === '') { echo json_encode(['ok'=>false,'error'=>'Missing fields.']); exit; }
+    if (strlen($newPass) < 8) { echo json_encode(['ok'=>false,'error'=>'New password must be at least 8 characters.']); exit; }
+
+    $stmt = $db->prepare("SELECT staffid, password, active FROM tblstaff WHERE email = ? LIMIT 1");
+    if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $stmt->bind_param('s', $email); $stmt->execute();
+    $u = $stmt->get_result()->fetch_assoc(); $stmt->close();
+    if (!$u || (int)$u['active'] !== 1 || !password_verify($current, (string)$u['password'])) {
+        echo json_encode(['ok'=>false,'error'=>'Current password is incorrect.']); exit;
+    }
+
+    $hash = password_hash($newPass, PASSWORD_BCRYPT);
+    $upd = $db->prepare("UPDATE tblstaff SET password = ? WHERE staffid = ?");
+    if (!$upd) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $staffid = (int)$u['staffid'];
+    $upd->bind_param('si', $hash, $staffid);
+    $ok = $upd->execute();
+    $upd->close();
+    if (!$ok) { echo json_encode(['ok'=>false,'error'=>'Could not update password (check DB user has UPDATE grant).']); exit; }
+    echo json_encode(['ok'=>true]);
+    exit;
+}
+
 // ---- Login (email + password) ---------------------------------------------
 $email    = trim((string)($in['email'] ?? ''));
 $password = (string)($in['password'] ?? '');

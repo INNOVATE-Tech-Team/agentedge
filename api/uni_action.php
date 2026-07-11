@@ -153,15 +153,15 @@ if ($action === 'create_lesson') {
     $type = in_array($in['type'] ?? '', ['video','doc','quiz']) ? $in['type'] : 'video';
     $mo   = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE course_id=?"); $mo->execute([$courseId]);
     $nextOrd = ((int)$mo->fetchColumn()) + 10;
-    $db->prepare("INSERT INTO uni_lessons (course_id,title,sort_ord,type,content_html,duration_sec) VALUES (?,?,?,?,?,?)")
-       ->execute([$courseId, $title, $nextOrd, $type, trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0)]);
+    $db->prepare("INSERT INTO uni_lessons (course_id,title,sort_ord,type,embed_url,content_html,duration_sec) VALUES (?,?,?,?,?,?,?)")
+       ->execute([$courseId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0)]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_lesson') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
-    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,content_html=?,duration_sec=? WHERE id=?")
-       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), $id]);
+    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,embed_url=?,content_html=?,duration_sec=? WHERE id=?")
+       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_lesson') {

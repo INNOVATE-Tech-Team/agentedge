@@ -77,6 +77,9 @@ function queue_onboarding_agent(
     try {
         require_once __DIR__ . '/notifications.php';
         notify_onboard_added($name, $email, trim($marketCenter), trim($startDate), trim($sponsor), trim($role) ?: 'agent', $addedBy);
+        $stepList = array_filter(onboard_tools(), fn($t) => $t['key'] !== 'agentedge');
+        notify_step_assignees_on_create('onboard', $name, $email, $stepList);
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
     } catch (\Throwable $e) {}
 
     return ['id' => $queueId, 'wasNew' => true];
