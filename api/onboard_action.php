@@ -257,22 +257,33 @@ if ($action === 'provision') {
         $first = $parts[0];
         $last  = $parts[1] ?? '';
         $result = c1_create_user($first, $last, $entry['agent_email']);
+    } elseif ($toolKey === 'doc_signing') {
+        require_once __DIR__ . '/../lib/pandadoc.php';
+        $existingDocId = $pdo->prepare("SELECT pandadoc_document_id FROM onboard_steps WHERE queue_id=? AND tool_key=?");
+        $existingDocId->execute([$queueId, $toolKey]);
+        $result = pandadoc_send_document($entry['agent_name'], $entry['agent_email'], $existingDocId->fetchColumn() ?: null);
     }
+
+    // A doc_signing send only puts the document in front of the agent —
+    // completion ('done') is set later by the webhook once they actually sign.
+    $successStatus = ($toolKey === 'doc_signing') ? 'sent' : 'done';
 
     // Update step status
     if ($result['ok']) {
         $upd = $pdo->prepare(
-            "UPDATE onboard_steps SET status='done', done_by=?, done_at=?, error_msg=NULL
+            "UPDATE onboard_steps SET status=?, done_by=?, done_at=?, error_msg=NULL,
+                    pandadoc_document_id=COALESCE(?, pandadoc_document_id)
              WHERE queue_id=? AND tool_key=?"
         );
-        $upd->execute([$agent['email'], $now, $queueId, $toolKey]);
+        $upd->execute([$successStatus, $agent['email'], $now, $result['document_id'] ?? null, $queueId, $toolKey]);
     } else {
         $errMsg = $result['error'] ?? 'Unknown error';
         $upd = $pdo->prepare(
-            "UPDATE onboard_steps SET status='failed', done_by=NULL, done_at=NULL, error_msg=?
+            "UPDATE onboard_steps SET status='failed', done_by=NULL, done_at=NULL, error_msg=?,
+                    pandadoc_document_id=COALESCE(?, pandadoc_document_id)
              WHERE queue_id=? AND tool_key=?"
         );
-        $upd->execute([$errMsg, $queueId, $toolKey]);
+        $upd->execute([$errMsg, $result['document_id'] ?? null, $queueId, $toolKey]);
         json_out(['ok'=>false,'error'=>$errMsg]);
     }
 

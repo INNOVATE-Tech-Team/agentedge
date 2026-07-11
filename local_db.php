@@ -151,6 +151,11 @@ function local_db(): PDO {
     )");
     // Migration: tracks whether the "your step is ready" email has already gone out
     try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN notified_at TEXT"); } catch (\Exception $e) {}
+    // Migration: PandaDoc document id for the doc_signing step, so the signing
+    // webhook can map a completed document back to the right step (also lets a
+    // failed send retry resume the same document instead of creating a duplicate).
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN pandadoc_document_id TEXT"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_onboard_steps_pandadoc_doc ON onboard_steps(pandadoc_document_id)");
 
     // Offboarding queue — one row per agent being offboarded
     $pdo->exec("CREATE TABLE IF NOT EXISTS offboard_queue (
@@ -213,6 +218,7 @@ function local_db(): PDO {
     $seedSteps = [
         ['onboard','agentedge',      'AgentEdge Account',   'Created when added to queue',              0, 10],
         ['onboard','intranet',       'Company Intranet',    'Add user in everythinginnovate.com',       0, 20],
+        ['onboard','doc_signing',    'Document Signing',    'Sent via PandaDoc — auto-completes once signed', 1, 25],
         ['onboard','fub',            'Follow Up Boss',      'Auto-provision via API',                   1, 30],
         ['onboard','constellation1', 'Constellation1',      'Auto-provision via API',                   1, 40],
         ['onboard','dotloop',        'DotLoop',              'Add manually in DotLoop admin',           0, 50],
