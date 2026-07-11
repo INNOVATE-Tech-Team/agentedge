@@ -64,6 +64,24 @@ foreach (local_db()->query("SELECT agent_email, COUNT(*) as cnt FROM agent_intak
     $hsCount[strtolower($r['agent_email'])] = (int)$r['cnt'];
 }
 
+// Most recently uploaded headshot per agent, used as their displayed photo.
+$hsLatest = [];
+foreach (local_db()->query(
+    "SELECT agent_email, file_key FROM agent_intake_files
+     WHERE id IN (SELECT MAX(id) FROM agent_intake_files GROUP BY agent_email)"
+)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+    $hsLatest[strtolower($r['agent_email'])] = $r['file_key'];
+}
+
+function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): string {
+    if ($headshotKey) {
+        return '<img class="' . $sizeClass . '-img" src="api/intake.php?action=headshot&key=' . urlencode($headshotKey) . '" alt="">';
+    }
+    $initials = '';
+    foreach (preg_split('/\s+/', trim($name ?: '?')) as $part) { if ($part !== '') $initials .= mb_strtoupper(mb_substr($part, 0, 1)); }
+    return '<span class="' . $sizeClass . '-fallback">' . htmlspecialchars(mb_substr($initials ?: '?', 0, 2)) . '</span>';
+}
+
 $submittedCount = count(array_filter($intakeAgents, fn($a) => !empty($a['submitted'])));
 $draftCount = count($intakeAgents) - $submittedCount;
 $totalWithForms = count($intakeAgents);
@@ -101,6 +119,10 @@ $pendingCount = count($pendingAgents);
 .st-submitted{background:#e8f5e9;color:#2e7d32}
 .st-draft{background:#fff3e0;color:#c87800}
 .st-pending{background:#f0f0f0;color:#888}
+.row-avatar-img{width:24px;height:24px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:1px solid var(--border)}
+.row-avatar-fallback{width:24px;height:24px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;margin-right:8px}
+.detail-avatar-img{width:52px;height:52px;border-radius:50%;object-fit:cover;border:1px solid var(--border)}
+.detail-avatar-fallback{width:52px;height:52px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center}
 .detail-row td{padding:14px 18px;background:#f8fdf4!important;border-bottom:2px solid var(--border)}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px}
 .detail-grid.full{grid-template-columns:1fr}
@@ -210,7 +232,7 @@ $pendingCount = count($pendingAgents);
           <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>"
               data-search="<?= h(strtolower($a['full_name'] . ' ' . $a['email'] . ' ' . $a['office_location'])) ?>">
             <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this)">&#9658;</button></td>
-            <td><strong><?= h($a['full_name'] ?: '—') ?></strong></td>
+            <td><?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'row-avatar') ?><strong><?= h($a['full_name'] ?: '—') ?></strong></td>
             <td><?= h($a['email']) ?></td>
             <td><?= h($a['office_location'] ?: '—') ?></td>
             <td><?= h($a['phone'] ?: '—') ?></td>
@@ -327,12 +349,15 @@ $pendingCount = count($pendingAgents);
                   <?php endif; ?>
                 </div>
 
-                <?php if ($hs > 0): ?>
-                <div class="dg-section">Headshots</div>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <span class="dg-value"><?= $hs ?> headshot<?= $hs !== 1 ? 's' : '' ?> on file — <a href="intake.php" target="_blank" style="color:var(--green-d)">view in intake form</a></span>
+                <div class="dg-section">Photo</div>
+                <div class="dg-field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:10px">
+                  <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
+                  <?php if ($hs > 0): ?>
+                    <span class="dg-value"><?= $hs ?> headshot<?= $hs !== 1 ? 's' : '' ?> on file — <a href="intake.php" target="_blank" style="color:var(--green-d)">view in intake form</a></span>
+                  <?php else: ?>
+                    <span class="dg-value empty">No headshot uploaded yet</span>
+                  <?php endif; ?>
                 </div>
-                <?php endif; ?>
 
                 <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
                 <div class="dg-field">
