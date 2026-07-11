@@ -74,26 +74,64 @@ try {
     }
 } catch (\Exception $e) {}
 
-function buildTree(string $id, array &$nodes, array &$children, int $depth): ?array {
+// Offboarded agents (agent_admin.terminated_date set) leave a "void" in the
+// tree rather than being reassigned: if they have no downline they're pruned
+// out entirely (see pruneVacant()), and if they do have a downline they're
+// kept as a placeholder node ('vacant'=true) so the recruits under them stay
+// exactly where they were instead of being bumped to a new sponsor.
+$terminated = [];
+try {
+    $termRows = local_db()->query(
+        "SELECT email FROM agent_admin WHERE terminated_date <> ''"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($termRows as $r) {
+        $tid = $emailToId[strtolower(trim($r['email']))] ?? null;
+        if ($tid !== null) $terminated[$tid] = true;
+    }
+} catch (\Exception $e) {}
+
+function buildTree(string $id, array &$nodes, array &$children, array &$terminated, int $depth): ?array {
     if ($depth > 6 || !isset($nodes[$id])) return null;
     $node = $nodes[$id];
+    $node['terminated'] = !empty($terminated[$id]);
     $node['children'] = [];
     foreach ($children[$id] ?? [] as $childId) {
-        $child = buildTree($childId, $nodes, $children, $depth + 1);
+        $child = buildTree($childId, $nodes, $children, $terminated, $depth + 1);
         if ($child !== null) $node['children'][] = $child;
     }
     usort($node['children'], fn($a, $b) => $b['volume'] <=> $a['volume']);
     return $node;
 }
+// Post-order: drop terminated agents with no downline entirely; terminated
+// agents who still have a downline become a 'vacant' placeholder so their
+// recruits stay in place. The tree's own root is always kept (there's
+// nothing to fall back to render otherwise), just marked vacant if applicable.
+function pruneVacant(array $node, bool $isRoot = false): ?array {
+    $kids = [];
+    foreach ($node['children'] as $c) {
+        $pruned = pruneVacant($c, false);
+        if ($pruned !== null) $kids[] = $pruned;
+    }
+    $node['children'] = $kids;
+    if (!empty($node['terminated'])) {
+        if (empty($kids) && !$isRoot) return null;
+        $node['vacant'] = true;
+    }
+    return $node;
+}
 function countTree(array $node): int {
-    $n = 1;
+    $n = !empty($node['vacant']) ? 0 : 1;
     foreach ($node['children'] as $c) $n += countTree($c);
     return $n;
 }
 
-$tree      = buildTree($rootId, $nodes, $children, 0);
-$total     = $tree ? countTree($tree) - 1 : 0;
-$sponsorId = $parents[$rootId] ?? '';
-$sponsor   = ($sponsorId !== '' && $sponsorId !== '0' && isset($nodes[$sponsorId])) ? $nodes[$sponsorId] : null;
+$tree = buildTree($rootId, $nodes, $children, $terminated, 0);
+if ($tree) $tree = pruneVacant($tree, true);
+
+$rootCounts = ($tree && !empty($tree['vacant'])) ? 0 : 1;
+$total      = $tree ? countTree($tree) - $rootCounts : 0;
+$sponsorId  = $parents[$rootId] ?? '';
+$sponsor    = ($sponsorId !== '' && $sponsorId !== '0' && isset($nodes[$sponsorId])) ? $nodes[$sponsorId] : null;
+if ($sponsor) $sponsor['vacant'] = !empty($terminated[$sponsorId]);
 
 echo json_encode(['tree' => $tree, 'totalCount' => $total, 'sponsor' => $sponsor]);

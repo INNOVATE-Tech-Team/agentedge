@@ -3,7 +3,8 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!can_post_announcements()) { header('Location: index.php'); exit; }
+$isAdmin = is_admin();
 ?>
 <!doctype html>
 <html lang="en">
@@ -11,6 +12,7 @@ if (!is_admin()) { header('Location: index.php'); exit; }
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Industry Events — Back Office — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .evt-form { background:#f9fdf5; border:1px solid #d4edab; border-radius:10px; padding:20px 24px; margin-bottom:24px; }
@@ -110,9 +112,13 @@ if (!is_admin()) { header('Location: index.php'); exit; }
           </div>
 
           <div style="display:flex; align-items:center; gap:16px">
+            <?php if ($isAdmin): ?>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
               <input type="checkbox" id="ev-featured"> <span>★ Featured</span>
             </label>
+            <?php else: ?>
+            <input type="hidden" id="ev-featured" value="0">
+            <?php endif; ?>
             <button class="btn-primary" onclick="saveEvent()">Save Event</button>
             <button class="btn-sm btn-edit" id="cancel-edit" style="display:none" onclick="cancelEdit()">Cancel</button>
           </div>
@@ -138,6 +144,8 @@ if (!is_admin()) { header('Location: index.php'); exit; }
 </div>
 
 <script>
+var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
+var MY_EMAIL  = <?= json_encode(strtolower($agent['email'] ?? '')) ?>;
 var items = [];
 var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var CAT_LABELS = {
@@ -178,8 +186,8 @@ function render() {
       + '<td style="white-space:nowrap">' + esc(dateStr) + '</td>'
       + '<td>' + esc(e.location||'—') + '</td>'
       + '<td style="text-align:right;white-space:nowrap">'
-      + '<button class="btn-sm btn-edit" style="margin-right:6px" onclick="editEvent(' + e.id + ')">Edit</button>'
-      + '<button class="btn-sm btn-delete" onclick="deleteEvent(' + e.id + ')">Delete</button>'
+      + (IS_ADMIN || (e.created_by||'').toLowerCase()===MY_EMAIL ? '<button class="btn-sm btn-edit" style="margin-right:6px" onclick="editEvent(' + e.id + ')">Edit</button>' : '')
+      + (IS_ADMIN || (e.created_by||'').toLowerCase()===MY_EMAIL ? '<button class="btn-sm btn-delete" onclick="deleteEvent(' + e.id + ')">Delete</button>' : '')
       + '</td>'
       + '</tr>';
   }).join('');

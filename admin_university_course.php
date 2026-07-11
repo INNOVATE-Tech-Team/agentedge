@@ -32,6 +32,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= $pageTitle ?> — University Admin</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <link rel="stylesheet" href="https://cdn.quilljs.com/1.3.7/quill.snow.css">
   <style>

@@ -23,6 +23,7 @@ $params = http_build_query([
     'response_type' => 'code',
     'client_id'     => $clientId,
     'redirect_uri'  => $redirectUri,
+    
     'state'         => $state,
 ]);
 

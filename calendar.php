@@ -44,32 +44,14 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
               <button class="btn-cal-nav" id="cal-next">&#8594;</button>
             </div>
           </div>
-          <!-- My Calendar tab — ICS sync UI, shown/hidden by JS -->
+          <!-- Personal calendar sync bar — shown when "My Calendar" tab active; opens the connect modal -->
+          <div id="cal-personal-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+            <span style="font-size:12px;color:#888" id="cal-personal-status">Loading…</span>
+            <button class="cal-rsvp-btn" onclick="openPersonalCalModal()" style="margin-left:auto">&#128197; Sync Calendar URL</button>
+          </div>
+          <!-- My Calendar tab — outbound: subscribe to company calendar -->
           <div id="cal-mycal-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:14px;padding:12px 14px;background:#f8f8f8;border:1px solid #eee;border-radius:8px">
-            <div id="cal-mycal-connected" style="display:none">
-              <div style="font-size:13px;color:#444;margin-bottom:8px">
-                <strong>Calendar connected.</strong> Your personal events appear in pink below.
-              </div>
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                <button id="cal-mycal-change-btn" class="cal-rsvp-btn" style="font-size:12px">Change URL</button>
-                <button id="cal-mycal-remove-btn" style="font-size:12px;padding:5px 10px;border:1px solid #fcc;background:white;border-radius:4px;cursor:pointer;color:#c00">Disconnect</button>
-              </div>
-            </div>
-            <div id="cal-mycal-setup">
-              <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px">Connect your personal calendar</div>
-              <div style="font-size:12px;color:#666;margin-bottom:10px">
-                Paste your Google Calendar, Apple Calendar, or Outlook <strong>ICS link</strong>.<br>
-                <span style="color:#999">Google: Settings → [Your calendar] → "Secret address in iCal format"</span>
-              </div>
-              <div style="display:flex;gap:8px;align-items:center">
-                <input type="url" id="cal-mycal-url" placeholder="https://calendar.google.com/calendar/ical/…"
-                       style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px;min-width:0">
-                <button id="cal-mycal-save-btn" class="cal-rsvp-btn cal-rsvp-active" style="white-space:nowrap">Connect</button>
-              </div>
-              <div id="cal-mycal-msg" style="font-size:12px;margin-top:6px"></div>
-            </div>
-            <!-- Outbound: subscribe to company calendar -->
-            <div id="cal-mycal-export" style="border-top:1px solid #e8e8e8;padding-top:10px;margin-top:2px">
+            <div id="cal-mycal-export">
               <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:3px">Add company events to your calendar</div>
               <div style="font-size:12px;color:#666;margin-bottom:8px">
                 Copy this URL and subscribe in Google Calendar, Apple Calendar, or Outlook.<br>
@@ -232,7 +214,70 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
   </div>
   <?php endif; ?>
 
+  <!-- Personal calendar sync modal -->
+  <div id="pc-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:10px;width:min(480px,95vw);padding:26px;position:relative">
+      <button onclick="closePersonalCalModal()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#888">&times;</button>
+      <h3 style="margin:0 0 6px;font-size:16px;font-weight:800">Sync Your Personal Calendar</h3>
+      <p style="margin:0 0 16px;font-size:13px;color:#666">Paste your calendar's secret ICS link below. Your personal events will appear on the <strong>My Calendar</strong> tab.</p>
+      <div style="background:#f8fdf2;border:1px solid #d4edab;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#555;line-height:1.6">
+        <strong style="color:#3a6b1a">How to get your ICS URL:</strong><br>
+        <strong>Google Calendar:</strong> Settings (⚙) → click a calendar → Integrate calendar → copy <em>Secret address in iCal format</em><br>
+        <strong>Apple Calendar:</strong> Right-click a calendar → Share Calendar → Public Calendar → copy the webcal:// URL (change webcal:// to https://)<br>
+        <strong>Outlook:</strong> Calendar settings → Shared calendars → Publish a calendar → copy the ICS link
+      </div>
+      <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:5px">ICS Calendar URL</label>
+      <input id="pc-url-input" type="url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+        style="width:100%;padding:9px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;margin-bottom:6px">
+      <p id="pc-url-note" style="margin:0 0 14px;font-size:11px;color:#aaa">Leave blank to remove the sync.</p>
+      <div id="pc-modal-err" style="display:none;color:#c0392b;font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="savePersonalCalUrl()" style="padding:9px 22px;background:#82C112;color:#000;border:none;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer">Save</button>
+        <button onclick="closePersonalCalModal()" style="padding:9px 14px;border:1px solid #ccc;background:#fff;color:#555;font-size:13px;border-radius:6px;cursor:pointer">Cancel</button>
+        <span id="pc-modal-msg" style="font-size:12px;color:#5b8e0d;align-self:center;margin-left:6px"></span>
+      </div>
+    </div>
+  </div>
   <script>const CAL_IS_ADMIN = <?= $is_admin ? 'true' : 'false' ?>;</script>
   <script src="assets/calendar.js"></script>
+  <script>
+  function openPersonalCalModal(){
+    fetch('api/personal_cal.php?month='+new Date().getFullYear()+'-01',{credentials:'same-origin'})
+      .then(r=>r.json()).then(d=>{
+        document.getElementById('pc-url-input').value=d.has_url?'(saved — paste a new URL to change or leave blank to remove)':'';
+        document.getElementById('pc-modal-err').style.display='none';
+        document.getElementById('pc-modal-msg').textContent='';
+      }).catch(()=>{});
+    document.getElementById('pc-modal-overlay').style.display='flex';
+  }
+  function closePersonalCalModal(){
+    document.getElementById('pc-modal-overlay').style.display='none';
+  }
+  function savePersonalCalUrl(){
+    const url=document.getElementById('pc-url-input').value.trim();
+    const err=document.getElementById('pc-modal-err');
+    const msg=document.getElementById('pc-modal-msg');
+    if(url&&!url.startsWith('https://')){
+      err.textContent='URL must start with https://';err.style.display='';return;
+    }
+    const saveUrl=url.startsWith('(saved')?'':url;
+    fetch('api/personal_cal.php',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url:saveUrl}),
+    }).then(r=>r.json()).then(d=>{
+      if(d.ok){
+        msg.textContent='Saved!';
+        setTimeout(()=>{
+          closePersonalCalModal();
+          if(typeof calDraw==='function') calDraw();
+        },800);
+      } else { err.textContent=d.error||'Save failed'; err.style.display=''; }
+    }).catch(()=>{err.textContent='Network error';err.style.display='';});
+  }
+  document.getElementById('pc-modal-overlay').addEventListener('click',function(e){
+    if(e.target===this)closePersonalCalModal();
+  });
+  </script>
 </body>
 </html>

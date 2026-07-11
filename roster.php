@@ -3,33 +3,56 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
+require_once __DIR__ . '/local_db.php';
 $agent = require_login();
 
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
-// MC options for the role modal (same list admin_roles.php uses)
-$c     = cfg();
-$base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-$token = $c['crm_token'] ?? '';
-$url   = $base . '/public/retention-roster' . ($token ? '?token=' . urlencode($token) : '');
-$ctx   = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
-$raw   = @file_get_contents($url, false, $ctx);
-$roster = ($raw !== false) ? (json_decode($raw, true) ?? []) : [];
-
+// MC options — from market_centers master list (admin-managed in backoffice).
+// Falls back to innovate_roster distinct values for any orphaned MCs not yet in master list.
 $mc_opts = [];
-foreach ($roster as $a) {
-    $mc   = $a['marketCenter'] ?? '';
-    if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
-    $slug = slugify_mc($mc);
-    if ($mc && $slug && !isset($mc_opts[$slug])) $mc_opts[$slug] = $mc;
-}
+try {
+    $mcRows = local_db()->query(
+        "SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($mcRows as $mr) {
+        $slug  = trim($mr['slug']);
+        $mc    = trim($mr['name']);
+        $st    = trim($mr['state_code']);
+        $label = $st ? "$st - $mc" : $mc;
+        if ($slug && !isset($mc_opts[$slug])) $mc_opts[$slug] = $label;
+    }
+    // Also include any MC values in innovate_roster not covered by the master list
+    $rosterMCs = local_db()->query(
+        "SELECT DISTINCT state_code, market_center FROM innovate_roster WHERE active=1 AND market_center != '' ORDER BY market_center"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $masterNames = array_map('strtolower', array_column($mcRows, 'name'));
+    foreach ($rosterMCs as $mr) {
+        $mc = trim($mr['market_center']);
+        $st = trim($mr['state_code']);
+        if (!in_array(strtolower($mc), $masterNames, true)) {
+            $label = $st ? "$st - $mc" : $mc;
+            $slug  = slugify_mc($label);
+            if ($slug && !isset($mc_opts[$slug])) $mc_opts[$slug] = $label;
+        }
+    }
+} catch (Exception $e) {}
 ksort($mc_opts);
 
-// Current assigned roles — keyed by lowercase email
-$roleRows  = local_db()->query("SELECT email, role, mc_slugs FROM agent_roles")->fetchAll(PDO::FETCH_ASSOC);
+// Current assigned roles — keyed by lowercase email. all_roles includes extra_roles_json.
+$roleRows  = local_db()->query("SELECT email, role, mc_slugs, extra_roles_json FROM agent_roles")->fetchAll(PDO::FETCH_ASSOC);
 $roleByEmail = [];
-foreach ($roleRows as $r) $roleByEmail[strtolower($r['email'])] = $r;
+foreach ($roleRows as $r) {
+    $extra    = json_decode($r['extra_roles_json'] ?? '[]', true) ?: [];
+    $allRoles = [$r['role']];
+    foreach ($extra as $er) {
+        $er = $er['role'] ?? '';
+        if ($er && $er !== 'agent' && !in_array($er, $allRoles, true)) $allRoles[] = $er;
+    }
+    $r['all_roles'] = $allRoles;
+    $roleByEmail[strtolower($r['email'])] = $r;
+}
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 ?>
@@ -39,6 +62,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent Roster — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .btn-assign{padding:4px 10px;border:1px solid #c3dfa8;background:#eef5e8;color:#3a6b1a;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em}
@@ -67,13 +91,14 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .rm-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;line-height:1;color:#888}
   </style>
   <script>
-    const IS_ADMIN      = <?= json_encode(is_leader()) ?>;
+    const IS_ADMIN       = <?= json_encode(is_leader()) ?>;
     const IS_SUPER_ADMIN = <?= json_encode(is_super_admin()) ?>;
-    const CSRF          = <?= json_encode($csrf) ?>;
+    const IS_RECRUITER   = <?= json_encode(is_recruiter()) ?>;
+    const CSRF           = <?= json_encode($csrf) ?>;
     const MC_OPTS       = <?= json_encode($mc_opts) ?>;
     const ROLE_BY_EMAIL = <?= json_encode($roleByEmail) ?>;
     const ROLE_LABELS   = {
-      super_admin: 'Super Admin', staff: 'Staff',
+      super_admin: 'Super Admin', staff: 'Staff', recruiter: 'Recruiter',
       bic: 'Broker in Charge', mc_leader: 'MC Leader', agent: 'Agent'
     };
   </script>
@@ -100,7 +125,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
               <th data-sort="marketCenter">Market Center</th>
               <th data-sort="email">Contact</th>
               <th class="no-sort">Social</th>
-              <?php if (is_leader()): ?><th class="no-sort">Actions</th><?php endif; ?>
+              <?php if (is_leader() || is_recruiter()): ?><th class="no-sort">Actions</th><?php endif; ?>
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
@@ -123,6 +148,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <select name="role" id="rm-role" class="rm-select" onchange="rmToggleMc(this.value)">
           <option value="super_admin">Super Admin</option>
           <option value="staff">Staff</option>
+          <option value="recruiter">Recruiter</option>
           <option value="bic">Broker in Charge</option>
           <option value="mc_leader">Market Center Leader</option>
           <option value="agent">Agent (no special role)</option>

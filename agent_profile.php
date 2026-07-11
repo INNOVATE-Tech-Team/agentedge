@@ -44,6 +44,7 @@ $canEditPermissions = is_super_admin();
 $profileData = $targetEmail !== '' ? load_agent_profile($targetEmail) : null;
 $extraLicenses = $targetEmail !== '' ? load_agent_additional_licenses($targetEmail) : [];
 $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) : 0;
+$headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
 $queueStatus   = $targetEmail !== '' ? load_agent_queue_status($targetEmail) : ['onboarding' => null, 'offboarding' => null];
 
 $notes = [];
@@ -98,6 +99,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .em-check label{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;font-weight:600;color:var(--ink)}
 .em-check input{width:auto!important}
 .stub-pane{padding:40px;text-align:center;color:var(--faint);font-size:13px}
+.ap-header-row{display:flex;align-items:center;gap:14px}
+.ap-avatar-img{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border)}
+.ap-avatar-fallback{width:52px;height:52px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.doc-list{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.doc-card{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:#fafbfa}
+.doc-icon{font-size:18px;flex-shrink:0}
+.doc-info{flex:1;min-width:0}
+.doc-name{font-size:13px;font-weight:700;color:var(--ink)}
+.doc-meta{font-size:11px;color:var(--faint)}
+.doc-actions{display:flex;gap:6px;flex-shrink:0}
+.upload-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
 .notes-list{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 .note-card{border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:#fafbfa}
 .note-meta{font-size:11px;color:var(--faint);margin-bottom:4px}
@@ -167,9 +179,20 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 <?php render_sidebar('backoffice_agents', $agent); ?>
 <div class="content">
   <div class="content-top">
-    <div>
-      <div class="bo-eyebrow">Agent</div>
-      <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?></div>
+    <div class="ap-header-row">
+      <?php if ($headshotKey): ?>
+        <img class="ap-avatar-img" src="api/intake.php?action=headshot&key=<?= urlencode($headshotKey) ?>" alt="">
+      <?php else: ?>
+        <div class="ap-avatar-fallback"><?php
+          $initials = '';
+          foreach (preg_split('/\s+/', trim($displayName ?: '?')) as $part) { if ($part !== '') $initials .= mb_strtoupper(mb_substr($part, 0, 1)); }
+          echo h(mb_substr($initials ?: '?', 0, 2));
+        ?></div>
+      <?php endif; ?>
+      <div>
+        <div class="bo-eyebrow">Agent</div>
+        <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?></div>
+      </div>
     </div>
     <a href="backoffice_agents.php" class="btn-detail-link">← Back to Agent Profiles</a>
   </div>
@@ -372,9 +395,16 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
       </div>
     </div>
 
-    <!-- ── DOCUMENTS (stub) ──────────────────────────────────────────────── -->
+    <!-- ── DOCUMENTS ──────────────────────────────────────────────────────── -->
     <div id="ap-tab-documents" class="ap-tab-pane<?= $tab === 'documents' ? ' active' : '' ?>">
-      <div class="card"><div class="stub-pane">This section is pending Vault schema changes to scope documents by agent.</div></div>
+      <div class="card" style="padding:20px 24px">
+        <div class="upload-row">
+          <input type="file" id="doc-upload-file">
+          <button type="button" class="btn-detail-link" onclick="uploadDocument()">Upload</button>
+          <span id="doc-upload-msg" style="font-size:11px;color:var(--faint)"></span>
+        </div>
+        <div class="doc-list" id="doc-list"><div class="stub-pane">Loading…</div></div>
+      </div>
     </div>
 
     <!-- ── COMMISSION PLAN & FEES (stub) ─────────────────────────────────── -->
@@ -588,6 +618,7 @@ const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
 let networkLoaded = false;
 let permissionLoaded = false;
+let documentsLoaded = false;
 
 window.switchApTab = function (t) {
   document.querySelectorAll('.ap-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
@@ -595,6 +626,78 @@ window.switchApTab = function (t) {
   history.replaceState(null, '', 'agent_profile.php?email=' + encodeURIComponent(PROFILE_EMAIL) + '&tab=' + t);
   if (t === 'network' && !networkLoaded) { networkLoaded = true; loadNetworkTree(); }
   if (t === 'permission' && CAN_EDIT_PERMISSIONS && !permissionLoaded) { permissionLoaded = true; loadPermissionTab(); }
+  if (t === 'documents' && !documentsLoaded) { documentsLoaded = true; loadDocuments(); }
+};
+
+// ── Documents tab ────────────────────────────────────────────────────────────
+function fmtBytes(n) {
+  n = parseInt(n || 0, 10);
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+window.loadDocuments = function () {
+  var list = document.getElementById('doc-list');
+  list.innerHTML = '<div class="stub-pane">Loading…</div>';
+  fetch('api/agent_documents.php?email=' + encodeURIComponent(PROFILE_EMAIL), { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (!res.ok) { list.innerHTML = '<div class="stub-pane">' + (res.error || 'Failed to load documents.') + '</div>'; return; }
+      var docs = res.documents || [];
+      if (!docs.length) { list.innerHTML = '<div class="stub-pane">No documents on file.</div>'; return; }
+      list.innerHTML = docs.map(function (d) {
+        var srcLabel = d.source === 'pandadoc' ? 'Signed via PandaDoc' : 'Uploaded by ' + (d.uploaded_by || 'admin');
+        return '<div class="doc-card">' +
+          '<span class="doc-icon">📄</span>' +
+          '<div class="doc-info">' +
+            '<div class="doc-name">' + esc(d.name) + '</div>' +
+            '<div class="doc-meta">' + esc(srcLabel) + ' · ' + esc(fmtBytes(d.size_bytes)) + ' · ' + esc(d.created_at) + '</div>' +
+          '</div>' +
+          '<div class="doc-actions">' +
+            '<a class="btn-detail-link" href="api/agent_documents.php?action=download&key=' + encodeURIComponent(d.storage_key) + '" target="_blank">View</a>' +
+            '<button type="button" class="btn-detail-link" onclick="deleteDocument(\'' + d.storage_key + '\', this)">Delete</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    })
+    .catch(function () { list.innerHTML = '<div class="stub-pane">Network error.</div>'; });
+};
+
+window.uploadDocument = function () {
+  var fileInput = document.getElementById('doc-upload-file');
+  var msg = document.getElementById('doc-upload-msg');
+  var file = fileInput.files[0];
+  if (!file) { msg.textContent = 'Choose a file first.'; return; }
+  var fd = new FormData();
+  fd.append('email', PROFILE_EMAIL);
+  fd.append('file', file);
+  msg.textContent = 'Uploading…';
+  fetch('api/agent_documents.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (!res.ok) { msg.textContent = res.error || 'Upload failed.'; return; }
+      msg.textContent = 'Uploaded ✓';
+      fileInput.value = '';
+      setTimeout(function () { msg.textContent = ''; }, 3000);
+      loadDocuments();
+    })
+    .catch(function () { msg.textContent = 'Network error.'; });
+};
+
+window.deleteDocument = function (key, btn) {
+  if (!confirm('Delete this document?')) return;
+  btn.disabled = true;
+  fetch('api/agent_documents.php?action=delete', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: key })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (res.ok) { loadDocuments(); } else { btn.disabled = false; alert(res.error || 'Delete failed.'); }
+    })
+    .catch(function () { btn.disabled = false; alert('Network error.'); });
 };
 
 // ── Tax ID reveal ────────────────────────────────────────────────────────────

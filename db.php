@@ -16,9 +16,6 @@ function cfg(): array {
 }
 
 // --- Mode helpers -----------------------------------------------------------
-// demo_login(): any-password preview login (only when no real auth is set up).
-// writes_enabled(): can we save profile edits / create agents? (real auth only)
-// sample_dashboard(): show sample tiles/cap instead of querying a local DB.
 function demo_login(): bool {
     $c = cfg();
     return empty($c['auth_bridge_url']) && !empty($c['demo']);
@@ -31,9 +28,6 @@ function sample_dashboard(): bool {
     return !empty($c['sample_dashboard']) || demo_login();
 }
 
-// Some people log in with a different email than their CRM roster record uses
-// (e.g. a Perfex login that differs from the agent record). Map login -> record
-// email in config 'email_aliases'. Returns the lowercased record email to match.
 function record_email(string $login_email): string {
     $aliases = cfg()['email_aliases'] ?? [];
     $e = strtolower(trim($login_email));
@@ -57,8 +51,7 @@ function db(): mysqli {
     return $m;
 }
 
-// Run a prepared SELECT and return all rows (assoc). Params bind as strings —
-// MySQL coerces them fine for our integer keys.
+// Run a prepared SELECT and return all rows (assoc).
 function db_query(string $sql, array $params = []): array {
     $stmt = db()->prepare($sql);
     if (!$stmt) return [];
@@ -75,4 +68,27 @@ function db_query(string $sql, array $params = []): array {
 function db_one(string $sql, array $params = []): ?array {
     $rows = db_query($sql, $params);
     return $rows[0] ?? null;
+}
+
+// --- Dotloop write DB (PDO to innovate_dotloop on dotloopapi-db) -----------
+// Used only by dotloop API files (token storage). Separate from Perfex read DB.
+function db_rw(): PDO {
+    static $pdo = null;
+    if ($pdo === null) {
+        $c = cfg();
+        $host = $c['db_rw_host'] ?? $c['db_host'];
+        $name = $c['db_rw_name'] ?? $c['db_name'];
+        $user = $c['db_rw_user'] ?? $c['db_user'];
+        $pass = $c['db_rw_pass'] ?? $c['db_pass'];
+        $pdo = new PDO("mysql:host=$host;dbname=$name;charset=utf8mb4", $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+    }
+    return $pdo;
+}
+
+function db_exec(string $sql, array $params = []): void {
+    $st = db_rw()->prepare($sql);
+    $st->execute($params);
 }

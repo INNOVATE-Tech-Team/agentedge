@@ -49,6 +49,25 @@ function load_agent_headshot_count(string $email): int {
     return (int)$st->fetchColumn();
 }
 
+// Most recently uploaded headshot, used as the displayed profile photo.
+function load_agent_latest_headshot(string $email): ?string {
+    $st = local_db()->prepare(
+        "SELECT file_key FROM agent_intake_files WHERE agent_email=? ORDER BY uploaded_at DESC LIMIT 1"
+    );
+    $st->execute([$email]);
+    $key = $st->fetchColumn();
+    return $key ?: null;
+}
+
+function load_agent_documents(string $email): array {
+    $st = local_db()->prepare(
+        "SELECT id, name, source, mime_type, size_bytes, storage_key, uploaded_by, created_at
+         FROM agent_documents WHERE email=? ORDER BY created_at DESC"
+    );
+    $st->execute([$email]);
+    return $st->fetchAll(PDO::FETCH_ASSOC);
+}
+
 // Most recent onboarding/offboarding queue row for this agent, if any —
 // backs the Task Checklist tab's lightweight status line + deep link.
 function load_agent_queue_status(string $email): array {

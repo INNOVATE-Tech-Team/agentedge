@@ -1,18 +1,26 @@
 <?php
 // Agent extra fields: birthday (MM-DD), hire_date (YYYY-MM-DD), license_renewal (MM-DD).
-// GET  → returns the signed-in agent's extra fields.
-// POST → saves them.
+// GET  → returns the signed-in agent's extra fields (admin: pass ?email= for another agent).
+// POST → saves them (admin: pass body.email to save for another agent).
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
-$email = $agent['email'] ?? '';
+$myEmail = strtolower(trim($agent['email'] ?? ''));
+$isAdmin = is_admin();
+$email   = $myEmail;
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    if (!empty($_GET['email'])) {
+        $requested = strtolower(trim($_GET['email']));
+        if (!$isAdmin && $requested !== $myEmail) { http_response_code(403); echo json_encode(['error' => 'forbidden']); exit; }
+        $email = $requested;
+    }
     $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal FROM agent_extra WHERE email = ?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -29,6 +37,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $in = json_decode(file_get_contents('php://input'), true) ?: [];
+
+if ($isAdmin && !empty($in['email'])) {
+    $email = strtolower(trim($in['email']));
+}
 
 // Validate and sanitize each field
 $birthday        = trim($in['birthday']        ?? '');
