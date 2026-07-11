@@ -911,6 +911,17 @@ function local_db(): PDO {
         $backfill->execute(['Regional Business Press','Providence Business News','Rhode Island business journal','Advertising@PBN.com (paid release/People-on-the-Move submission at pbn.com)','New market opening — Cranston, RI. Consider a paid release or People on the Move for the branch leader.',170,'RI','Providence Business News']);
     }
 
+
+    // Free-form staff notes about an agent, shown on the Agent Profile page's
+    // Notes tab (agent_profile.php).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_notes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        email      TEXT    NOT NULL,
+        note       TEXT    NOT NULL,
+        created_by TEXT    NOT NULL DEFAULT '',
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
     return $pdo;
 }
 
