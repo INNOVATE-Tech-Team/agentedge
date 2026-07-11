@@ -25,6 +25,7 @@ $courses = $db->query(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>University — AgentEdge Admin</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .admin-section{margin-bottom:28px}

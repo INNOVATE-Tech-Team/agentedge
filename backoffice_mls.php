@@ -182,7 +182,6 @@ $superAdmin = is_super_admin();
             <div class="check-group">
               <label class="check-item"><input type="checkbox" id="f-prod-idx" value="idx"> growwithinnovate.com (IDX)</label>
               <label class="check-item"><input type="checkbox" id="f-prod-crm" value="crm"> advantage.innovateonline.com (CRM)</label>
-              <label class="check-item"><input type="checkbox" id="f-prod-agent" value="agent"> darrenwoodard.com (Agent Site)</label>
             </div>
           </div>
         </div>
@@ -272,7 +271,7 @@ function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('
 
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
 const FEED_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark','Other':'Other'};
-const PROD_LABELS={idx:'growwithinnovate.com',crm:'advantage.innovateonline.com',agent:'darrenwoodard.com'};
+const PROD_LABELS={idx:'growwithinnovate.com',crm:'advantage.innovateonline.com'};
 
 let allRows = [];
 let viewId = null;
@@ -420,7 +419,7 @@ function openModal(id){
   });
   document.getElementById('f-status').value='researching';
   document.getElementById('f-feed-type').value='RETS';
-  ['f-prod-idx','f-prod-crm','f-prod-agent'].forEach(k=>document.getElementById(k).checked=false);
+  ['f-prod-idx','f-prod-crm'].forEach(k=>document.getElementById(k).checked=false);
 
   if(editing){
     const r=allRows.find(x=>x.id===id);
@@ -448,7 +447,6 @@ function openModal(id){
     const prods=(r.products||'').split(',').filter(Boolean);
     if(prods.includes('idx')) document.getElementById('f-prod-idx').checked=true;
     if(prods.includes('crm')) document.getElementById('f-prod-crm').checked=true;
-    if(prods.includes('agent')) document.getElementById('f-prod-agent').checked=true;
   }
   document.getElementById('mls-modal').classList.add('open');
 }
@@ -457,7 +455,7 @@ function closeModal(){document.getElementById('mls-modal').classList.remove('ope
 
 function saveMls(){
   const id = document.getElementById('f-id').value;
-  const prods = ['f-prod-idx','f-prod-crm','f-prod-agent']
+  const prods = ['f-prod-idx','f-prod-crm']
     .filter(k=>document.getElementById(k).checked)
     .map(k=>document.getElementById(k).value).join(',');
   const payload={

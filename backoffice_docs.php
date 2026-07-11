@@ -34,6 +34,7 @@ $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
     .vis-badge{display:inline-block;padding:1px 5px;font-size:9px;font-weight:700;border-radius:4px;margin-top:4px}
     .vis-all{background:#e8f5e9;color:#2e7d32}
     .vis-admin{background:#e8f0ff;color:#2255cc}
+    .vis-leaders{background:#fdf0e3;color:#a8720f}
     /* Modal */
     .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;align-items:center;justify-content:center}
     .modal-overlay.open{display:flex}
@@ -77,7 +78,7 @@ $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
     <h3>New Folder</h3>
     <div class="field"><label>Folder Name</label><input type="text" id="folder-name" placeholder="e.g. Training Materials"></div>
     <div class="field"><label>Visibility</label>
-      <select id="folder-vis"><option value="all">Everyone</option><option value="admin">Admin only</option></select>
+      <select id="folder-vis"><option value="all">Everyone</option><option value="leaders">Leaders &amp; Recruiters</option><option value="admin">Admin only</option></select>
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('folder-modal')">Cancel</button>
@@ -132,7 +133,8 @@ function renderBreadcrumb(bc){
   el.innerHTML=html;
 }
 
-function folderIcon(vis){return vis==='admin'?'🔒':'📁';}
+function folderIcon(vis){return vis==='admin'?'🔒':vis==='leaders'?'🧭':'📁';}
+function visLabel(vis){return vis==='admin'?'Admin':vis==='leaders'?'Leaders':'Public';}
 function fileIcon(mime){
   if(!mime)return'📄';
   if(mime.startsWith('image/'))return'🖼️';
@@ -152,7 +154,7 @@ function renderGrid(folders,files){
     html+=`<div class="doc-item folder" onclick="navigate(${f.id})">
       <div class="doc-icon">${folderIcon(f.visibility)}</div>
       <div class="doc-name">${esc(f.name)}</div>
-      <div><span class="vis-badge vis-${esc(f.visibility)}">${f.visibility==='all'?'Public':'Admin'}</span></div>
+      <div><span class="vis-badge vis-${esc(f.visibility)}">${visLabel(f.visibility)}</span></div>
       <div class="doc-actions">
         <button class="btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(${f.id},'${esc(f.name).replace("'","\\'")}')">Delete</button>
       </div>

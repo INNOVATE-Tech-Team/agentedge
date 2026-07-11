@@ -73,6 +73,7 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Open House Pool — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>

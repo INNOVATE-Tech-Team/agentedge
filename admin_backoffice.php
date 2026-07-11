@@ -17,7 +17,8 @@ $items = local_db()->query("SELECT * FROM backoffice_items ORDER BY sort_ord,id"
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Back Office Menu Builder — AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 .bo-eyebrow { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
 

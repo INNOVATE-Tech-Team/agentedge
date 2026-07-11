@@ -16,7 +16,8 @@ $pageTitle = 'Submit HUD &amp; Check';
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Submit HUD &amp; Check – INNOVATE AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 .hud-wrap        { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
 .hud-card        { background: var(--surface, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 12px; padding: 32px; }

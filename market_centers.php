@@ -73,6 +73,7 @@ function resolve_name(array $nameByEmail, string $email): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Market Centers — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .mc-search-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:24px}

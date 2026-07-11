@@ -4,6 +4,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/roster.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -30,19 +31,10 @@ if ($action === 'add') {
     if (!$name || !in_array($state, $validStates)) {
         echo json_encode(['ok'=>false,'error'=>'Name and valid state required']); exit;
     }
-    if ($exp && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp)) $exp = '';
 
-    $stmt = $db->prepare(
-        "INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp,active,added_at,added_by)
-         VALUES (?,?,?,?,1,datetime('now'),?)"
-    );
-    $stmt->execute([$name, $state, $mc, $exp, $by]);
-    $id = (int)$db->lastInsertId();
+    $result = add_or_reactivate_roster_agent($db, $name, $state, $mc, $exp, null, $by);
 
-    $db->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
-       ->execute([$name, $state, $mc, $exp, 'added', $by]);
-
-    echo json_encode(['ok'=>true, 'id'=>$id, 'agent_name'=>$name, 'state_code'=>$state, 'market_center'=>$mc, 'license_exp'=>$exp]);
+    echo json_encode(['ok'=>true, 'id'=>$result['id'], 'agent_name'=>$name, 'state_code'=>$state, 'market_center'=>$mc, 'license_exp'=>$exp]);
     exit;
 }
 
@@ -60,7 +52,41 @@ if ($action === 'remove') {
     $db->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
        ->execute([$row['agent_name'], $row['state_code'], $row['market_center'], $row['license_exp'], 'removed', $by]);
 
-    echo json_encode(['ok'=>true]);
+    // Every roster removal starts offboarding — deprovisioning steps get tracked
+    // in the queue instead of the agent just vanishing from the roster.
+    $obId = null;
+    try {
+        require_once __DIR__ . '/../offboard_tools.php';
+        $obEmail = $row['email'] ?? '';
+        $existing = $obEmail !== ''
+            ? $db->prepare("SELECT id FROM offboard_queue WHERE agent_email=? AND status='active' LIMIT 1")
+            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND agent_name=? AND status='active' LIMIT 1");
+        $existing->execute([$obEmail !== '' ? $obEmail : $row['agent_name']]);
+        $obId = $existing->fetchColumn();
+
+        if (!$obId) {
+            $now = date('Y-m-d H:i:s');
+            $db->prepare(
+                "INSERT INTO offboard_queue (agent_email, agent_name, market_center, reason_notes, added_by, added_at)
+                 VALUES (?,?,?,?,?,?)"
+            )->execute([$obEmail, $row['agent_name'], $row['market_center'], 'Started automatically when removed from the roster.', $by, $now]);
+            $obId = (int)$db->lastInsertId();
+
+            $stepIns = $db->prepare(
+                "INSERT OR IGNORE INTO offboard_steps (queue_id, tool_key, tool_label, is_auto, status)
+                 VALUES (?,?,?,?,?)"
+            );
+            foreach (offboard_tools() as $t) {
+                $stepIns->execute([$obId, $t['key'], $t['label'], $t['is_auto'] ? 1 : 0, 'pending']);
+            }
+
+            require_once __DIR__ . '/../lib/notifications.php';
+            notify_offboard_added($row['agent_name'], $obEmail, $row['market_center'] ?? '', '', 'voluntary', 'Started automatically when removed from the roster.', $by);
+            dispatch_notification_queue();
+        }
+    } catch (\Throwable $e) {}
+
+    echo json_encode(['ok'=>true, 'offboard_id'=>$obId]);
     exit;
 }
 
@@ -77,6 +103,19 @@ if ($action === 'restore') {
 
     $db->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
        ->execute([$row['agent_name'], $row['state_code'], $row['market_center'], $row['license_exp'], 'restored', $by]);
+
+    // Close out any in-flight offboarding for this agent too.
+    try {
+        $obEmail = $row['email'] ?? '';
+        $obq = $obEmail !== ''
+            ? $db->prepare("SELECT id FROM offboard_queue WHERE agent_email=? AND status='active' LIMIT 1")
+            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND agent_name=? AND status='active' LIMIT 1");
+        $obq->execute([$obEmail !== '' ? $obEmail : $row['agent_name']]);
+        $obqId = $obq->fetchColumn();
+        if ($obqId) {
+            $db->prepare("UPDATE offboard_queue SET status='cancelled' WHERE id=?")->execute([$obqId]);
+        }
+    } catch (\Throwable $e) {}
 
     echo json_encode(['ok'=>true]);
     exit;
@@ -110,6 +149,28 @@ if ($action === 'rename_mc') {
        ->execute([$newName, $oldName]);
 
     echo json_encode(['ok'=>true, 'count'=>$count]);
+    exit;
+}
+
+// Edit a single agent's contact info and details
+if ($action === 'edit') {
+    $id    = (int)($body['id']           ?? 0);
+    $name  = trim($body['agent_name']    ?? '');
+    $email = strtolower(trim($body['email']  ?? ''));
+    $phone = trim($body['phone']         ?? '');
+    $exp   = trim($body['license_exp']   ?? '');
+    $mc    = trim($body['market_center'] ?? '');
+    $state = strtoupper(trim($body['state_code'] ?? ''));
+    if (!$id || !$name) { echo json_encode(['ok'=>false,'error'=>'id and agent_name required']); exit; }
+    if ($exp && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp)) $exp = '';
+    $fields = ['agent_name'=>$name, 'email'=>$email, 'phone'=>$phone, 'license_exp'=>$exp];
+    if ($mc !== '')    $fields['market_center'] = $mc;
+    if ($state !== '') $fields['state_code']    = $state;
+    $sets   = implode(', ', array_map(fn($k) => "$k=?", array_keys($fields)));
+    $vals   = array_values($fields);
+    $vals[] = $id;
+    $db->prepare("UPDATE innovate_roster SET $sets WHERE id=?")->execute($vals);
+    echo json_encode(['ok'=>true]);
     exit;
 }
 

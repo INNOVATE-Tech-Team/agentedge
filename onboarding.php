@@ -21,6 +21,7 @@ $toolsJson = json_encode(array_values($tools));
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Onboarding — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>
@@ -65,6 +66,15 @@ $toolsJson = json_encode(array_values($tools));
               <div class="field">
                 <label>Market Center</label>
                 <input type="text" id="ob-mc" placeholder="Myrtle Beach">
+              </div>
+              <div class="field">
+                <label>License State</label>
+                <select id="ob-state">
+                  <option value="">Select state…</option>
+                  <?php foreach (['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'] as $st): ?>
+                    <option value="<?= h($st) ?>"><?= h($st) ?></option>
+                  <?php endforeach; ?>
+                </select>
               </div>
               <div class="field">
                 <label>Role</label>
@@ -114,7 +124,8 @@ $toolsJson = json_encode(array_values($tools));
   </div>
 
   <script>
-    window.ONBOARD_TOOLS = <?= $toolsJson ?>;
+    window.ONBOARD_TOOLS  = <?= $toolsJson ?>;
+    window.ONBOARD_OPEN_ID = <?= (int)($_GET['open'] ?? 0) ?>;
   </script>
   <script src="assets/onboard.js"></script>
 </body>

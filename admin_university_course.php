@@ -32,7 +32,17 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= $pageTitle ?> — University Admin</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
+  <link rel="stylesheet" href="https://cdn.quilljs.com/1.3.7/quill.snow.css">
+  <style>
+    .ql-container { font-family: inherit; font-size: 13px; border-radius: 0 0 6px 6px; }
+    .ql-toolbar { border-radius: 6px 6px 0 0; border-color: #ccc !important; background: #fafafa; }
+    .ql-container { border-color: #ccc !important; min-height: 120px; }
+    .ql-editor { min-height: 120px; }
+    .ql-container:focus-within { outline: 2px solid #82C112; border-color: transparent !important; }
+    .ql-container:focus-within + .ql-toolbar { border-color: transparent !important; }
+  </style>
   <style>
     .back-link{font-size:12px;color:#5b8e0d;text-decoration:none;font-weight:700;display:inline-flex;align-items:center;gap:4px;margin-bottom:16px}
     .back-link:hover{text-decoration:underline}
@@ -255,6 +265,12 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       </select>
     </div>
     <div id="l-file-section">
+      <div class="field" id="l-embed-field" style="display:none">
+        <label>Embed URL (YouTube or Vimeo)</label>
+        <input type="url" id="l-embed-url" placeholder="https://www.youtube.com/watch?v=… or https://vimeo.com/…">
+        <div style="font-size:11px;color:#aaa;margin-top:4px">Paste the regular watch URL — it will be converted to embed format automatically.</div>
+      </div>
+      <div style="font-size:11px;color:#aaa;text-align:center;margin-bottom:8px;display:none" id="l-or-divider">— or upload a file —</div>
       <div class="field" id="l-file-field">
         <label id="l-file-label">Video File</label>
         <div class="file-current" id="l-file-current" style="display:none">File uploaded ✓</div>
@@ -267,8 +283,9 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       </div>
     </div>
     <div class="field">
-      <label>Notes / Description (optional HTML)</label>
-      <textarea id="l-content" placeholder="Optional notes displayed below the lesson content…" style="min-height:60px"></textarea>
+      <label>Notes / Description</label>
+      <div id="l-content-editor" style="background:white"></div>
+      <input type="hidden" id="l-content">
     </div>
     <div class="field" id="l-duration-field">
       <label>Duration (seconds, optional)</label>
@@ -320,10 +337,29 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 <div class="save-toast" id="save-toast">Saved ✓</div>
 
+<script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script>
 const COURSE_ID = <?= $courseId ?: 'null' ?>;
 let pendingLessonFile = null;
 let activeLessonId   = null;
+
+// Quill rich text editor for lesson notes
+let quill = null;
+document.addEventListener('DOMContentLoaded', () => {
+  quill = new Quill('#l-content-editor', {
+    theme: 'snow',
+    placeholder: 'Optional notes, key takeaways, or links shown below the lesson…',
+    modules: {
+      toolbar: [
+        ['bold', 'italic', 'underline'],
+        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+        [{ 'header': [2, 3, false] }],
+        ['link'],
+        ['clean'],
+      ]
+    }
+  });
+});
 
 function api(body){return fetch('api/uni_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -378,12 +414,16 @@ function uploadThumb(file) {
 
 // ── Lessons ───────────────────────────────────────────────────────────────
 function onTypeChange() {
-  const type = document.getElementById('l-type').value;
+  const type      = document.getElementById('l-type').value;
   const fileSection = document.getElementById('l-file-section');
   const durField    = document.getElementById('l-duration-field');
-  document.getElementById('l-file-label').textContent = type === 'video' ? 'Video File' : 'Document File';
+  const embedField  = document.getElementById('l-embed-field');
+  const orDivider   = document.getElementById('l-or-divider');
+  document.getElementById('l-file-label').textContent = type === 'video' ? 'Video File (optional if using embed URL)' : 'Document File';
   fileSection.style.display = type === 'quiz' ? 'none' : '';
-  durField.style.display = type === 'video' ? '' : 'none';
+  durField.style.display    = type === 'video' ? '' : 'none';
+  embedField.style.display  = type === 'video' ? '' : 'none';
+  orDivider.style.display   = type === 'video' ? '' : 'none';
 }
 
 function openAddLesson() {
@@ -391,7 +431,9 @@ function openAddLesson() {
   document.getElementById('l-id').value = '';
   document.getElementById('l-title').value = '';
   document.getElementById('l-type').value = 'video';
+  document.getElementById('l-embed-url').value = '';
   document.getElementById('l-content').value = '';
+  if (quill) quill.setContents([]);
   document.getElementById('l-duration').value = '0';
   document.getElementById('l-file-name').textContent = '';
   document.getElementById('l-file-current').style.display = 'none';
@@ -406,7 +448,9 @@ function editLesson(lesson) {
   document.getElementById('l-id').value = lesson.id;
   document.getElementById('l-title').value = lesson.title;
   document.getElementById('l-type').value = lesson.type;
+  document.getElementById('l-embed-url').value = lesson.embed_url || '';
   document.getElementById('l-content').value = lesson.content_html || '';
+  if (quill) quill.root.innerHTML = lesson.content_html || '';
   document.getElementById('l-duration').value = lesson.duration_sec || 0;
   document.getElementById('l-file-name').textContent = '';
   document.getElementById('l-upload-status').textContent = '';
@@ -446,11 +490,13 @@ function saveLesson() {
     }
   };
 
+  const contentHtml = quill ? quill.root.innerHTML.replace(/<p><br><\/p>/g,'').trim() : document.getElementById('l-content').value.trim();
   const body = {
     action: id ? 'update_lesson' : 'create_lesson',
     title,
     type: document.getElementById('l-type').value,
-    content_html: document.getElementById('l-content').value.trim(),
+    embed_url: document.getElementById('l-embed-url').value.trim(),
+    content_html: contentHtml === '<p><br></p>' ? '' : contentHtml,
     duration_sec: parseInt(document.getElementById('l-duration').value)||0,
   };
   if (id) { body.id = parseInt(id); }

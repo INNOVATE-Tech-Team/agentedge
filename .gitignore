@@ -8,3 +8,15 @@ data/*.db
 data/hud_uploads/
 data/docs/
 data/uni/
+
+# Found during production reconciliation (2026-07-11) — never commit these.
+/agentedge-calendar-key.json
+/agentedge.db
+data/disc.sqlite
+data/announcement_images/
+data/dl_debug.txt
+social-engage-app/
+cache/
+*.bak
+*.bak.*
+tash

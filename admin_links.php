@@ -120,6 +120,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Link Settings — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .tabs{display:flex;gap:0;border-bottom:2px solid #E6E7E8;margin-bottom:24px}

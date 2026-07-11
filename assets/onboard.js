@@ -9,6 +9,7 @@
   let currentFilter = 'active';
   let expandedIds   = new Set();   // queue ids whose checklist is open
   const TOOLS       = window.ONBOARD_TOOLS || [];
+  const STATES      = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
 
   // Tool key → definition map
   const TOOL_MAP = {};
@@ -131,6 +132,7 @@
         agent_name:    name,
         agent_email:   email,
         market_center: document.getElementById('ob-mc')?.value.trim(),
+        state_code:    document.getElementById('ob-state')?.value,
         role:          document.getElementById('ob-role')?.value,
         start_date:    document.getElementById('ob-start')?.value,
         sponsor:       document.getElementById('ob-sponsor')?.value.trim(),
@@ -203,6 +205,7 @@
     const dotClass = {
       done:    'ob-dot-done',
       pending: 'ob-dot-pending',
+      sent:    'ob-dot-sent',
       failed:  'ob-dot-failed',
       skipped: 'ob-dot-skipped',
     }[step.status] || 'ob-dot-pending';
@@ -214,6 +217,7 @@
     const cfg = {
       done:    { bg:'#82C112', color:'#fff', char:'✓' },
       pending: { bg:'#E6E7E8', color:'#888', char:'○' },
+      sent:    { bg:'#E8A93A', color:'#fff', char:'✉' },
       failed:  { bg:'#C0392B', color:'#fff', char:'✕' },
       skipped: { bg:'#bbb',    color:'#fff', char:'—' },
     }[status] || { bg:'#E6E7E8', color:'#888', char:'○' };
@@ -241,9 +245,18 @@
 
     const stepsHtml = steps.map(s => renderStep(entry.id, s, entry.status)).join('');
 
+    const stateOptions = STATES.map(s =>
+      `<option value="${s}"${entry.state_code === s ? ' selected' : ''}>${s}</option>`
+    ).join('');
+    const stateSelectHtml = entry.status === 'active' ? `
+      <select class="ob-state-select" onchange="setQueueState(${entry.id}, this)" title="License state (required to complete onboarding)">
+        <option value="">State…</option>
+        ${stateOptions}
+      </select>` : (entry.state_code ? esc(entry.state_code) : '');
+
     const footerHtml = entry.status === 'active' ? `
       <div class="ob-footer">
-        <button class="ob-btn-sm ob-btn-done" onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
+        <button class="ob-btn-sm ob-btn-done" onclick="completeOnboarding(${entry.id}, this, ${entry.state_code ? 'true' : 'false'})">Mark Complete</button>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
@@ -267,6 +280,7 @@
           </div>
         </div>
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
+          ${entry.status === 'active' ? `<div class="ob-state-row" style="padding:4px 0 12px;font-size:12px;color:#888">License state (required to complete): ${stateSelectHtml}</div>` : ''}
           ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
           ${footerHtml}
         </div>
@@ -285,6 +299,11 @@
         actionsHtml = `<button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
       } else if (step.status === 'skipped') {
         actionsHtml = `<button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Unskip</button>`;
+      } else if (step.status === 'sent') {
+        // Awaiting the agent's signature — PandaDoc's webhook flips this to
+        // Done automatically; these are just manual overrides.
+        actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Signed</button>
+                       <button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
       } else {
         // pending or failed
         actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Done</button>
@@ -378,8 +397,24 @@
       });
   };
 
+  // ── Set license state on a queue entry ─────────────────────────────────────
+  window.setQueueState = function (queueId, select) {
+    const state = select.value;
+    if (!state) return;
+    select.disabled = true;
+    post('api/onboard_action.php?action=set_state', { queue_id: queueId, state_code: state })
+      .then(d => {
+        select.disabled = false;
+        if (!d.ok) { alert(d.error || 'Could not set state.'); return; }
+        const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
+        if (btn) btn.setAttribute('onclick', `completeOnboarding(${queueId}, this, true)`);
+      })
+      .catch(() => { select.disabled = false; });
+  };
+
   // ── Complete / Cancel queue entry ──────────────────────────────────────────
-  window.completeOnboarding = function (queueId, btn) {
+  window.completeOnboarding = function (queueId, btn, hasState) {
+    if (!hasState) { alert('Set a license state for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
     if (!confirm('Mark this agent\'s onboarding as complete?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=complete_onboarding', { queue_id: queueId })
@@ -403,6 +438,8 @@
 
   // ── Init ───────────────────────────────────────────────────────────────────
   function initQueue() {
+    // Pre-expand an entry passed via ?open= (e.g. from Advantage CRM redirect)
+    if (window.ONBOARD_OPEN_ID) expandedIds.add(window.ONBOARD_OPEN_ID);
     loadQueue();
   }
 

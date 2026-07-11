@@ -5,6 +5,7 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/google_calendar.php';
+require_once __DIR__ . '/../lib/notifications.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
@@ -30,6 +31,7 @@ if ($action === 'create') {
     $end_time   = trim($body['end_time']    ?? '');
     $location   = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
+    $capacity   = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
 
     if (!$title || !$date) { http_response_code(400); echo json_encode(['error' => 'title and date required']); exit; }
 
@@ -54,6 +56,8 @@ if ($action === 'create') {
 
     $result = gcal_create_event($cal_id, $token, $event);
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to create event — check calendar sharing permissions']); exit; }
+    local_db()->prepare("INSERT INTO training_events (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
+        ->execute([$result['id'], $capacity]);
     echo json_encode(['ok' => true, 'event_id' => $result['id']]);
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -66,6 +70,7 @@ if ($action === 'create') {
     $end_time    = trim($body['end_time']    ?? '');
     $location    = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
+    $capacity    = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
 
     if (!$event_id || !$title || !$date) { http_response_code(400); echo json_encode(['error' => 'event_id, title, date required']); exit; }
 
@@ -90,6 +95,36 @@ if ($action === 'create') {
 
     $result = gcal_update_event($cal_id, $token, $event_id, $patch);
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to update event']); exit; }
+
+    $db = local_db();
+    $db->prepare("INSERT INTO training_events (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
+       ->execute([$event_id, $capacity]);
+
+    // Capacity may have gone up (or been removed) — promote waitlisted agents
+    // into any now-open seats, oldest first.
+    $regCountStmt = $db->prepare("SELECT COUNT(*) FROM training_rsvps WHERE event_id=? AND status='registered'");
+    $regCountStmt->execute([$event_id]);
+    $regCount = (int)$regCountStmt->fetchColumn();
+    $open = $capacity === null ? PHP_INT_MAX : ($capacity - $regCount);
+
+    if ($open > 0) {
+        $wait = $db->prepare("SELECT id, agent_email FROM training_rsvps WHERE event_id=? AND status='waitlisted' ORDER BY rsvped_at LIMIT ?");
+        $wait->bindValue(1, $event_id);
+        $wait->bindValue(2, $open === PHP_INT_MAX ? 1000000 : $open, PDO::PARAM_INT);
+        $wait->execute();
+        foreach ($wait->fetchAll(PDO::FETCH_ASSOC) as $promoted) {
+            $db->prepare("UPDATE training_rsvps SET status='registered' WHERE id=?")->execute([$promoted['id']]);
+            queue_email_to([$promoted['agent_email']], "You're in: {$title}", implode("\n", [
+                "A seat opened up — you've been moved from the waitlist to registered for:",
+                "",
+                $title,
+                "Date: {$date}",
+                "",
+                "— AgentEdge Training",
+            ]));
+        }
+    }
+
     echo json_encode(['ok' => true]);
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -99,6 +134,7 @@ if ($action === 'create') {
 
     gcal_delete_event($cal_id, $token, $event_id);
     local_db()->prepare("DELETE FROM training_rsvps WHERE event_id=?")->execute([$event_id]);
+    local_db()->prepare("DELETE FROM training_events WHERE event_id=?")->execute([$event_id]);
     echo json_encode(['ok' => true]);
 
 } else {

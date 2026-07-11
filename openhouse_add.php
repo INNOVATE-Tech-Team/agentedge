@@ -37,6 +37,34 @@ if ($editId > 0) {
 
 $propTypes = ['Residential','Condo','Townhouse','Land','Commercial'];
 $pageTitle = $editId ? 'Edit Listing' : 'Add Listing';
+
+
+
+function oh_time_options(string $sel = ''): string {
+
+    $out = '<option value="">— select —</option>';
+
+    for ($h = 6; $h <= 21; $h++) {
+
+        foreach ([0, 30] as $m) {
+
+            if ($h === 21 && $m === 30) continue;
+
+            $v    = sprintf('%02d:%02d', $h, $m);
+
+            $lbl  = date('g:i A', strtotime($v));
+
+            $match = ($sel === $v || $sel === $v . ':00');
+
+            $out .= '<option value="' . $v . '"' . ($match ? ' selected' : '') . '>' . $lbl . '</option>';
+
+        }
+
+    }
+
+    return $out;
+
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -44,6 +72,7 @@ $pageTitle = $editId ? 'Edit Listing' : 'Add Listing';
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= h($pageTitle) ?> — Open House — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .oh-form-section{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin:20px 0 8px;padding-top:16px;border-top:1px solid #eee}
@@ -148,18 +177,18 @@ $pageTitle = $editId ? 'Edit Listing' : 'Add Listing';
               <?php foreach ($slots as $i => $slot): ?>
               <div class="slot-row" id="slot-<?= $i ?>">
                 <input type="date" name="dates[]" class="slot-date" value="<?= h($slot['slot_date']) ?>" required>
-                <input type="time" name="start_times[]" class="slot-time" value="<?= h($slot['start_time']) ?>" required>
+                <input type="time" step="1800" name="start_times[]" class="slot-time" value="<?= h($slot['start_time']) ?>" required>
                 <span class="slot-sep">to</span>
-                <input type="time" name="end_times[]" class="slot-time" value="<?= h($slot['end_time']) ?>" required>
+                <input type="time" step="1800" name="end_times[]" class="slot-time" value="<?= h($slot['end_time']) ?>" required>
                 <button type="button" class="btn-remove-slot" onclick="removeSlot(this)">Remove</button>
               </div>
               <?php endforeach; ?>
             <?php else: ?>
               <div class="slot-row" id="slot-0">
                 <input type="date" name="dates[]" class="slot-date" required>
-                <input type="time" name="start_times[]" class="slot-time" required>
+                <input type="time" step="1800" name="start_times[]" class="slot-time" required>
                 <span class="slot-sep">to</span>
-                <input type="time" name="end_times[]" class="slot-time" required>
+                <input type="time" step="1800" name="end_times[]" class="slot-time" required>
                 <button type="button" class="btn-remove-slot" onclick="removeSlot(this)">Remove</button>
               </div>
             <?php endif; ?>
@@ -189,9 +218,9 @@ function addSlot() {
   div.id = 'slot-' + slotCount;
   div.innerHTML = `
     <input type="date" name="dates[]" class="slot-date" required>
-    <input type="time" name="start_times[]" class="slot-time" required>
+    <input type="time" step="1800" name="start_times[]" class="slot-time" required>
     <span class="slot-sep">to</span>
-    <input type="time" name="end_times[]" class="slot-time" required>
+    <input type="time" step="1800" name="end_times[]" class="slot-time" required>
     <button type="button" class="btn-remove-slot" onclick="removeSlot(this)">Remove</button>
   `;
   container.appendChild(div);

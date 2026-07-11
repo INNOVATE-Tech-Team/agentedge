@@ -49,6 +49,14 @@ if ($lesson['type'] === 'quiz') {
 
 $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝'];
 $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
+function make_embed_url(string $url): string {
+    if (preg_match('/youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]+)/', $url, $m)) return 'https://www.youtube.com/embed/' . $m[1];
+    if (preg_match('/youtu\.be\/([a-zA-Z0-9_-]+)/', $url, $m)) return 'https://www.youtube.com/embed/' . $m[1];
+    if (preg_match('/vimeo\.com\/(\d+)/', $url, $m)) return 'https://player.vimeo.com/video/' . $m[1];
+    return $url;
+}
+$embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) : '';
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -56,6 +64,7 @@ $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= htmlspecialchars($lesson['title']) ?> — INNOVATE University</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .lesson-breadcrumb{font-size:12px;color:#888;margin-bottom:14px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -143,7 +152,11 @@ $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
 
       <!-- Video lesson -->
       <?php if ($lesson['type'] === 'video'): ?>
-      <?php if ($lesson['file_key']): ?>
+      <?php if ($embedUrl): ?>
+      <div class="video-wrap" style="padding-top:56.25%;position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <iframe src="<?= htmlspecialchars($embedUrl) ?>" style="position:absolute;top:0;left:0;width:100%;height:100%;border:0" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" onload="scheduleEmbedComplete()"></iframe>
+      </div>
+      <?php elseif ($lesson['file_key']): ?>
       <div class="video-wrap">
         <video id="lesson-video" controls preload="metadata" onended="onVideoEnd()">
           <source src="api/uni_download.php?id=<?= $lessonId ?>" type="video/mp4">
@@ -152,7 +165,7 @@ $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
       </div>
       <?php else: ?>
       <div class="doc-wrap" style="background:#fff3cd;border-color:#ffc107">
-        <div class="doc-icon">⚠️</div>
+        <div class="doc-icon">⚠</div>
         <div class="doc-title">Video not uploaded yet</div>
       </div>
       <?php endif; ?>

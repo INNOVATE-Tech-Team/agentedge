@@ -1,111 +1,94 @@
 <?php
-// My profile — load & save the logged-in agent's own record in the bold360.vip
-// CRM (agent_overrides). The agent is identified server-side by their session
-// email, so nobody can edit a record that isn't theirs by tampering with an id.
+// My profile — load & save the logged-in agent's own record from local SQLite.
+// innovate_roster stores name/email/phone; agent_extra stores social links + dates.
 require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
 
 $me = current_agent();
 if (!$me) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
-$c     = cfg();
-$base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-$token = $c['crm_token'] ?? '';
-$myEmail = record_email($me['email'] ?? '');
+$myEmail = strtolower(trim($me['email'] ?? ''));
+$db      = local_db();
 
-function http_json(string $method, string $url, ?array $body = null): array {
-    $opts = ['http' => [
-        'method'  => $method,
-        'timeout' => 12,
-        'header'  => "Accept: application/json\r\nContent-Type: application/json\r\n",
-        'ignore_errors' => true,
-    ]];
-    if ($body !== null) { $opts['http']['content'] = json_encode($body); }
-    $raw = @file_get_contents($url, false, stream_context_create($opts));
-    $code = 0;
-    if (isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) $code = (int)$m[1];
-    $data = $raw === false ? null : json_decode($raw, true);
-    return ['code' => $code, 'data' => $data];
+// Find the agent's roster row by their stored email
+function find_roster_row(object $db, string $email): ?array {
+    if ($email === '') return null;
+    $s = $db->prepare("SELECT * FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1");
+    $s->execute([$email]);
+    return $s->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
-// Find my CRM record by matching my login email against the retention roster.
-function find_me(string $base, string $token, string $myEmail): ?array {
-    if ($token === '' || $myEmail === '') return null;
-    $r = http_json('GET', $base . '/public/retention-roster?token=' . urlencode($token));
-    if (!is_array($r['data'])) return null;
-    foreach ($r['data'] as $a) {
-        if (strtolower(trim($a['email'] ?? '')) === $myEmail) return $a;
+// Fetch or init agent_extra row
+function get_extra(object $db, string $email): array {
+    $s = $db->prepare("SELECT * FROM agent_extra WHERE email=? LIMIT 1");
+    $s->execute([$email]);
+    return $s->fetch(PDO::FETCH_ASSOC) ?: [];
+}
+
+$SOCIAL_KEYS = ['facebook','instagram','linkedin','twitter','youtube','tiktok','website','blog'];
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    // ── Load ──────────────────────────────────────────────────────────────────
+    $row   = find_roster_row($db, $myEmail);
+    $extra = get_extra($db, $myEmail);
+
+    // Fallback: if no roster row by email, try tblstaff for display name/phone
+    $fallbackName  = $me['name']  ?? '';
+    $fallbackPhone = '';
+    if (!$row) {
+        $staff = db_one("SELECT firstname, lastname, phonenumber FROM tblstaff WHERE email=? LIMIT 1", [$myEmail]);
+        if ($staff) {
+            $fallbackName  = trim($staff['firstname'] . ' ' . $staff['lastname']);
+            $fallbackPhone = $staff['phonenumber'] ?? '';
+        }
     }
-    return null;
-}
 
-$action = $_SERVER['REQUEST_METHOD'] === 'POST' ? 'save' : 'load';
+    $social = json_decode($extra['social_json'] ?? '{}', true) ?: [];
 
-// ---- No token configured: editing is unavailable -------------------------
-if ($token === '') {
-    echo json_encode(['matched' => false, 'editable' => false,
-        'reason' => 'Profile editing isn\'t configured yet (no CRM token).']);
-    exit;
-}
-
-$record = find_me($base, $token, $myEmail);
-
-if ($action === 'load') {
-    if (!$record) {
-        echo json_encode(['matched' => false, 'editable' => false,
-            'reason' => 'We couldn\'t match your login to a roster record.',
-            'profile' => ['fullName' => $me['name'] ?? '', 'email' => $me['email'] ?? '']]);
-        exit;
-    }
     echo json_encode([
         'matched'  => true,
-        'editable' => writes_enabled(),
-        'demo'     => !writes_enabled(),
+        'editable' => true,
         'profile'  => [
-            'id'           => $record['id'] ?? null,
-            'fullName'     => $record['name'] ?? ($record['fullName'] ?? ''),
-            'email'        => $record['email'] ?? '',
-            'phone'        => $record['phone'] ?? '',
-            'marketCenter' => $record['marketCenter'] ?? '',
-            'brokerage'    => $record['brokerage'] ?? '',
-            'social'       => $record['social'] ?? new stdClass(),
+            'fullName'     => $row ? $row['agent_name']    : $fallbackName,
+            'email'        => $row ? $row['email']         : $myEmail,
+            'phone'        => $row ? $row['phone']         : $fallbackPhone,
+            'marketCenter' => $row ? $row['market_center'] : '',
+            'brokerage'    => 'INNOVATE Real Estate',
+            'social'       => (object)array_intersect_key($social, array_flip($SOCIAL_KEYS)),
         ],
     ]);
     exit;
 }
 
-// ---- Save -----------------------------------------------------------------
-if (!$record || empty($record['id'])) {
-    http_response_code(404);
-    echo json_encode(['ok' => false, 'error' => 'We couldn\'t match your record, so there\'s nothing to save to.']);
-    exit;
-}
-if (!writes_enabled()) {
-    echo json_encode(['ok' => false, 'demo' => true,
-        'error' => 'Preview mode — changes aren\'t saved. Editing goes live once real logins are on.']);
-    exit;
+// ── Save ──────────────────────────────────────────────────────────────────────
+$in    = json_decode(file_get_contents('php://input'), true) ?: [];
+$email = strtolower(trim($in['email'] ?? $myEmail));
+$phone = trim($in['phone'] ?? '');
+$name  = trim($in['fullName'] ?? '');
+
+// Update innovate_roster rows for this agent (may have multiple state entries)
+$row = find_roster_row($db, $myEmail);
+if ($row) {
+    $db->prepare(
+        "UPDATE innovate_roster SET email=?, phone=?" . ($name !== '' ? ", agent_name=?" : "") . " WHERE id=?"
+    )->execute($name !== ''
+        ? [$email, $phone, $name, $row['id']]
+        : [$email, $phone, $row['id']]
+    );
 }
 
-$in = json_decode(file_get_contents('php://input'), true) ?: [];
-$payload = [
-    'full_name'     => $in['fullName'] ?? null,
-    'email'         => $in['email'] ?? null,
-    'phone'         => $in['phone'] ?? null,
-    'facebook_url'  => $in['facebook'] ?? null,
-    'instagram_url' => $in['instagram'] ?? null,
-    'linkedin_url'  => $in['linkedin'] ?? null,
-    'twitter_url'   => $in['twitter'] ?? null,
-    'youtube_url'   => $in['youtube'] ?? null,
-    'tiktok_url'    => $in['tiktok'] ?? null,
-    'website_url'   => $in['website'] ?? null,
-    'blog_url'      => $in['blog'] ?? null,
-];
-$url = $base . '/public/agent/' . rawurlencode($record['id']) . '?token=' . urlencode($token);
-$res = http_json('POST', $url, $payload);
-if ($res['code'] === 200 && is_array($res['data']) && !empty($res['data']['ok'])) {
-    echo json_encode(['ok' => true]);
-} else {
-    http_response_code(502);
-    echo json_encode(['ok' => false, 'error' => 'The CRM rejected the save (code ' . $res['code'] . ').']);
+// Save social links into agent_extra.social_json
+$social = [];
+foreach ($SOCIAL_KEYS as $k) {
+    $v = trim($in[$k] ?? '');
+    if ($v !== '') $social[$k] = $v;
 }
+$db->prepare(
+    "INSERT INTO agent_extra (email, social_json, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(email) DO UPDATE SET social_json=excluded.social_json, updated_at=excluded.updated_at"
+)->execute([$myEmail, json_encode($social)]);
+
+echo json_encode(['ok' => true]);

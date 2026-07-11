@@ -8,21 +8,40 @@ function toggleSbLinks(btn) {
   const open = btn.getAttribute('aria-expanded') === 'true';
   btn.setAttribute('aria-expanded', String(!open));
   sub.hidden = open;
-  try { localStorage.setItem('ae_links_' + (btn.dataset.group || ''), String(!open)); } catch(e) {}
+  if (open && btn.classList.contains('sb-links-toggle')) {
+    const nav = btn.closest('.sb-nav');
+    if (nav) nav.scrollTop = 0;
+  }
+  try { sessionStorage.setItem('ae_links_' + (btn.dataset.group || ''), String(!open)); } catch(e) {}
 }
 
 (function() {
   document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.sb-links-toggle').forEach(function(btn) {
+    document.querySelectorAll('.sb-links-toggle, .sb-dept-toggle').forEach(function(btn) {
       const sub = btn.nextElementSibling;
       if (!sub) return;
       try {
-        if (localStorage.getItem('ae_links_' + (btn.dataset.group || '')) === 'false') {
-          btn.setAttribute('aria-expanded', 'false');
-          sub.hidden = true;
+        if (sessionStorage.getItem('ae_links_' + (btn.dataset.group || '')) === 'true') {
+          btn.setAttribute('aria-expanded', 'true');
+          sub.hidden = false;
         }
       } catch(e) {}
     });
+
+    // Restore sidebar scroll position across the full-page navigations that
+    // every menu link triggers — without this, each click snaps back to top.
+    const nav = document.querySelector('.sb-nav');
+    if (nav) {
+      try {
+        const saved = sessionStorage.getItem('ae_nav_scroll');
+        if (saved !== null) nav.scrollTop = parseInt(saved, 10) || 0;
+      } catch(e) {}
+      nav.addEventListener('click', function(e) {
+        if (e.target.closest('a, button')) {
+          try { sessionStorage.setItem('ae_nav_scroll', String(nav.scrollTop)); } catch(err) {}
+        }
+      });
+    }
   });
 })();
 
