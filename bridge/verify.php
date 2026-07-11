@@ -135,6 +135,32 @@ if ($action === 'dump') {
     exit;
 }
 
+// ---- One-time bulk password hash export (auth decoupling migration) -------
+// Exports every agent's existing bcrypt hash so AgentEdge can verify logins
+// locally without calling this bridge at all. Guarded by the same shared
+// token as every other action here — same security model as `dump`, which
+// already bulk-exports name/email/phone. Remove this action (or rotate
+// $BRIDGE_TOKEN) once the one-time migration script has run — see the auth
+// decoupling plan for the retirement criteria on the fallback path this feeds.
+if ($action === 'export_hashes') {
+    $res = $db->query("SELECT staffid, email, firstname, lastname, password, profile_image FROM tblstaff WHERE active = 1 ORDER BY staffid");
+    if (!$res) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>$db->error]); exit; }
+    $agents = [];
+    while ($row = $res->fetch_assoc()) {
+        $email = strtolower(trim($row['email'] ?? ''));
+        if ($email === '' || empty($row['password'])) continue;
+        $agents[] = [
+            'staffid'       => (int)$row['staffid'],
+            'email'         => $email,
+            'name'          => trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')),
+            'password_hash' => $row['password'],
+            'photo'         => $row['profile_image'] ?: null,
+        ];
+    }
+    echo json_encode(['ok'=>true,'count'=>count($agents),'agents'=>$agents]);
+    exit;
+}
+
 // ---- Agent lookup by email -----------------------------------------------
 if ($action === 'agent_lookup') {
     $email = strtolower(trim((string)($in['email'] ?? '')));
@@ -146,6 +172,37 @@ if ($action === 'agent_lookup') {
     if (!$u) { echo json_encode(['ok'=>false]); exit; }
     $name = trim(($u['firstname'] ?? '') . ' ' . ($u['lastname'] ?? '')) ?: $email;
     echo json_encode(['ok'=>true,'staffid'=>(int)$u['staffid'],'email'=>$u['email'],'name'=>$name,'photo'=>$u['profile_pic']??null]);
+    exit;
+}
+
+// ---- Change password (requires current password) --------------------------
+// NOTE: $DB_USER above must have UPDATE privilege on tblstaff.password for
+// this to work — "innovate_agentedge_ro" suggests a read-only grant today,
+// so this may need its own DB user (or an added grant) before it'll work.
+if ($action === 'change_password') {
+    $email    = trim((string)($in['email'] ?? ''));
+    $current  = (string)($in['current_password'] ?? '');
+    $newPass  = (string)($in['new_password'] ?? '');
+    if ($email === '' || $current === '' || $newPass === '') { echo json_encode(['ok'=>false,'error'=>'Missing fields.']); exit; }
+    if (strlen($newPass) < 8) { echo json_encode(['ok'=>false,'error'=>'New password must be at least 8 characters.']); exit; }
+
+    $stmt = $db->prepare("SELECT staffid, password, active FROM tblstaff WHERE email = ? LIMIT 1");
+    if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $stmt->bind_param('s', $email); $stmt->execute();
+    $u = $stmt->get_result()->fetch_assoc(); $stmt->close();
+    if (!$u || (int)$u['active'] !== 1 || !password_verify($current, (string)$u['password'])) {
+        echo json_encode(['ok'=>false,'error'=>'Current password is incorrect.']); exit;
+    }
+
+    $hash = password_hash($newPass, PASSWORD_BCRYPT);
+    $upd = $db->prepare("UPDATE tblstaff SET password = ? WHERE staffid = ?");
+    if (!$upd) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $staffid = (int)$u['staffid'];
+    $upd->bind_param('si', $hash, $staffid);
+    $ok = $upd->execute();
+    $upd->close();
+    if (!$ok) { echo json_encode(['ok'=>false,'error'=>'Could not update password (check DB user has UPDATE grant).']); exit; }
+    echo json_encode(['ok'=>true]);
     exit;
 }
 

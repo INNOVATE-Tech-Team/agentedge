@@ -12,13 +12,21 @@ $agent = require_login();
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>My Network — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     /* Admin search */
-    .search-row{display:flex;gap:0;max-width:420px;margin-bottom:20px}
+    .search-wrap{position:relative;max-width:420px;margin-bottom:20px}
+    .search-row{display:flex;gap:0}
     .search-row input{flex:1;padding:9px 12px;font-size:13px;border:1px solid #ccc;border-radius:6px 0 0 6px;outline:none}
     .search-row input:focus{border-color:#82C112}
-    .search-row button{padding:9px 18px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:0 6px 6px 0;cursor:pointer}
+    .search-row button{padding:9px 18px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:0 6px 6px 0;cursor:pointer;white-space:nowrap}
+    .search-dropdown{position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #ccc;border-top:none;border-radius:0 0 6px 6px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:100;max-height:280px;overflow-y:auto}
+    .sd-item{display:flex;flex-direction:column;padding:9px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+    .sd-item:last-child{border-bottom:none}
+    .sd-item:hover,.sd-item.active{background:#f9fdf5}
+    .sd-name{font-size:13px;font-weight:700;color:#222}
+    .sd-email{font-size:11px;color:#888}
 
     /* Root card */
     .root-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f9fdf5;border:2px solid #82C112;border-radius:10px;margin-bottom:20px}
@@ -112,14 +120,17 @@ $agent = require_login();
 
         <?php if (can_search_network()): ?>
         <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">View agent network</div>
-        <div class="search-row">
-          <input type="email" id="email-input" placeholder="agent@email.com" value="<?= htmlspecialchars($agent['email']) ?>">
-          <button onclick="loadTree()">Load</button>
+        <div class="search-wrap">
+          <div class="search-row">
+            <input type="text" id="search-input" placeholder="Search agents by name…" autocomplete="off">
+            <button onclick="loadTree()">Load</button>
+          </div>
+          <div id="search-dropdown" class="search-dropdown" hidden></div>
         </div>
         <?php endif; ?>
 
         <div id="tree-wrap">
-          <div class="empty-prompt">Enter an agent&rsquo;s email above and click <strong>Load</strong> to view their network.</div>
+          <div class="loading-msg">Loading network…</div>
         </div>
 
       </div>
@@ -130,6 +141,8 @@ $agent = require_login();
 const MY_EMAIL   = <?= json_encode($agent['email']) ?>;
 const CAN_SEARCH = <?= json_encode(can_search_network()) ?>;
 const LINE_NAMES = ['','1st Line','2nd Line','3rd Line','4th Line','5th Line'];
+
+let selectedEmail = null; // set when user picks from dropdown or sponsor link
 
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function initials(n){ const p=n.trim().split(/\s+/); return p.length>=2?(p[0][0]+p[p.length-1][0]).toUpperCase():p[0].slice(0,2).toUpperCase(); }
@@ -165,11 +178,34 @@ let ROOT    = null;
 let path    = [null, null, null, null, null]; // path[0]=selected 1st-line agent, etc.
 
 function selectAgent(level, agent) {
-  // level: 1-5 (which line we clicked in)
   path[level-1] = agent;
-  // Clear selections deeper than this level
   for (let i = level; i < 5; i++) path[i] = null;
   renderLevels();
+  requestAnimationFrame(() => {
+    const sections = document.querySelectorAll('#levels-wrap .level-section');
+    if (sections[level]) sections[level].scrollIntoView({behavior:'smooth', block:'nearest'});
+  });
+}
+
+// The "Nth Line" summary pills jump to a level section — but that section only
+// exists once the path has been drilled down to it. Auto-select down the tree
+// (keeping any existing selection that's still valid) so the section renders.
+function jumpToLevel(level) {
+  let parent = ROOT;
+  for (let l = 1; l < level; l++) {
+    const kids = parent && parent.children || [];
+    if (!kids.length) return;
+    let next = path[l-1] && kids.includes(path[l-1]) ? path[l-1] : null;
+    if (!next) next = kids.find(k => (k.children||[]).length > 0) || kids[0];
+    path[l-1] = next;
+    parent = next;
+  }
+  for (let i = level; i < 5; i++) path[i] = null;
+  renderLevels();
+  requestAnimationFrame(() => {
+    const sections = document.querySelectorAll('#levels-wrap .level-section');
+    if (sections[level-1]) sections[level-1].scrollIntoView({behavior:'smooth', block:'start'});
+  });
 }
 
 function renderLevels() {
@@ -220,12 +256,13 @@ function renderLevels() {
 
     kids.forEach(kid => {
       const hasKids = (kid.children||[]).length > 0;
+      const isClickable = hasKids && lvl < 5;
       const isSelected = selectedAtThisLevel && selectedAtThisLevel === kid;
       const vol = fmtMoney(kid.volume);
 
       const deals = kid.deals || 0;
       const card = document.createElement('div');
-      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!hasKids ? ' no-kids' : '');
+      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!isClickable ? ' no-kids' : '');
       card.innerHTML = `
         <div class="ag-avatar">${esc(initials(kid.name))}</div>
         <div class="ag-name">${esc(kid.name)}</div>
@@ -234,7 +271,7 @@ function renderLevels() {
         <div class="ag-divider"></div>
         ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-no-rec">no recruits</div>'}`;
 
-      if (hasKids && lvl < 5) {
+      if (isClickable) {
         card.addEventListener('click', () => selectAgent(lvl, kid));
       }
       strip.appendChild(card);
@@ -270,7 +307,7 @@ function renderTree(tree, totalCount, sponsor) {
     const sponsorEl = document.createElement('div');
     const sVol = fmtMoney(sponsor.volume);
     const viewLink = CAN_SEARCH
-      ? `<a class="sponsor-link" href="#" onclick="event.preventDefault();document.getElementById('email-input')&&(document.getElementById('email-input').value='${esc(sponsor.email)}');loadTree()">View network →</a>`
+      ? `<a class="sponsor-link" href="#" onclick="event.preventDefault();searchByEmail('${esc(sponsor.email)}')">View network →</a>`
       : '';
     sponsorEl.className = 'sponsor-card';
     sponsorEl.innerHTML = `
@@ -319,11 +356,7 @@ function renderTree(tree, totalCount, sponsor) {
     pill.innerHTML = `<span class="lp-count">${n}</span><span class="lp-label">${name}</span>`;
     if (n > 0) {
       pill.title = `Jump to ${name}`;
-      pill.addEventListener('click', () => {
-        // Scroll to that level section in the levels-wrap
-        const sections = document.querySelectorAll('.level-section');
-        if (sections[i]) sections[i].scrollIntoView({behavior:'smooth',block:'start'});
-      });
+      pill.addEventListener('click', () => jumpToLevel(i + 1));
     }
     bar.appendChild(pill);
   });
@@ -337,10 +370,14 @@ function renderTree(tree, totalCount, sponsor) {
   renderLevels();
 }
 
+function searchByEmail(email) {
+  selectedEmail = email;
+  closeDropdown();
+  loadTree();
+}
+
 function loadTree() {
-  const email = CAN_SEARCH
-    ? (document.getElementById('email-input')?.value.trim() || MY_EMAIL)
-    : MY_EMAIL;
+  const email = CAN_SEARCH ? (selectedEmail || MY_EMAIL) : MY_EMAIL;
   const wrap = document.getElementById('tree-wrap');
   wrap.innerHTML = '<div class="loading-msg">Loading network…</div>';
 
@@ -355,9 +392,127 @@ function loadTree() {
     });
 }
 
-// Always auto-load own tree; leaders can then type another email to look up others
+// ── Name search / typeahead ────────────────────────────────────────────────────
+let _searchTimer = null;
+let _dropActive  = -1;
+
+function closeDropdown() {
+  const dd = document.getElementById('search-dropdown');
+  if (dd) dd.hidden = true;
+  _dropActive = -1;
+}
+
+function renderDropdown(agents) {
+  const dd = document.getElementById('search-dropdown');
+  if (!dd) return;
+  if (!agents.length) { dd.hidden = true; return; }
+  dd.innerHTML = agents.map((a, i) =>
+    `<div class="sd-item" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-idx="${i}">` +
+    `<div class="sd-name">${esc(a.name)}</div>` +
+    `<div class="sd-email">${esc(a.email)}</div></div>`
+  ).join('');
+  dd.hidden = false;
+  _dropActive = -1;
+  dd.querySelectorAll('.sd-item').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const inp = document.getElementById('search-input');
+      if (inp) inp.value = el.dataset.name;
+      selectedEmail = el.dataset.email;
+      closeDropdown();
+      loadTree();
+    });
+  });
+}
+
+function doSearch(q) {
+  if (q.length < 2) { closeDropdown(); return; }
+  selectedEmail = null;
+  fetch('api/agent_search.php?q=' + encodeURIComponent(q), {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(d => renderDropdown(d.agents || []))
+    .catch(() => closeDropdown());
+}
+
+(function() {
+  const inp = document.getElementById('search-input');
+  if (!inp) return;
+
+  inp.addEventListener('input', () => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => doSearch(inp.value.trim()), 250);
+  });
+
+  inp.addEventListener('keydown', e => {
+    const dd = document.getElementById('search-dropdown');
+    const items = dd ? [...dd.querySelectorAll('.sd-item')] : [];
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _dropActive = Math.min(_dropActive + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === _dropActive));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _dropActive = Math.max(_dropActive - 1, -1);
+      items.forEach((el, i) => el.classList.toggle('active', i === _dropActive));
+    } else if (e.key === 'Enter') {
+      if (_dropActive >= 0 && items[_dropActive]) {
+        e.preventDefault();
+        items[_dropActive].dispatchEvent(new MouseEvent('mousedown'));
+      } else {
+        closeDropdown();
+        loadTree();
+      }
+    } else if (e.key === 'Escape') {
+      closeDropdown();
+    }
+  });
+
+  inp.addEventListener('blur', () => setTimeout(closeDropdown, 150));
+})();
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) closeDropdown();
+});
+
+// Agent strips are horizontally scrollable, but a plain vertical mouse wheel
+// doesn't scroll them on most desktop browsers, and there's no drag handle —
+// so add wheel-to-horizontal and click-drag support (delegated since strips
+// are re-created on every renderLevels() call).
+document.addEventListener('wheel', e => {
+  const strip = e.target.closest('.agent-strip');
+  if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // let native horizontal wheel/trackpad through
+  e.preventDefault();
+  strip.scrollLeft += e.deltaY;
+}, {passive: false});
+
+let _dragStrip = null, _dragStartX = 0, _dragStartScroll = 0, _dragMoved = false;
+document.addEventListener('mousedown', e => {
+  const strip = e.target.closest('.agent-strip');
+  if (!strip) return;
+  _dragStrip = strip;
+  _dragStartX = e.clientX;
+  _dragStartScroll = strip.scrollLeft;
+  _dragMoved = false;
+});
+document.addEventListener('mousemove', e => {
+  if (!_dragStrip) return;
+  const dx = e.clientX - _dragStartX;
+  if (Math.abs(dx) > 3) _dragMoved = true;
+  _dragStrip.scrollLeft = _dragStartScroll - dx;
+});
+document.addEventListener('mouseup', () => {
+  if (_dragStrip && _dragMoved) {
+    // Swallow the click that would otherwise fire on the card under the cursor.
+    const strip = _dragStrip;
+    const swallow = ev => { ev.stopPropagation(); strip.removeEventListener('click', swallow, true); };
+    strip.addEventListener('click', swallow, true);
+  }
+  _dragStrip = null;
+});
+
+// Auto-load own tree on page load
 loadTree();
-document.getElementById('email-input')?.addEventListener('keydown', e => { if (e.key==='Enter') loadTree(); });
 </script>
 </body>
 </html>

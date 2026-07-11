@@ -100,21 +100,33 @@ if ($listings) {
           <?php foreach ($listings as $lst): ?>
           <tr id="row-<?= $lst['id'] ?>">
             <td>
-              <div style="font-weight:700;font-size:13px"><?= h($lst['address']) ?></div>
-              <div style="font-size:11px;color:#888"><?= h($lst['city']) ?>, <?= h($lst['state']) ?><?= $lst['zip'] ? ' '.$lst['zip'] : '' ?></div>
-              <?php if ($lst['mls_number']): ?>
-                <div style="font-size:10px;color:#aaa">MLS# <?= h($lst['mls_number']) ?></div>
-              <?php endif; ?>
+              <div style="display:flex;align-items:center;gap:10px">
+                <?php if (!empty($lst['image_url'])): ?>
+                  <img src="<?= h($lst['image_url']) ?>" alt=""
+                       style="width:72px;height:54px;object-fit:cover;border-radius:6px;flex-shrink:0;border:1px solid #eee">
+                <?php else: ?>
+                  <div style="width:72px;height:54px;background:#f0f0f0;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:20px">🏠</div>
+                <?php endif; ?>
+                <div>
+                  <div style="font-weight:700;font-size:13px"><?= h($lst['address']) ?></div>
+                  <div style="font-size:11px;color:#888"><?= h($lst['city']) ?>, <?= h($lst['state']) ?><?= $lst['zip'] ? ' '.$lst['zip'] : '' ?></div>
+                  <?php if ($lst['mls_number']): ?>
+                    <div style="font-size:10px;color:#aaa">MLS# <?= h($lst['mls_number']) ?></div>
+                  <?php endif; ?>
+                </div>
+              </div>
             </td>
             <td style="font-size:13px"><?= h($lst['property_type']) ?></td>
             <td style="font-size:13px"><?= $lst['list_price'] ? '$'.number_format($lst['list_price']) : '<span class="muted">—</span>' ?></td>
             <td>
-              <?php
-              $slotCntQ = $db->prepare("SELECT COUNT(*) FROM oh_slots WHERE listing_id=?");
-              $slotCntQ->execute([$lst['id']]);
-              $slotCnt = (int)$slotCntQ->fetchColumn();
-              echo '<span style="font-size:13px">'.$slotCnt.' slot'.($slotCnt!==1?'s':'').'</span>';
-              ?>
+              <?php if (!empty($lst['no_schedule'])): ?>
+                <span style="font-size:13px;color:#7c3aed;font-weight:600">Anytime</span>
+              <?php else:
+                $slotCntQ = $db->prepare("SELECT COUNT(*) FROM oh_slots WHERE listing_id=? AND slot_date >= date('now')");
+                $slotCntQ->execute([$lst['id']]);
+                $slotCnt = (int)$slotCntQ->fetchColumn();
+                echo '<span style="font-size:13px'.($slotCnt===0?';color:#c00':'').'">'.$slotCnt.' active slot'.($slotCnt!==1?'s':'').'</span>';
+              endif; ?>
             </td>
             <td>
               <div style="display:flex;flex-wrap:wrap;gap:4px">

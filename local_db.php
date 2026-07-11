@@ -81,6 +81,9 @@ function local_db(): PDO {
         visible             INTEGER NOT NULL DEFAULT 1,
         created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
+    // Migration: vacant listings can skip scheduling specific date/time slots
+    // and stay listed in the pool as "available anytime" instead.
+    try { $pdo->exec("ALTER TABLE oh_listings ADD COLUMN no_schedule INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_slots (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +149,8 @@ function local_db(): PDO {
         error_msg   TEXT,
         UNIQUE(queue_id, tool_key)
     )");
+    // Migration: tracks whether the "your step is ready" email has already gone out
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN notified_at TEXT"); } catch (\Exception $e) {}
 
     // Offboarding queue — one row per agent being offboarded
     $pdo->exec("CREATE TABLE IF NOT EXISTS offboard_queue (
@@ -175,6 +180,64 @@ function local_db(): PDO {
         error_msg   TEXT,
         UNIQUE(queue_id, tool_key)
     )");
+    // Migration: tracks whether the "your step is ready" email has already gone out
+    try { $pdo->exec("ALTER TABLE offboard_steps ADD COLUMN notified_at TEXT"); } catch (\Exception $e) {}
+
+    // Staff notified by email when a specific onboarding/offboarding step is
+    // added (heads-up) and when it becomes the next actionable step.
+    // step_key matches the 'key' from onboard_tools()/offboard_tools().
+    $pdo->exec("CREATE TABLE IF NOT EXISTS step_notify_staff (
+        process   TEXT NOT NULL,   -- 'onboard' | 'offboard'
+        step_key  TEXT NOT NULL,
+        email     TEXT NOT NULL,
+        PRIMARY KEY (process, step_key, email)
+    )");
+
+    // The onboarding/offboarding checklist itself — editable via
+    // admin_step_notify.php. is_auto=1 steps are wired to real provisioning
+    // code in api/onboard_action.php|offboard_action.php (currently 'fub' and
+    // 'constellation1' only) — adding a new step here is always a manual step.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS step_defs (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        process   TEXT    NOT NULL,   -- 'onboard' | 'offboard'
+        step_key  TEXT    NOT NULL,
+        label     TEXT    NOT NULL,
+        note      TEXT    NOT NULL DEFAULT '',
+        is_auto   INTEGER NOT NULL DEFAULT 0,
+        sort_ord  INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(process, step_key)
+    )");
+    // One-time seed from the checklist that used to be hardcoded in
+    // onboard_tools.php / offboard_tools.php — INSERT OR IGNORE so re-running
+    // this on an already-seeded install (or one with admin-added rows) is a no-op.
+    $seedSteps = [
+        ['onboard','agentedge',      'AgentEdge Account',   'Created when added to queue',              0, 10],
+        ['onboard','intranet',       'Company Intranet',    'Add user in everythinginnovate.com',       0, 20],
+        ['onboard','fub',            'Follow Up Boss',      'Auto-provision via API',                   1, 30],
+        ['onboard','constellation1', 'Constellation1',      'Auto-provision via API',                   1, 40],
+        ['onboard','dotloop',        'DotLoop',              'Add manually in DotLoop admin',           0, 50],
+        ['onboard','listingstoleads','ListingsToLeads',      'Add manually',                            0, 60],
+        ['onboard','maxa',           'MAXA Presents',        'Add manually',                            0, 70],
+        ['onboard','mls',            'MLS Access',            'Submit MLS new member form',             0, 80],
+        ['onboard','email_setup',    'Email & Signature',     'Set up company email + signature',       0, 90],
+        ['onboard','training',       'New Agent Training',    'Enroll in onboarding training program',  0, 100],
+
+        ['offboard','exit_interview',    'Exit Interview',           'Capture departure reason, last day, and book of business transfer', 0, 10],
+        ['offboard','final_commissions', 'Final Commission Review',  'Confirm all pending deals are closed and final check issued',       0, 20],
+        ['offboard','fub',               'Follow Up Boss',           'Auto-deactivate via API',                                            1, 30],
+        ['offboard','constellation1',    'Constellation1',           'Auto-deactivate via API',                                            1, 40],
+        ['offboard','dotloop',           'DotLoop',                  'Remove seat in DotLoop admin',                                       0, 50],
+        ['offboard','mls',               'MLS Access',               'Submit MLS membership removal form',                                 0, 60],
+        ['offboard','listingstoleads',   'ListingsToLeads',          'Remove from account',                                                0, 70],
+        ['offboard','maxa',              'MAXA Presents',            'Remove from account',                                                0, 80],
+        ['offboard','email_decom',       'Company Email',            'Decommission company email and signature',                           0, 90],
+        ['offboard','intranet',          'Company Intranet',         'Remove from everythinginnovate.com',                                 0, 100],
+        ['offboard','agentedge',         'AgentEdge Account',        'Archive agent in AgentEdge (last step)',                             0, 110],
+    ];
+    $seedStepIns = $pdo->prepare(
+        "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord) VALUES (?,?,?,?,?,?)"
+    );
+    foreach ($seedSteps as $s) { $seedStepIns->execute($s); }
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
     // Other apps (intranet, CRM) call /api/permissions.php to read this.
@@ -204,6 +267,33 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN personal_cal_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN cal_token        TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
+
+    // AgentEdge's own login credentials — the local replacement for Perfex
+    // tblstaff auth. A row is created either by the one-time bulk hash
+    // migration (source='migrated') or by backfilling after a successful
+    // Perfex-bridge login (source='local') — see attempt_login() in auth.php.
+    // name/photo/staffid are a denormalized identity cache so a fully local
+    // login never needs to hit Perfex at all.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_credentials (
+        email         TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        staffid       INTEGER NOT NULL DEFAULT 0,
+        name          TEXT NOT NULL DEFAULT '',
+        photo         TEXT,
+        source        TEXT NOT NULL DEFAULT 'local',  -- 'migrated' | 'local'
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Forgot-password reset tokens — single-use, short-lived. Also doubles as
+    // the "set your initial password" link for agents provisioned directly in
+    // AgentEdge (no Perfex account to fall back on).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        token      TEXT PRIMARY KEY,
+        email      TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at    TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_prt_email ON password_reset_tokens(email)");
 
     // HUD & Check document submissions
     $pdo->exec("CREATE TABLE IF NOT EXISTS hud_submissions (
@@ -272,6 +362,20 @@ function local_db(): PDO {
         uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_files_email ON agent_intake_files(agent_email)");
+
+    // Additional licenses beyond the primary one captured on agent_intake itself
+    // (e.g. multi-state licensees). Rewritten in full (delete+reinsert) on every
+    // intake save rather than diffed, since there's no stable per-row identity
+    // coming from the form.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_licenses (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email    TEXT NOT NULL,
+        license_number TEXT NOT NULL DEFAULT '',
+        license_state  TEXT NOT NULL DEFAULT '',
+        license_exp    TEXT NOT NULL DEFAULT '',
+        created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_licenses_email ON agent_intake_licenses(agent_email)");
 
     // Ensure headshots directory exists and is web-protected
     $hsDir = $dir . '/headshots';
@@ -440,15 +544,41 @@ function local_db(): PDO {
         slug TEXT PRIMARY KEY,
         name TEXT NOT NULL
     )");
-    $seedDepts = [['tech','Tech Support'],['onboarding','Onboarding'],['finance','Finance'],['general','General']];
-    $di = $pdo->prepare("INSERT OR IGNORE INTO support_departments (slug,name) VALUES (?,?)");
-    foreach ($seedDepts as $d) $di->execute($d);
+    try { $pdo->exec("ALTER TABLE support_departments ADD COLUMN sort_ord INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // Canonical department list + display order. INSERT OR IGNORE so existing
+    // rows (and any tickets already filed under them) are never dropped, then
+    // an explicit UPDATE keeps name/sort_ord correct even for rows seeded
+    // before this list existed (OR IGNORE alone wouldn't touch them).
+    $seedDepts = [
+        ['onboarding',          'Onboarding',            0],
+        ['support',             'Support',               1],
+        ['tech',                'Tech Support',          2],
+        ['finance',             'Finance',               3],
+        ['marketing',           'Marketing',             4],
+        ['legal-compliance',    'Legal & Compliance',    5],
+        ['training-education',  'Training & Education',  6],
+        ['compliance',          'Compliance',             7],
+        ['transactions',        'Transactions',          8],
+        ['offboarding',         'Offboarding',           9],
+        ['property-management', 'Property Management',  10],
+        ['notary',              'Notary',                11],
+    ];
+    $di = $pdo->prepare("INSERT OR IGNORE INTO support_departments (slug,name,sort_ord) VALUES (?,?,?)");
+    $du = $pdo->prepare("UPDATE support_departments SET name=?, sort_ord=? WHERE slug=?");
+    foreach ($seedDepts as $d) { $di->execute($d); $du->execute([$d[1], $d[2], $d[0]]); }
+
+    // Staff routed to a department — notified by email when a ticket lands there.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_department_staff (
+        dept_slug TEXT NOT NULL,
+        email     TEXT NOT NULL,
+        PRIMARY KEY (dept_slug, email)
+    )");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_tickets (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         title       TEXT    NOT NULL,
         body        TEXT    NOT NULL,
-        status      TEXT    NOT NULL DEFAULT 'open',  -- open | in_progress | closed
+        status      TEXT    NOT NULL DEFAULT 'open',  -- open | in_progress | answered | on_hold | closed
         dept_slug   TEXT,
         agent_email TEXT    NOT NULL,
         agent_name  TEXT    NOT NULL DEFAULT '',
@@ -458,6 +588,25 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tkt_agent ON support_tickets(agent_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tkt_status ON support_tickets(status)");
+    try { $pdo->exec("ALTER TABLE support_tickets ADD COLUMN issue_type TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Issue types — the second dropdown on the New Ticket form (Department >
+    // Issue Type > Details). A flat catalog, not scoped per department.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_issue_types (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL UNIQUE,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $seedIssueTypes = [
+        'Dotloop', 'Legal & Compliance', 'Profile Update', 'Listings2Leads', 'Email Signature',
+        'Google Business Page', 'Facebook', 'Cap/Transaction Questions', 'Compliant', 'Coaching Program',
+        'MLS', 'Commission Checks', 'Agent Billing', 'Broker Pay', 'Revenue Share', '1099', 'Stocks',
+        'Swag', 'Marketing', 'Signs', 'Onboarding', 'Offboarding', 'Team Agreements', 'Website',
+        'Charitable Contribution', 'University/Skool', 'MAXA', 'FUB', 'Notary',
+    ];
+    $iti = $pdo->prepare("INSERT OR IGNORE INTO support_issue_types (name,sort_ord) VALUES (?,?)");
+    foreach ($seedIssueTypes as $i => $name) $iti->execute([$name, $i]);
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_messages (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -468,6 +617,47 @@ function local_db(): PDO {
         created_at TEXT   NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktmsg_tid ON support_ticket_messages(ticket_id)");
+
+    // CC'd staff on a ticket — included in reply notifications alongside the
+    // agent/department staff.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_cc (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id  INTEGER NOT NULL,
+        email      TEXT    NOT NULL,
+        added_by   TEXT    NOT NULL DEFAULT '',
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktcc_tid ON support_ticket_cc(ticket_id)");
+
+    // Running activity log (status changes, CC add/remove, assignment) shown
+    // inline in the ticket thread alongside messages.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id   INTEGER NOT NULL,
+        event_type  TEXT    NOT NULL,
+        detail      TEXT    NOT NULL DEFAULT '',
+        actor_email TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktevt_tid ON support_ticket_events(ticket_id)");
+
+    // Predefined replies — quick canned responses staff can insert into a reply.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_canned_replies (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        title      TEXT    NOT NULL,
+        body       TEXT    NOT NULL,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Knowledge base links — staff can insert one into a reply for agent resources.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_kb_links (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        title      TEXT    NOT NULL,
+        url        TEXT    NOT NULL,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
 
     // ── Workflow Boards (Kanban) ───────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS wf_boards (
@@ -857,6 +1047,37 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_trsvp_event ON training_rsvps(event_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_trsvp_agent ON training_rsvps(agent_email)");
+    // 'registered' or 'waitlisted' — set when an event has a capacity and is full.
+    try { $pdo->exec("ALTER TABLE training_rsvps ADD COLUMN status TEXT NOT NULL DEFAULT 'registered'"); } catch (\Exception $e) {}
+
+    // Per-event capacity for training events. Training events themselves live in
+    // Google Calendar (no local row) — this just attaches an optional headcount cap.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS training_events (
+        event_id TEXT PRIMARY KEY,
+        capacity INTEGER
+    )");
+
+    // ── Company Calendar "Events" tab — same RSVP/capacity/waitlist pattern as
+    // Training above, but a separate Google Calendar + separate RSVP pool, so
+    // registering for a training session and a company event are independent.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS events_rsvps (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id    TEXT    NOT NULL,
+        event_title TEXT    NOT NULL DEFAULT '',
+        event_date  TEXT    NOT NULL DEFAULT '',
+        agent_email TEXT    NOT NULL,
+        agent_name  TEXT    NOT NULL DEFAULT '',
+        rsvped_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        status      TEXT    NOT NULL DEFAULT 'registered',
+        UNIQUE(event_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ersvp_event ON events_rsvps(event_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ersvp_agent ON events_rsvps(agent_email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS events_calendar (
+        event_id TEXT PRIMARY KEY,
+        capacity INTEGER
+    )");
 
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
@@ -911,6 +1132,23 @@ function local_db(): PDO {
         $backfill->execute(['Regional Business Press','Providence Business News','Rhode Island business journal','Advertising@PBN.com (paid release/People-on-the-Move submission at pbn.com)','New market opening — Cranston, RI. Consider a paid release or People on the Move for the branch leader.',170,'RI','Providence Business News']);
     }
 
+    // ── Suggestions — attachments (screenshots/documents) ─────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS suggestion_files (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        suggestion_id INTEGER NOT NULL,
+        orig_name     TEXT    NOT NULL,
+        mime_type     TEXT    NOT NULL DEFAULT '',
+        size_bytes    INTEGER NOT NULL DEFAULT 0,
+        storage_key   TEXT    NOT NULL,
+        uploaded_by   TEXT    NOT NULL,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_suggestion_files_sugg ON suggestion_files(suggestion_id)");
+
+    $sugUploadsDir = $dir . '/suggestion_uploads';
+    if (!is_dir($sugUploadsDir)) @mkdir($sugUploadsDir, 0750, true);
+    $sugUploadsHt = $sugUploadsDir . '/.htaccess';
+    if (!file_exists($sugUploadsHt)) @file_put_contents($sugUploadsHt, "Deny from all\n");
 
     // Exit interview — self-service form filled out by a departing agent while
     // their AgentEdge login is still active (offboarding step 'exit_interview',
@@ -973,6 +1211,36 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
     return $pdo;
+}
+
+// Build the "ST - Market Center" display label for a roster row. If $state
+// is blank (e.g. a row edited/imported without a state_code), look up the
+// same bare MC name in the market_centers master list and other
+// innovate_roster rows so the row still joins its proper group instead of
+// rendering as an orphaned state-less duplicate (e.g. "RALEIGH" vs
+// "NC - RALEIGH").
+function mc_label(string $name, string $state): string {
+    $name  = trim($name);
+    $state = trim($state);
+    if ($name === '') return '';
+    if ($state !== '') return "$state - $name";
+
+    static $known = null;
+    if ($known === null) {
+        $known = [];
+        try {
+            $pdo = local_db();
+            foreach ($pdo->query("SELECT name, state_code FROM market_centers WHERE state_code != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $known[strtolower(trim($r['name']))] = trim($r['state_code']);
+            }
+            foreach ($pdo->query("SELECT market_center, state_code FROM innovate_roster WHERE state_code != '' AND market_center != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $key = strtolower(trim($r['market_center']));
+                if (!isset($known[$key])) $known[$key] = trim($r['state_code']);
+            }
+        } catch (\Exception $e) {}
+    }
+    $key = strtolower($name);
+    return isset($known[$key]) ? "{$known[$key]} - $name" : $name;
 }
 
 // All enabled external nav links, ordered for sidebar display.

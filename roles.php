@@ -117,9 +117,14 @@ function is_admin(): bool          { return !empty(current_perms()['isAdmin']); 
 function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
 function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
 function is_recruiter(): bool      { return (current_perms()['role'] ?? '') === 'recruiter'; }
+// Can view "Leaders & Recruiters" visibility docs (super_admin, mc_leader, bic, recruiter)
+function can_view_leader_docs(): bool { return is_super_admin() || is_mc_leader() || is_bic() || is_recruiter(); }
 function is_leader(): bool         { return is_admin() || is_bic() || is_mc_leader(); }
 // Can post announcements (any role except plain agent/recruiter)
 function can_post_announcements(): bool { return is_admin() || is_mc_leader() || is_bic(); }
+// Can send a Company Email — same tier as announcements: admin/staff (any audience),
+// mc_leader/bic (only the Market Centers in their own mc_slugs).
+function can_send_company_email(): bool { return can_post_announcements(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }

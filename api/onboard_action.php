@@ -76,35 +76,73 @@ if ($action === 'search_crm') {
     $q = trim($_GET['q'] ?? '');
     if (strlen($q) < 2) json_out(['ok'=>true,'results'=>[]]);
 
-    $c   = cfg();
-    $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-    $token = $c['crm_token'] ?? '';
-    if ($token === '') json_out(['ok'=>false,'error'=>'CRM token not configured']);
-
-    $url = $base . '/public/retention-roster?token=' . urlencode($token);
-    $ctx = stream_context_create(['http'=>['timeout'=>10,'header'=>"Accept: application/json\r\n"]]);
-    $raw = @file_get_contents($url, false, $ctx);
-    if ($raw === false) json_out(['ok'=>false,'error'=>'Could not reach CRM roster']);
-
-    $data = json_decode($raw, true);
-    $agents = $data['agents'] ?? $data ?? [];
-    if (!is_array($agents)) json_out(['ok'=>true,'results'=>[]]);
-
-    $ql = strtolower($q);
+    $c       = cfg();
+    $base    = rtrim($c['crm_base'] ?? '', '/');
+    $token   = $c['crm_token'] ?? '';
     $matches = [];
-    foreach ($agents as $a) {
-        $name  = $a['name'] ?? ($a['firstName'] ?? '') . ' ' . ($a['lastName'] ?? '');
-        $email = $a['email'] ?? '';
-        if (stripos($name, $ql) !== false || stripos($email, $ql) !== false) {
+
+    // External CRM (bold360), only when crm_base is configured.
+    if ($base !== '') {
+        $url = $base . '/public/retention-roster?token=' . urlencode($token);
+        $ctx = stream_context_create(['http'=>['timeout'=>10,'header'=>"Accept: application/json\r\n"]]);
+        $raw = @file_get_contents($url, false, $ctx);
+        $data   = $raw !== false ? json_decode($raw, true) : null;
+        $agents = $data['agents'] ?? $data ?? [];
+
+        if (is_array($agents)) {
+            $ql = strtolower($q);
+            foreach ($agents as $a) {
+                $name  = $a['name'] ?? trim(($a['firstName'] ?? '') . ' ' . ($a['lastName'] ?? ''));
+                $email = $a['email'] ?? '';
+                if (stripos($name, $ql) !== false || stripos($email, $ql) !== false) {
+                    $matches[] = [
+                        'name'         => trim($name),
+                        'email'        => $email,
+                        'marketCenter' => $a['marketCenter'] ?? $a['market_center'] ?? '',
+                        'phone'        => $a['phone'] ?? $a['phoneNumber'] ?? '',
+                    ];
+                }
+                if (count($matches) >= 10) break;
+            }
+        }
+    }
+
+    // Local Perfex fallback — used when crm_base is empty (this deployment's
+    // normal mode; see config.php) or the external CRM was unreachable.
+    if (!$matches) {
+        $like = '%' . $q . '%';
+        $rows = db_query(
+            "SELECT staffid, email, firstname, lastname, phonenumber
+             FROM tblstaff
+             WHERE active=1 AND (firstname LIKE ? OR lastname LIKE ? OR email LIKE ?)
+             LIMIT 10",
+            [$like, $like, $like]
+        );
+
+        $mcByName = [];
+        try {
+            $mcRows = local_db()->query(
+                "SELECT agent_name, state_code, market_center FROM innovate_roster WHERE active=1 AND market_center != ''"
+            )->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($mcRows as $r) {
+                $key = strtolower(trim($r['agent_name']));
+                $mc  = trim($r['market_center']);
+                $st  = trim($r['state_code']);
+                $mcByName[$key] = mc_label($mc, $st);
+            }
+        } catch (\Throwable $e) {}
+
+        foreach ($rows as $s) {
+            $name = trim($s['firstname'] . ' ' . $s['lastname']);
             $matches[] = [
-                'name'         => trim($name),
-                'email'        => $email,
-                'marketCenter' => $a['marketCenter'] ?? $a['market_center'] ?? '',
-                'phone'        => $a['phone'] ?? $a['phoneNumber'] ?? '',
+                'name'         => $name,
+                'email'        => $s['email'],
+                'marketCenter' => $mcByName[strtolower($name)] ?? '',
+                'phone'        => $s['phonenumber'] ?? '',
             ];
         }
-        if (count($matches) >= 10) break;
     }
+
     json_out(['ok'=>true,'results'=>$matches]);
 }
 
@@ -142,8 +180,18 @@ if ($action === 'add_to_queue') {
         $body['role']       ?? 'agent',
         $body['notes']      ?? ''
     );
+    $queueId = $result['id'];
 
-    json_out(['ok'=>true,'id'=>$result['id']]);
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true,'id'=>$queueId]);
+    if ($result['wasNew']) {
+        try {
+            require_once __DIR__ . '/../lib/notifications.php';
+            dispatch_notification_queue();
+        } catch (\Throwable $e) {}
+    }
+    exit;
 }
 
 // ── POST: set_state ───────────────────────────────────────────────────────────
@@ -175,6 +223,14 @@ if ($action === 'mark_done') {
          WHERE queue_id=? AND tool_key=?"
     );
     $upd->execute([$status, $doneBy, $doneAt, $queueId, $toolKey]);
+
+    if (in_array($status, ['done','skipped'], true)) {
+        try {
+            require_once __DIR__ . '/../lib/notifications.php';
+            maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
+        } catch (\Throwable $e) {}
+    }
+
     json_out(['ok'=>true]);
 }
 
@@ -219,6 +275,11 @@ if ($action === 'provision') {
         $upd->execute([$errMsg, $queueId, $toolKey]);
         json_out(['ok'=>false,'error'=>$errMsg]);
     }
+
+    try {
+        require_once __DIR__ . '/../lib/notifications.php';
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
+    } catch (\Throwable $e) {}
 
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
 }

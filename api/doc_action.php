@@ -13,7 +13,13 @@ $db = local_db();
 // GET — folder tree or folder contents
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
-    $vis = is_admin() ? '' : "AND visibility='all'";
+    if (is_admin()) {
+        $vis = '';
+    } elseif (can_view_leader_docs()) {
+        $vis = "AND visibility IN ('all','leaders')";
+    } else {
+        $vis = "AND visibility='all'";
+    }
 
     if ($folderId === null) {
         // Top-level folders
@@ -51,7 +57,7 @@ if ($action === 'create_folder') {
     $name     = trim($in['name'] ?? '');
     if (!$name) { http_response_code(400); echo json_encode(['error'=>'name required']); exit; }
     $parentId = !empty($in['parent_id']) ? (int)$in['parent_id'] : null;
-    $vis      = in_array($in['visibility']??'all',['all','admin']) ? $in['visibility'] : 'all';
+    $vis      = in_array($in['visibility']??'all',['all','admin','leaders']) ? $in['visibility'] : 'all';
     $db->prepare("INSERT INTO doc_folders (parent_id,name,visibility,created_by) VALUES (?,?,?,?)")
        ->execute([$parentId,$name,$vis,$me['email']]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]);

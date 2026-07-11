@@ -1,7 +1,9 @@
 <?php
-// Google OAuth handler for AgentEdge.
-// ?start=1  → redirect to Google
-// ?code=...  → callback from Google
+// Google OAuth callback for AgentEdge.
+// This is the redirect URI registered in Google Cloud Console:
+// https://agentedge.innovateonline.com/auth_google.php
+// login.php builds the "Sign in with Google" link and stores the CSRF token
+// in $_SESSION['google_oauth_state']; Google redirects back here with a code.
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 
@@ -10,36 +12,28 @@ if (current_agent()) { header('Location: index.php'); exit; }
 $c             = cfg();
 $client_id     = $c['google_client_id']     ?? '';
 $client_secret = $c['google_client_secret'] ?? '';
-$redirect_uri  = $c['google_redirect_uri']  ?? ('https://' . $_SERVER['HTTP_HOST'] . '/auth_google.php');
+$redirect_uri  = !empty($c['google_redirect_uri']) ? $c['google_redirect_uri'] : ('https://' . $_SERVER['HTTP_HOST'] . '/auth_google.php');
 
-if ($client_id === '') {
-    header('Location: login.php?err=google_not_configured'); exit;
-}
-
-// ── Step 1: redirect to Google ─────────────────────────────────────────────
-if (isset($_GET['start'])) {
-    $state = bin2hex(random_bytes(16));
-    $_SESSION['oauth_state'] = $state;
-    $params = http_build_query([
-        'client_id'     => $client_id,
-        'redirect_uri'  => $redirect_uri,
-        'response_type' => 'code',
-        'scope'         => 'openid email profile',
-        'state'         => $state,
-        'prompt'        => 'select_account',
-    ]);
-    header('Location: https://accounts.google.com/o/oauth2/v2/auth?' . $params);
+function google_fail(string $code): void {
+    header('Location: login.php?google_err=' . $code);
     exit;
 }
 
-// ── Step 2: callback ────────────────────────────────────────────────────────
+if ($client_id === '') {
+    google_fail('token_exchange_failed');
+}
+
+if (!empty($_GET['error'])) {
+    google_fail('access_denied');
+}
+
 $code  = $_GET['code']  ?? '';
 $state = $_GET['state'] ?? '';
-$saved = $_SESSION['oauth_state'] ?? '';
-unset($_SESSION['oauth_state']);
+$saved = $_SESSION['google_oauth_state'] ?? '';
+unset($_SESSION['google_oauth_state']);
 
-if (!$code || !$saved || !hash_equals($saved, $state)) {
-    header('Location: login.php?err=oauth_state'); exit;
+if ($code === '' || $saved === '' || !hash_equals($saved, $state)) {
+    google_fail('state_mismatch');
 }
 
 // Exchange code for access token
@@ -58,7 +52,7 @@ $tokenRaw = @file_get_contents('https://oauth2.googleapis.com/token', false, str
 ]]));
 $token       = $tokenRaw ? json_decode($tokenRaw, true) : null;
 $accessToken = $token['access_token'] ?? '';
-if (!$accessToken) { header('Location: login.php?err=oauth_token'); exit; }
+if (!$accessToken) { google_fail('token_exchange_failed'); }
 
 // Get user info from Google
 $userRaw = @file_get_contents('https://www.googleapis.com/oauth2/v3/userinfo', false, stream_context_create(['http' => [
@@ -71,39 +65,75 @@ $email = strtolower(trim($user['email'] ?? ''));
 $name  = $user['name']    ?? $email;
 $photo = $user['picture'] ?? null;
 
-if ($email === '') { header('Location: login.php?err=oauth_token'); exit; }
+if ($email === '') { google_fail('token_exchange_failed'); }
 
-// Accept if: (1) email has a role in AgentEdge's own table (covers staff/admins),
-// OR (2) email is in the CRM roster (covers agents).
-require_once __DIR__ . '/local_db.php';
-$inLocalRoles = false;
-if (function_exists('local_db')) {
-    $rs = local_db()->prepare("SELECT role FROM agent_roles WHERE email=?");
-    $rs->execute([$email]);
-    $inLocalRoles = (bool)$rs->fetch();
-}
+// Local-first: if this email already has an AgentEdge credential row
+// (migrated from Perfex, or backfilled from a prior password login), trust
+// that identity directly — no need to touch Perfex at all for this sign-in.
+$localCred = local_credential_lookup($email);
+if ($localCred) {
+    $agent = credential_to_agent($localCred);
+    if (empty($agent['photo']) && $photo) $agent['photo'] = $photo;
+} else {
+    // Match against tblstaff (Perfex) — the same source of truth password logins use.
+    $u = db_one(
+        "SELECT staffid, email, firstname, lastname, profile_image, active
+         FROM tblstaff WHERE email = ? LIMIT 1",
+        [$email]
+    );
 
-if (!$inLocalRoles) {
-    $c    = cfg();
-    $base = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-    $tok  = $c['crm_token'] ?? '';
-    $wUrl = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
-    $wRaw = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
-    $whoami = $wRaw ? json_decode($wRaw, true) : null;
-    if (!$whoami || empty($whoami['email'])) {
-        header('Location: login.php?err=not_in_roster'); exit;
+    if ($u) {
+        if (!empty($c['require_active']) && (int)$u['active'] !== 1) {
+            google_fail('account_disabled');
+        }
+        $agent = [
+            'id'    => (int)$u['staffid'],
+            'email' => $u['email'],
+            'name'  => trim($u['firstname'] . ' ' . $u['lastname']) ?: $name,
+            'photo' => $u['profile_image'] ?: $photo,
+        ];
+    } else {
+        // Not staff in Perfex. Accept if either:
+        // (1) this email already has a role assigned locally — covers admins/
+        //     super_admins who aren't Perfex staff, or
+        // (2) it's in the CRM roster — covers agents not yet synced to tblstaff.
+        // We never silently create access for an email that matches neither.
+        $hasRole = false;
+        try {
+            $rs = local_db()->prepare("SELECT 1 FROM agent_roles WHERE email = ? LIMIT 1");
+            $rs->execute([$email]);
+            $hasRole = (bool)$rs->fetchColumn();
+        } catch (\Throwable $e) {}
+
+        if (!$hasRole) {
+            $whoami = null;
+            $base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+            $tok    = $c['crm_token'] ?? '';
+            if ($tok !== '') {
+                $wUrl = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
+                $wRaw = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
+                $whoami = $wRaw ? json_decode($wRaw, true) : null;
+            }
+            if (!$whoami || empty($whoami['email'])) {
+                google_fail('user_create_failed');
+            }
+            if (!empty($whoami['name'])) $name = $whoami['name'];
+
+            // First Google sign-in for a roster agent not in tblstaff — provision a
+            // default role so role-gated pages and /api/permissions.php have a row to read.
+            try {
+                local_db()->prepare("INSERT OR IGNORE INTO agent_roles (email, role) VALUES (?, 'agent')")->execute([$email]);
+            } catch (\Throwable $e) {
+                google_fail('user_create_failed');
+            }
+        }
+
+        $agent = ['id' => 0, 'email' => $email, 'name' => $name, 'photo' => $photo];
     }
-    if (!empty($whoami['name'])) $name = $whoami['name'];
 }
 
-// Create session — same format as bridge login
 session_regenerate_id(true);
-$_SESSION['agent'] = [
-    'id'    => 0,
-    'email' => $email,
-    'name'  => $name,
-    'photo' => $photo,
-];
+$_SESSION['agent'] = $agent;
 unset($_SESSION['perms']); // force fresh permissions lookup
 
 header('Location: index.php');
