@@ -186,6 +186,20 @@ if ($action === 'add_to_queue') {
     ]);
     $queueId = (int)$pdo->lastInsertId();
 
+    // Stamp agent_admin.terminated_date as of today — the day an agent enters
+    // the Offboarding Queue, not their eventual last day — so the Network
+    // tree (api/network_tree.php) immediately shows them as a void/vacant
+    // position instead of waiting for the full offboarding process to finish.
+    $termUpsert = $pdo->prepare(
+        "INSERT INTO agent_admin (email, terminated_date, updated_by, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(email) DO UPDATE SET
+            terminated_date = excluded.terminated_date,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at"
+    );
+    $termUpsert->execute([$email, date('Y-m-d'), $agent['email']]);
+
     // Insert a step row for each tool
     $stepIns = $pdo->prepare(
         "INSERT OR IGNORE INTO offboard_steps
@@ -338,6 +352,16 @@ if ($action === 'cancel_offboarding') {
     $queueId = (int)($body['queue_id'] ?? 0);
     $upd = $pdo->prepare("UPDATE offboard_queue SET status='cancelled' WHERE id=?");
     $upd->execute([$queueId]);
+
+    // Clear the terminated_date auto-set by add_to_queue — this agent isn't
+    // actually leaving, so the Network tree shouldn't keep showing them as vacant.
+    $q = $pdo->prepare("SELECT agent_email FROM offboard_queue WHERE id=?");
+    $q->execute([$queueId]);
+    $email = $q->fetchColumn();
+    if ($email) {
+        $pdo->prepare("UPDATE agent_admin SET terminated_date='' WHERE email=?")->execute([$email]);
+    }
+
     json_out(['ok'=>true]);
 }
 

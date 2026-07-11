@@ -52,7 +52,8 @@ $stateNames = [
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Roster Changes — AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 .bo-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
 .chg-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px;

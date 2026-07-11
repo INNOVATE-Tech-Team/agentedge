@@ -53,6 +53,7 @@ foreach ($lessons as $lesson) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= htmlspecialchars($course['title']) ?> — INNOVATE University</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .course-header{background:linear-gradient(135deg,#1a1a1a 0%,#2d3a1e 100%);border-radius:12px;padding:28px 32px;color:white;margin-bottom:20px;display:flex;gap:24px;align-items:flex-start}

@@ -31,6 +31,8 @@ $agent = require_login();
     /* Root card */
     .root-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f9fdf5;border:2px solid #82C112;border-radius:10px;margin-bottom:20px}
     .root-avatar{width:44px;height:44px;border-radius:50%;background:#82C112;color:#000;font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .root-card.vacant{background:#f3f3f3;border-color:#ccc;border-style:dashed}
+    .root-avatar.vacant{background:#e8e8e8;color:#999}
     .root-info{flex:1;min-width:0}
     .root-name{font-size:15px;font-weight:800;color:#111}
     .root-email{font-size:12px;color:#666}
@@ -69,9 +71,14 @@ $agent = require_login();
     .ag-card:hover{border-color:#c3dfa8;background:#fafff5}
     .ag-card.selected{border-color:#82C112;background:#f9fdf5;box-shadow:0 2px 8px rgba(130,193,18,.2)}
     .ag-card.no-kids{opacity:.7;cursor:default}
+    .ag-card.vacant{border-style:dashed;border-color:#ccc;background:#fafafa}
+    .ag-card.vacant.selected{border-color:#999;background:#f3f3f3}
     .ag-avatar{width:34px;height:34px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .ag-avatar.vacant{background:#e8e8e8;color:#999}
     .ag-card.selected .ag-avatar{background:#82C112;color:#000}
+    .ag-card.vacant.selected .ag-avatar{background:#ccc;color:#666}
     .ag-name{font-size:11px;font-weight:700;color:#222;line-height:1.2;word-break:break-word}
+    .ag-name.vacant-label{color:#999;font-style:italic;font-weight:600}
     /* Production stats */
     .ag-vol{font-size:13px;font-weight:800;color:#2d7a00;margin-top:2px}
     .ag-vol.zero{color:#ccc;font-weight:500}
@@ -94,6 +101,8 @@ $agent = require_login();
     /* Sponsor card (one level above root) */
     .sponsor-card{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;margin-bottom:8px}
     .sponsor-avatar{width:34px;height:34px;border-radius:50%;background:#ddd;color:#555;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .sponsor-card.vacant{background:#f3f3f3;border-style:dashed}
+    .sponsor-avatar.vacant{background:#e8e8e8;color:#999}
     .sponsor-info{flex:1;min-width:0}
     .sponsor-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-bottom:1px}
     .sponsor-name{font-size:13px;font-weight:700;color:#333}
@@ -256,14 +265,20 @@ function renderLevels() {
 
     kids.forEach(kid => {
       const hasKids = (kid.children||[]).length > 0;
+      const isVacant = !!kid.vacant; // offboarded agent kept only because a downline still sits under them
       const isClickable = hasKids && lvl < 5;
       const isSelected = selectedAtThisLevel && selectedAtThisLevel === kid;
       const vol = fmtMoney(kid.volume);
 
       const deals = kid.deals || 0;
       const card = document.createElement('div');
-      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!isClickable ? ' no-kids' : '');
-      card.innerHTML = `
+      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!isClickable ? ' no-kids' : '') + (isVacant ? ' vacant' : '');
+      card.innerHTML = isVacant ? `
+        <div class="ag-avatar vacant">${esc(initials(kid.name))}</div>
+        <div class="ag-name vacant-label">${esc(kid.name)}</div>
+        <div class="ag-deals">departed — recruits below</div>
+        <div class="ag-divider"></div>
+        <div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : `
         <div class="ag-avatar">${esc(initials(kid.name))}</div>
         <div class="ag-name">${esc(kid.name)}</div>
         <div class="ag-vol${vol ? '' : ' zero'}">${vol || '—'}</div>
@@ -306,11 +321,16 @@ function renderTree(tree, totalCount, sponsor) {
   if (sponsor) {
     const sponsorEl = document.createElement('div');
     const sVol = fmtMoney(sponsor.volume);
-    const viewLink = CAN_SEARCH
+    const viewLink = (CAN_SEARCH && !sponsor.vacant)
       ? `<a class="sponsor-link" href="#" onclick="event.preventDefault();searchByEmail('${esc(sponsor.email)}')">View network →</a>`
       : '';
-    sponsorEl.className = 'sponsor-card';
-    sponsorEl.innerHTML = `
+    sponsorEl.className = 'sponsor-card' + (sponsor.vacant ? ' vacant' : '');
+    sponsorEl.innerHTML = sponsor.vacant ? `
+      <div class="sponsor-avatar vacant">${esc(initials(sponsor.name))}</div>
+      <div class="sponsor-info">
+        <div class="sponsor-label">↑ Sponsored by</div>
+        <div class="sponsor-name vacant-label">${esc(sponsor.name)} — departed</div>
+      </div>` : `
       <div class="sponsor-avatar">${esc(initials(sponsor.name))}</div>
       <div class="sponsor-info">
         <div class="sponsor-label">↑ Sponsored by</div>
@@ -329,8 +349,16 @@ function renderTree(tree, totalCount, sponsor) {
   const vol       = fmtMoney(tree.volume);
   const rootDeals = tree.deals || 0;
   const root = document.createElement('div');
-  root.className = 'root-card';
-  root.innerHTML = `
+  root.className = 'root-card' + (tree.vacant ? ' vacant' : '');
+  root.innerHTML = tree.vacant ? `
+    <div class="root-avatar vacant">${esc(initials(tree.name))}</div>
+    <div class="root-info">
+      <div class="root-name vacant-label">${esc(tree.name)} — departed</div>
+      <div class="root-email">${esc(tree.email||'')}</div>
+    </div>
+    <div class="root-chips">
+      <span class="chip chip-rec">${totalCount} in network</span>
+    </div>` : `
     <div class="root-avatar">${esc(initials(tree.name))}</div>
     <div class="root-info">
       <div class="root-name">${esc(tree.name)}</div>

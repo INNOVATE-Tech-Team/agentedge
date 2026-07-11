@@ -14,12 +14,10 @@ const evCache = {};
 const SCOPES = {
   company:        { bg: '#82C112', text: '#111' },
   'market-center':{ bg: '#2C9CC9', text: '#fff' },
+  personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
-  ics:            { bg: '#0891b2', text: '#fff' },
 };
-
-let hasPersonalCal = false;
 
 function calEsc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"]/g,
@@ -72,22 +70,31 @@ async function loadEvents(key) {
   const company  = companyRes.status  === 'fulfilled' ? (companyRes.value.events  ?? []) : [];
   const training = trainingRes.status === 'fulfilled' ? (trainingRes.value.events ?? []) : [];
   const events   = eventsRes.status   === 'fulfilled' ? (eventsRes.value.events   ?? []) : [];
-  const personalData = personalRes.status === 'fulfilled' ? personalRes.value : { events: [], has_url: false };
-  const icsEvents = (personalData.events ?? []).map(e => ({ ...e, scope: 'ics' }));
+  const personal = personalRes.status === 'fulfilled' ? (personalRes.value.events ?? []) : [];
+  const hasPersonalUrl = personalRes.status === 'fulfilled' ? (personalRes.value.has_url ?? false) : false;
 
-  hasPersonalCal = !!personalData.has_url;
-  updateMyCalBar();
+  // Update personal bar status text
+  const personalStatus = document.getElementById('cal-personal-status');
+  if (personalStatus) {
+    if (!hasPersonalUrl) {
+      personalStatus.textContent = 'No calendar synced yet.';
+    } else if (personal.length) {
+      personalStatus.textContent = personal.length + ' event' + (personal.length !== 1 ? 's' : '') + ' this month from your personal calendar.';
+    } else {
+      personalStatus.textContent = 'Calendar synced — no events this month.';
+    }
+  }
 
-  evCache[key] = [...company, ...training, ...events, ...icsEvents].sort((a, b) => a.date.localeCompare(b.date));
+  evCache[key] = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 
 function filtered(evs) {
-  if (calFilter === 'all')     return evs;
-  if (calFilter === 'mc')      return evs.filter(e => e.scope === 'market-center');
-  if (calFilter === 'training')return evs.filter(e => e.scope === 'training');
-  if (calFilter === 'events')  return evs.filter(e => e.scope === 'events');
-  if (calFilter === 'mycal')   return evs.filter(e => e.scope === 'ics');
+  if (calFilter === 'all')      return evs;
+  if (calFilter === 'mc')       return evs.filter(e => e.scope === 'market-center');
+  if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
+  if (calFilter === 'events')   return evs.filter(e => e.scope === 'events');
+  if (calFilter === 'mycal')    return evs.filter(e => e.scope === 'personal');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -133,6 +140,7 @@ function renderGrid(evs) {
 
 function scopeLabel(scope) {
   if (scope === 'market-center') return agentMC || 'Market Center';
+  if (scope === 'personal')      return 'Personal';
   if (scope === 'training')      return 'Training';
   if (scope === 'events')        return 'Events';
   return 'Company';
@@ -189,11 +197,11 @@ function renderList(evs) {
 function updateTabCounts(evs) {
   const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0 };
   evs.forEach(e => {
-    if      (e.scope === 'company')       counts.company++;
-    else if (e.scope === 'market-center') counts.mc++;
-    else if (e.scope === 'training')      counts.training++;
-    else if (e.scope === 'events')        counts.events++;
-    else if (e.scope === 'ics')           counts.mycal++;
+    if      (e.scope === 'company')        counts.company++;
+    else if (e.scope === 'market-center')  counts.mc++;
+    else if (e.scope === 'training')       counts.training++;
+    else if (e.scope === 'events')         counts.events++;
+    else if (e.scope === 'personal')       counts.mycal++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;
@@ -213,6 +221,7 @@ async function calDraw() {
   document.getElementById('cal-event-list-body').innerHTML = '';
   updateTrainingBar();
   updateEventsBar();
+  updatePersonalBar();
   const evs = await loadEvents(calKey());
   renderGrid(evs);
   renderList(evs);
@@ -251,13 +260,13 @@ function updateEventsBar() {
 }
 
 function updateMyCalBar() {
-  const bar       = document.getElementById('cal-mycal-bar');
-  const connected = document.getElementById('cal-mycal-connected');
-  const setup     = document.getElementById('cal-mycal-setup');
-  if (!bar) return;
-  bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
-  if (connected) connected.style.display = hasPersonalCal ? 'block' : 'none';
-  if (setup)     setup.style.display     = hasPersonalCal ? 'none'  : 'block';
+  const bar = document.getElementById('cal-mycal-bar');
+  if (bar) bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
+}
+
+function updatePersonalBar() {
+  const bar = document.getElementById('cal-personal-bar');
+  if (bar) bar.style.display = calFilter === 'personal' ? 'flex' : 'none';
 }
 
 document.querySelectorAll('.cal-tab').forEach(t => {
@@ -267,6 +276,7 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     calFilter = t.dataset.filter;
     updateTrainingBar();
     updateEventsBar();
+    updatePersonalBar();
     updateMyCalBar();
     if (calFilter === 'mycal') loadCalFeedUrl();
     loadEvents(calKey()).then(evs => { renderGrid(evs); renderList(evs); });
@@ -577,49 +587,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   });
 }
 
-// ── My Calendar: ICS URL save / remove / change ───────────────────────────────
-
-async function savePersonalCalUrl(url) {
-  const msg = document.getElementById('cal-mycal-msg');
-  const btn = document.getElementById('cal-mycal-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
-  if (msg) { msg.textContent = ''; msg.style.color = '#888'; }
-  try {
-    const r = await fetch('api/personal_cal.php', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Save failed');
-    hasPersonalCal = url !== '';
-    delete evCache[calKey()];
-    updateMyCalBar();
-    calDraw();
-  } catch (err) {
-    if (msg) { msg.textContent = err.message; msg.style.color = '#c00'; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
-  }
-}
-
-document.getElementById('cal-mycal-save-btn')?.addEventListener('click', () => {
-  const url = (document.getElementById('cal-mycal-url')?.value || '').trim();
-  if (!url) return;
-  savePersonalCalUrl(url);
-});
-
-document.getElementById('cal-mycal-remove-btn')?.addEventListener('click', () => {
-  if (!confirm('Disconnect your personal calendar?')) return;
-  savePersonalCalUrl('');
-});
-
-document.getElementById('cal-mycal-change-btn')?.addEventListener('click', () => {
-  hasPersonalCal = false;
-  updateMyCalBar();
-});
-
-// ── Outbound ICS feed: load URL, copy, regenerate ────────────────────────────
+// -- Outbound ICS feed --------------------------------------------------------
 
 let calFeedLoaded = false;
 
@@ -627,40 +595,32 @@ async function loadCalFeedUrl(force) {
   if (calFeedLoaded && !force) return;
   const input = document.getElementById('cal-feed-url');
   if (!input) return;
-  input.value = 'Loading…';
+  input.value = 'Loading...';
   try {
     const r = await fetch('api/cal_token.php', { credentials: 'same-origin' });
     const d = await r.json();
-    if (d.ok && d.feed_url) {
-      input.value = d.feed_url;
-      calFeedLoaded = true;
-    } else {
-      input.value = '';
-    }
-  } catch (e) {
-    input.value = '';
-  }
+    if (d.ok && d.feed_url) { input.value = d.feed_url; calFeedLoaded = true; }
+    else { input.value = ''; }
+  } catch (e) { input.value = ''; }
 }
 
 document.getElementById('cal-feed-copy-btn')?.addEventListener('click', () => {
   const input = document.getElementById('cal-feed-url');
   const msg   = document.getElementById('cal-feed-msg');
-  if (!input?.value || input.value === 'Loading…') return;
-  navigator.clipboard?.writeText(input.value).then(() => {
-    if (msg) { msg.textContent = 'Copied!'; setTimeout(() => { if (msg) msg.textContent = ''; }, 2000); }
-  }).catch(() => {
-    input.select();
-    document.execCommand('copy');
-    if (msg) { msg.textContent = 'Copied!'; setTimeout(() => { if (msg) msg.textContent = ''; }, 2000); }
-  });
+  if (!input || !input.value || input.value === 'Loading...') return;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(input.value).then(() => {
+      if (msg) { msg.textContent = 'Copied!'; setTimeout(() => { if (msg) msg.textContent = ''; }, 2000); }
+    });
+  } else { input.select(); document.execCommand('copy'); }
 });
 
 document.getElementById('cal-feed-regen-btn')?.addEventListener('click', async () => {
-  if (!confirm('Regenerate your calendar feed URL? The old URL will stop working — you will need to re-subscribe in your calendar app.')) return;
+  if (!confirm('Regenerate your calendar feed URL? The old URL will stop working.')) return;
   const msg = document.getElementById('cal-feed-msg');
   const btn = document.getElementById('cal-feed-regen-btn');
   if (btn) btn.disabled = true;
-  if (msg) msg.textContent = 'Regenerating…';
+  if (msg) { msg.textContent = 'Regenerating...'; msg.style.color = '#888'; }
   try {
     const r = await fetch('api/cal_token.php', {
       method: 'POST', credentials: 'same-origin',
@@ -675,9 +635,7 @@ document.getElementById('cal-feed-regen-btn')?.addEventListener('click', async (
     }
   } catch (e) {
     if (msg) { msg.textContent = 'Error regenerating.'; msg.style.color = '#c00'; }
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  } finally { if (btn) btn.disabled = false; }
 });
 
 // RSVP toggle — delegated so it works after every renderList call

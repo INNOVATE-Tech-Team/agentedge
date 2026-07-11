@@ -205,6 +205,7 @@
     const dotClass = {
       done:    'ob-dot-done',
       pending: 'ob-dot-pending',
+      sent:    'ob-dot-sent',
       failed:  'ob-dot-failed',
       skipped: 'ob-dot-skipped',
     }[step.status] || 'ob-dot-pending';
@@ -216,6 +217,7 @@
     const cfg = {
       done:    { bg:'#82C112', color:'#fff', char:'✓' },
       pending: { bg:'#E6E7E8', color:'#888', char:'○' },
+      sent:    { bg:'#E8A93A', color:'#fff', char:'✉' },
       failed:  { bg:'#C0392B', color:'#fff', char:'✕' },
       skipped: { bg:'#bbb',    color:'#fff', char:'—' },
     }[status] || { bg:'#E6E7E8', color:'#888', char:'○' };
@@ -297,6 +299,11 @@
         actionsHtml = `<button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
       } else if (step.status === 'skipped') {
         actionsHtml = `<button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Unskip</button>`;
+      } else if (step.status === 'sent') {
+        // Awaiting the agent's signature — PandaDoc's webhook flips this to
+        // Done automatically; these are just manual overrides.
+        actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Signed</button>
+                       <button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
       } else {
         // pending or failed
         actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Done</button>

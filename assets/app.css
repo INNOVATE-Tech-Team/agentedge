@@ -243,6 +243,7 @@ textarea.cal-field-input{resize:vertical;min-height:70px}
 .ob-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
 .ob-dot-done{background:#82C112}
 .ob-dot-pending{background:#E6E7E8}
+.ob-dot-sent{background:#E8A93A}
 .ob-dot-failed{background:#C0392B}
 .ob-dot-skipped{background:#bbb}
 .ob-checklist{display:none;border-top:1px solid #f0f0f0;padding:0 16px 16px}

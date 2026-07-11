@@ -1,0 +1,322 @@
+<title>AgentEdge &mdash; Features</title>
+<style>
+:root {
+  --ground:    #F8F9FA;
+  --surface:   #FFFFFF;
+  --text:      #111318;
+  --muted:     #6B7280;
+  --border:    #E5E7EB;
+  --bg2:       #F3F4F6;
+  --accent:    #82C112;
+  --accent-dk: #5B8E0D;
+  --accent-bg: #F0F7E0;
+  --accent-bd: #C5E47E;
+  --amber:     #B45309;
+  --amber-bg:  #FFFBEB;
+  --amber-bd:  #FDE68A;
+  --slate:     #374151;
+  --slate-bg:  #F1F5F9;
+  --slate-bd:  #CBD5E1;
+  --mono: 'Consolas', 'Cascadia Code', 'Courier New', monospace;
+  --sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 28px 28px 36px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+/* ── HEADER ── */
+.hdr {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 2.5px solid var(--accent);
+  margin-bottom: 28px;
+}
+
+.hdr-left { display: flex; flex-direction: column; gap: 4px; }
+
+.hdr-title {
+  font-family: var(--mono);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 1;
+}
+
+.hdr-title .slash { color: var(--accent); margin: 0 7px; font-weight: 400; }
+.hdr-title .sub   { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+.hdr-tagline {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.hdr-url {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent-dk);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-bd);
+  border-radius: 3px;
+  padding: 5px 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+/* ── SECTION ── */
+.section { margin-bottom: 28px; }
+
+.section-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.section-hd-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.section-hd-label.green { color: var(--accent-dk); }
+.section-hd-label.slate { color: var(--slate); }
+
+.section-hd-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.section-hd-desc {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ── CARD GRID ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 0 0 5px 5px;
+  padding: 16px 17px 15px;
+}
+
+.card-admin {
+  border-top-color: var(--slate);
+}
+
+.card-pending {
+  border-top-color: var(--amber);
+}
+
+.card-coming {
+  border-top-color: var(--border);
+  background: var(--bg2);
+}
+
+.card-icon {
+  font-size: 20px;
+  margin-bottom: 9px;
+  display: block;
+  line-height: 1;
+}
+
+.card-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pill-live    { background: var(--accent-bg); color: var(--accent-dk); }
+.pill-pending { background: var(--amber-bg);  color: var(--amber); border: 1px solid var(--amber-bd); }
+.pill-coming  { background: var(--bg2);       color: var(--muted); border: 1px solid var(--border); }
+
+.card-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.card-desc strong { color: var(--text); font-weight: 600; }
+
+/* ── FOOTER ── */
+.footer {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+@media (max-width: 700px) {
+  .grid, .grid-2 { grid-template-columns: 1fr 1fr; }
+  .hdr           { flex-direction: column; align-items: flex-start; }
+  .hdr-url       { align-self: flex-start; }
+}
+</style>
+
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="hdr-title">
+      AgentEdge
+      <span class="slash">/</span>
+      <span class="sub">Feature Sheet</span>
+    </div>
+    <div class="hdr-tagline">Everything available to agents and admins in one place.</div>
+  </div>
+  <div class="hdr-url">agentedge.innovateonline.com</div>
+</header>
+
+<!-- AGENT FEATURES -->
+<div class="section">
+  <div class="section-hd">
+    <div class="section-hd-label green">Agent Features</div>
+    <div class="section-hd-rule"></div>
+    <div class="section-hd-desc">Available to every agent after login</div>
+  </div>
+
+  <div class="grid">
+
+    <div class="card">
+      <span class="card-icon">&#x1F510;</span>
+      <div class="card-name">Login <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Sign in with your existing <strong>back-office email and password</strong>. No new account or reset needed.
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="card-icon">&#x1F4CA;</span>
+      <div class="card-name">Dashboard <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Your production at a glance: <strong>volume closed, deals this year, and recruiting network</strong> with residual income. Pulls live from transaction history.
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="card-icon">&#x1F464;</span>
+      <div class="card-name">My Profile <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Edit your own <strong>name, email, phone, and up to 8 social media links</strong>. Changes save directly to the agent directory.
+      </div>
+    </div>
+
+    <div class="card card-pending">
+      <span class="card-icon">&#x1F4DD;</span>
+      <div class="card-name">DotLoop Transactions <span class="pill pill-pending">Pending</span></div>
+      <div class="card-desc">
+        Connect your DotLoop account to <strong>view all your loops by status, edit closing details and commissions</strong>, and preview documents &mdash; without leaving AgentEdge. Waiting on OAuth credentials.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ADMIN / BACK OFFICE FEATURES -->
+<div class="section">
+  <div class="section-hd">
+    <div class="section-hd-label slate">Admin &amp; Back Office</div>
+    <div class="section-hd-rule"></div>
+    <div class="section-hd-desc">Retention admins, MC leaders, and above</div>
+  </div>
+
+  <div class="grid">
+
+    <div class="card card-admin">
+      <span class="card-icon">&#x1F4CB;</span>
+      <div class="card-name">Agent Roster <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Full directory of all INNOVATE agents. <strong>Sortable, live search, contact info, and social links</strong> in one view. Market center shown for every agent.
+      </div>
+    </div>
+
+    <div class="card card-admin">
+      <span class="card-icon">&#x1F6E1;️</span>
+      <div class="card-name">Roles &amp; Permissions <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Six access levels: <strong>super admin &middot; retention admin &middot; recruiter &middot; broker in charge &middot; MC leader &middot; agent</strong>. Each role sees only the tools it needs.
+      </div>
+    </div>
+
+    <div class="card card-admin">
+      <span class="card-icon">&#x2795;</span>
+      <div class="card-name">Agent Onboarding <span class="pill pill-live">Live</span></div>
+      <div class="card-desc">
+        Intake form that collects all contact details and <strong>creates the new agent's record in the system in one step</strong>. Retention admin and above.
+      </div>
+    </div>
+
+    <div class="card card-coming">
+      <span class="card-icon">&#x1F50D;</span>
+      <div class="card-name">Login as Agent <span class="pill pill-coming">Coming soon</span></div>
+      <div class="card-desc">
+        Super admins can <strong>view AgentEdge as any agent</strong> for troubleshooting and onboarding support. A persistent banner shows whose account you're viewing.
+      </div>
+    </div>
+
+    <div class="card card-coming">
+      <span class="card-icon">&#x1F3E1;</span>
+      <div class="card-name">Open House Tool <span class="pill pill-coming">Coming soon</span></div>
+      <div class="card-desc">
+        <strong>Schedule and manage open houses</strong> with MLS listing integration. Porting from the existing agent-analytics tool with expanded data.
+      </div>
+    </div>
+
+    <div class="card card-coming">
+      <span class="card-icon">&#x2699;️</span>
+      <div class="card-name">Cap Wheel <span class="pill pill-coming">Coming soon</span></div>
+      <div class="card-desc">
+        Visual cap progress tracker showing <strong>how much each agent has paid and how much remains</strong> before they cap. Requires Darwin (AccountTECH) integration.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer">AgentEdge &middot; INNOVATE Real Estate &middot; 2026</div>

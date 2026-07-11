@@ -91,7 +91,8 @@ foreach ($statuses as $s) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>State Rosters — AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 /* ── Back Office shared ─────────────────────────────────── */
 .bo-header { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }

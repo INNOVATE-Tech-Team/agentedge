@@ -42,8 +42,13 @@ function contactCell(a) {
 
 function roleBadge(email) {
   const cur = (typeof ROLE_BY_EMAIL !== 'undefined') ? ROLE_BY_EMAIL[email.toLowerCase()] : null;
-  if (!cur || cur.role === 'agent') return '';
-  return `<span class="role-badge-sm role-${esc(cur.role)}">${esc((typeof ROLE_LABELS !== 'undefined' ? ROLE_LABELS[cur.role] : null) || cur.role)}</span> `;
+  if (!cur) return '';
+  const roles = Array.isArray(cur.all_roles) ? cur.all_roles : [cur.role];
+  const labels = typeof ROLE_LABELS !== 'undefined' ? ROLE_LABELS : {};
+  return roles
+    .filter(r => r && r !== 'agent')
+    .map(r => `<span class="role-badge-sm role-${esc(r)}">${esc(labels[r] || r)}</span>`)
+    .join(' ');
 }
 
 function agentCells(a) {
@@ -52,27 +57,28 @@ function agentCells(a) {
     <td>${esc(a.marketCenter) || '<span class="muted">Unassigned</span>'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>
-    ${IS_ADMIN ? `<td style="white-space:nowrap">
-      ${roleBadge(a.email)}
+    ${(IS_ADMIN || (typeof IS_RECRUITER !== 'undefined' && IS_RECRUITER)) ? `<td style="white-space:nowrap">
+      ${IS_ADMIN ? roleBadge(a.email) : ''}
       <button class="btn-stats" data-email="${esc(a.email)}" data-name="${esc(a.name)}">Stats</button>
-      ${(typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>
+      ${(IS_ADMIN && typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) ? `<button class="btn-assign" data-email="${esc(a.email)}" data-name="${esc(a.name)}" data-mc="${esc(a.marketCenter || '')}" style="margin-left:4px">Assign Role</button>
       <button class="btn-loginas" data-email="${esc(a.email)}" data-name="${esc(a.name)}" style="margin-left:4px">Log in as</button>` : ''}
     </td>` : ''}`;
 }
 
 function attachRowHandlers(body) {
-  if (IS_ADMIN) {
+  const canStats = IS_ADMIN || (typeof IS_RECRUITER !== 'undefined' && IS_RECRUITER);
+  if (canStats) {
     body.querySelectorAll('.btn-stats').forEach(btn => {
       btn.addEventListener('click', () => showStats(btn.dataset.email, btn.dataset.name));
     });
-    if (typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) {
-      body.querySelectorAll('.btn-assign').forEach(btn => {
-        btn.addEventListener('click', () => openRoleModal(btn.dataset.email, btn.dataset.name, btn.dataset.mc));
-      });
-      body.querySelectorAll('.btn-loginas').forEach(btn => {
-        btn.addEventListener('click', () => loginAsAgent(btn.dataset.email, btn.dataset.name));
-      });
-    }
+  }
+  if (IS_ADMIN && typeof IS_SUPER_ADMIN !== 'undefined' && IS_SUPER_ADMIN) {
+    body.querySelectorAll('.btn-assign').forEach(btn => {
+      btn.addEventListener('click', () => openRoleModal(btn.dataset.email, btn.dataset.name, btn.dataset.mc));
+    });
+    body.querySelectorAll('.btn-loginas').forEach(btn => {
+      btn.addEventListener('click', () => loginAsAgent(btn.dataset.email, btn.dataset.name));
+    });
   }
 }
 
@@ -81,12 +87,13 @@ function render(rows) {
   const empty = document.getElementById('roster-empty');
   const body  = document.getElementById('roster-body');
   const count = document.getElementById('roster-count');
-  count.textContent = `${rows.length} agent${rows.length === 1 ? '' : 's'}`;
+  const assignedCount = rows.filter(a => a.marketCenter).length;
+  count.textContent = `${assignedCount} agent${assignedCount === 1 ? '' : 's'}`;
   if (rows.length === 0) { table.hidden = true; empty.hidden = false; return; }
   empty.hidden = true; table.hidden = false;
 
   const q = document.getElementById('roster-search').value.trim();
-  const colCount = IS_ADMIN ? 5 : 4;
+  const colCount = (IS_ADMIN || (typeof IS_RECRUITER !== 'undefined' && IS_RECRUITER)) ? 5 : 4;
 
   if (q) {
     // Searching — flat table, no groups
@@ -115,6 +122,7 @@ function render(rows) {
 
   let html = '';
   sortedMcs.forEach(mc => {
+    if (mc === '') return; // hide agents with no market center assignment
     const agents = groups.get(mc).slice().sort((a, b) =>
       (a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1
     );

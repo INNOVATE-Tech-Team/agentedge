@@ -53,6 +53,7 @@ foreach ($rootFolders as $f) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>The Vault — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .vault-layout{display:flex;gap:0;height:calc(100vh - 64px);overflow:hidden}
