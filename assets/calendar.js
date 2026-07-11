@@ -17,7 +17,10 @@ const SCOPES = {
   personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
+  ics:            { bg: '#0891b2', text: '#fff' },
 };
+
+let hasPersonalCal = false;
 
 function calEsc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"]/g,
@@ -260,8 +263,13 @@ function updateEventsBar() {
 }
 
 function updateMyCalBar() {
-  const bar = document.getElementById('cal-mycal-bar');
-  if (bar) bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
+  const bar       = document.getElementById('cal-mycal-bar');
+  const connected = document.getElementById('cal-mycal-connected');
+  const setup     = document.getElementById('cal-mycal-setup');
+  if (!bar) return;
+  bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
+  if (connected) connected.style.display = hasPersonalCal ? 'block' : 'none';
+  if (setup)     setup.style.display     = hasPersonalCal ? 'none'  : 'block';
 }
 
 function updatePersonalBar() {
@@ -586,6 +594,39 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     }
   });
 }
+
+// My Calendar ICS handlers
+async function savePersonalCalUrl(url) {
+  const msg = document.getElementById('cal-mycal-msg');
+  const btn = document.getElementById('cal-mycal-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  if (msg) { msg.textContent = ''; }
+  try {
+    const r = await fetch('api/personal_cal.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Save failed');
+    hasPersonalCal = url !== '';
+    delete evCache[calKey()];
+    updateMyCalBar();
+    calDraw();
+  } catch (err) {
+    if (msg) { msg.textContent = err.message; msg.style.color = '#c00'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+  }
+}
+document.getElementById('cal-mycal-save-btn')?.addEventListener('click', () => {
+  const url = (document.getElementById('cal-mycal-url')?.value || '').trim();
+  if (!url) return;
+  savePersonalCalUrl(url);
+});
+document.getElementById('cal-mycal-remove-btn')?.addEventListener('click', () => {
+  if (!confirm('Disconnect your personal calendar?')) return;
+  savePersonalCalUrl('');
+});
+document.getElementById('cal-mycal-change-btn')?.addEventListener('click', () => {
+  hasPersonalCal = false; updateMyCalBar();
+});
 
 // -- Outbound ICS feed --------------------------------------------------------
 
