@@ -1,0 +1,6 @@
+# Normalize line endings to LF in the repository regardless of what a given
+# editor/OS wrote on disk. Production (Linux) and local dev (Windows) had
+# drifted onto different EOL conventions for the same unchanged files, which
+# showed up as full-file diffs with no real content change — this setting
+# plus `git merge -X renormalize` collapses those back to zero-diff merges.
+* text=auto eol=lf
