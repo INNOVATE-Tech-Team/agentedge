@@ -69,27 +69,24 @@ if (isset($byState[$activeState])) {
 }
 
 // Build ordered group for the active state:
-//   1. Named MCs in market_centers table order (so the master list order is respected)
+//   1. Named MCs in market_centers table order (so the master list order is respected) —
+//      including ones with zero agents, so they still get an Edit/Delete row
 //   2. Any MC names in the roster that aren't in the master list (orphaned text values)
 //   3. Unassigned agents last
 $activeGroups = [];
-if (isset($byState[$activeState])) {
-    $statePool = $byState[$activeState];
-    // 1. MCs in master-list order
-    $masterNames = array_column(
-        local_db()->query("SELECT name FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")->fetchAll(PDO::FETCH_ASSOC),
-        'name'
-    );
-    foreach ($masterNames as $n) {
-        if (isset($statePool[$n])) { $activeGroups[$n] = $statePool[$n]; }
-    }
-    // 2. Orphaned MC names (in roster but not in master list)
-    foreach ($statePool as $k => $v) {
-        if ($k !== MC_UNASSIGNED && !isset($activeGroups[$k])) { $activeGroups[$k] = $v; }
-    }
-    // 3. Unassigned last
-    if (isset($statePool[MC_UNASSIGNED])) { $activeGroups[MC_UNASSIGNED] = $statePool[MC_UNASSIGNED]; }
+$statePool = $byState[$activeState] ?? [];
+// 1. MCs in master-list order, scoped to the active state
+$masterStmt = local_db()->prepare("SELECT name FROM market_centers WHERE enabled=1 AND state_code=? ORDER BY sort_ord, name");
+$masterStmt->execute([$activeState]);
+foreach ($masterStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $activeGroups[$row['name']] = $statePool[$row['name']] ?? [];
 }
+// 2. Orphaned MC names (in roster but not in master list)
+foreach ($statePool as $k => $v) {
+    if ($k !== MC_UNASSIGNED && !isset($activeGroups[$k])) { $activeGroups[$k] = $v; }
+}
+// 3. Unassigned last
+if (isset($statePool[MC_UNASSIGNED])) { $activeGroups[MC_UNASSIGNED] = $statePool[MC_UNASSIGNED]; }
 
 // MC options for bulk-assign dropdown (from market_centers table)
 $mcOptsAssign = local_db()
@@ -107,10 +104,29 @@ $mcLeaderOpts = local_db()
     ->query("SELECT email FROM agent_roles WHERE role='mc_leader' ORDER BY email")
     ->fetchAll(PDO::FETCH_COLUMN);
 
-// MC metadata map: display name → {slug, bic_email, mc_leader_email} for heading chips
+// MC metadata map: display name → {slug, bic_email, mc_leader_email, address, city, zip, lat, lng} for heading chips + edit panel
 $mcMeta = [];
-foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM market_centers")->fetchAll(PDO::FETCH_ASSOC) as $row) {
+foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email, address, city, zip, lat, lng FROM market_centers")->fetchAll(PDO::FETCH_ASSOC) as $row) {
     $mcMeta[$row['name']] = $row;
+}
+
+// CRM roster — resolves BIC/MC-Leader emails to display names
+$c     = cfg();
+$base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+$token = $c['crm_token'] ?? '';
+$rurl  = $base . '/public/retention-roster' . ($token ? '?token=' . urlencode($token) : '');
+$ctx   = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
+$raw   = @file_get_contents($rurl, false, $ctx);
+$crmRoster = ($raw !== false) ? (json_decode($raw, true) ?? []) : [];
+
+$nameByEmail = [];
+foreach ($crmRoster as $a) {
+    $email = strtolower(trim($a['email'] ?? ''));
+    if ($email) $nameByEmail[$email] = $a['fullName'] ?? $email;
+}
+function mc_name_for_email(array $nameByEmail, string $email): string {
+    if (!$email) return '';
+    return $nameByEmail[strtolower($email)] ?? $email;
 }
 ?>
 <!DOCTYPE html>
@@ -119,7 +135,8 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agent Roster — AgentEdge</title>
-<link rel="stylesheet" href="assets/app.css">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/app.css">
 <style>
 .bo-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
 .roster-summary{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
@@ -152,6 +169,13 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
                display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .detail-title{font-size:18px;font-weight:800}
 .detail-sub{font-size:12px;color:var(--faint)}
+.roster-search-bar{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.roster-search-input{flex:1;max-width:320px;padding:8px 12px;border:1px solid var(--border);
+                      border-radius:7px;font-size:13px;background:#fafafa;box-sizing:border-box}
+.roster-search-input:focus{outline:2px solid var(--green);border-color:var(--green)}
+.roster-search-clear{cursor:pointer;color:var(--faint);font-size:13px;padding:2px 4px}
+.roster-search-clear:hover{color:var(--red,#c0392b)}
+.roster-search-count{font-size:12px;color:var(--faint)}
 .mc-heading{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
             color:var(--faint);padding:10px 18px 8px;border-top:1px solid var(--border);
             background:#fafbfa;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
@@ -190,6 +214,10 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
 .btn-remove{background:none;border:none;color:var(--faint);font-size:14px;cursor:pointer;
             padding:2px 6px;border-radius:4px;line-height:1;opacity:.5;transition:opacity .15s}
 .btn-remove:hover{opacity:1;color:var(--red,#c0392b);background:#fdecea}
+/* Edit button */
+.btn-edit-agent{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
+                padding:2px 7px;border-radius:4px;opacity:.5;transition:opacity .15s;white-space:nowrap}
+.btn-edit-agent:hover{opacity:1;background:#f0f5e8;color:#5b8e0d}
 
 /* Move-MC per-row */
 .btn-move-mc{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
@@ -245,6 +273,7 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
 .mc-edit-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
 .mc-edit-input{padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:#fff;min-width:200px}
 .mc-edit-input:focus{outline:2px solid var(--green);border-color:var(--green)}
+.mc-geo-status{font-size:11px;color:var(--faint);white-space:nowrap;padding-bottom:6px}
 .mc-edit-select{padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:#fff;min-width:200px}
 .mc-edit-select:focus{outline:2px solid var(--green);border-color:var(--green)}
 .mc-edit-actions{display:flex;gap:7px}
@@ -398,14 +427,25 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
         </div>
       </div>
 
+      <div class="roster-search-bar">
+        <input type="text" id="roster-search" class="roster-search-input"
+               placeholder="Search agents by name or email…" oninput="filterRoster(this.value)" autocomplete="off">
+        <span class="roster-search-clear" id="roster-search-clear" onclick="clearRosterSearch()" style="display:none">✕</span>
+        <span class="roster-search-count" id="roster-search-count"></span>
+      </div>
+
       <?php foreach ($activeGroups as $mc => $agents):
         $isUnassigned = ($mc === MC_UNASSIGNED);
         $mcLabel  = $isUnassigned ? 'Unassigned Agents' : $mc;
         $mcJson   = htmlspecialchars(json_encode($mc), ENT_QUOTES);
         $mcSlug   = $isUnassigned ? '' : ($mcMeta[$mc]['slug'] ?? '');
         $mcSlugJ  = htmlspecialchars(json_encode($mcSlug), ENT_QUOTES);
-        $mcBic    = $isUnassigned ? '' : ($mcMeta[$mc]['bic_email']      ?? '');
-        $mcLeader = $isUnassigned ? '' : ($mcMeta[$mc]['mc_leader_email'] ?? '');
+        $mcBic     = $isUnassigned ? '' : ($mcMeta[$mc]['bic_email']      ?? '');
+        $mcLeader  = $isUnassigned ? '' : ($mcMeta[$mc]['mc_leader_email'] ?? '');
+        $mcAddress = $isUnassigned ? '' : ($mcMeta[$mc]['address'] ?? '');
+        $mcCity    = $isUnassigned ? '' : ($mcMeta[$mc]['city']    ?? '');
+        $mcZip     = $isUnassigned ? '' : ($mcMeta[$mc]['zip']     ?? '');
+        $mcHasGeo  = $isUnassigned ? false : ($mcMeta[$mc]['lat'] ?? null) !== null;
         $mcEditId = 'mc-edit-' . md5($mc);
 
         // Retention rate for this group: % of agents not flagged at_risk.
@@ -422,10 +462,10 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
           <i class="mc-chevron">&#9654;</i>
           <span class="mc-name-label"><?= htmlspecialchars($mcLabel) ?> &mdash; <?= count($agents) ?> agent<?= count($agents)!==1?'s':'' ?></span>
           <?php if (!$isUnassigned && $mcBic): ?>
-          <span class="mc-role-chip mc-bic-chip">BIC: <?= htmlspecialchars($mcBic) ?></span>
+          <span class="mc-role-chip mc-bic-chip">BIC: <?= htmlspecialchars(mc_name_for_email($nameByEmail, $mcBic)) ?></span>
           <?php endif; ?>
           <?php if (!$isUnassigned && $mcLeader): ?>
-          <span class="mc-role-chip mc-leader-chip">Leader: <?= htmlspecialchars($mcLeader) ?></span>
+          <span class="mc-role-chip mc-leader-chip">Leader: <?= htmlspecialchars(mc_name_for_email($nameByEmail, $mcLeader)) ?></span>
           <?php endif; ?>
           <?php if (!$isUnassigned): ?>
           <span class="mc-role-chip mc-retain-chip <?= $mcRetainTier ?>">Retention: <?= $mcRetainPct ?>%</span>
@@ -451,7 +491,7 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
               <select class="mc-edit-select mc-edit-bic">
                 <option value="">— none —</option>
                 <?php foreach ($bicOpts as $be): ?>
-                <option value="<?= htmlspecialchars($be) ?>"<?= $be===$mcBic?' selected':'' ?>><?= htmlspecialchars($be) ?></option>
+                <option value="<?= htmlspecialchars($be) ?>"<?= $be===$mcBic?' selected':'' ?>><?= htmlspecialchars(mc_name_for_email($nameByEmail, $be)) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -460,9 +500,31 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
               <select class="mc-edit-select mc-edit-leader">
                 <option value="">— none —</option>
                 <?php foreach ($mcLeaderOpts as $le): ?>
-                <option value="<?= htmlspecialchars($le) ?>"<?= $le===$mcLeader?' selected':'' ?>><?= htmlspecialchars($le) ?></option>
+                <option value="<?= htmlspecialchars($le) ?>"<?= $le===$mcLeader?' selected':'' ?>><?= htmlspecialchars(mc_name_for_email($nameByEmail, $le)) ?></option>
                 <?php endforeach; ?>
               </select>
+            </div>
+          </div>
+          <div class="mc-edit-row">
+            <div class="mc-edit-field" style="flex:2">
+              <label class="mc-edit-label">Office Address</label>
+              <input class="mc-edit-input mc-edit-address" type="text"
+                     value="<?= htmlspecialchars($mcAddress) ?>" placeholder="123 Main St" maxlength="120" autocomplete="off">
+            </div>
+            <div class="mc-edit-field">
+              <label class="mc-edit-label">City</label>
+              <input class="mc-edit-input mc-edit-city" type="text"
+                     value="<?= htmlspecialchars($mcCity) ?>" maxlength="60" autocomplete="off">
+            </div>
+            <div class="mc-edit-field">
+              <label class="mc-edit-label">Zip</label>
+              <input class="mc-edit-input mc-edit-zip" type="text"
+                     value="<?= htmlspecialchars($mcZip) ?>" maxlength="10" autocomplete="off">
+            </div>
+            <div class="mc-edit-field" style="justify-content:flex-end">
+              <span class="mc-geo-status" id="mc-geo-status-<?= $mcEditId ?>">
+                <?= $mcHasGeo ? '📍 Located' : ($mcAddress ? '⚠ Not located yet' : '') ?>
+              </span>
             </div>
           </div>
           <div class="mc-edit-actions">
@@ -487,15 +549,28 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
           </thead>
           <tbody>
             <?php foreach ($agents as $a): ?>
-            <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>" data-roster-id="<?= $a['id'] ?>">
+            <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-email="<?= htmlspecialchars(strtolower($a['email'] ?? '')) ?>" data-mc="<?= htmlspecialchars($mc) ?>" data-roster-id="<?= $a['id'] ?>">
               <td class="cb-cell">
                 <input type="checkbox" class="agent-cb" data-name="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>">
               </td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   <span><?= htmlspecialchars($a['agent_name']) ?></span>
+                  <?php if (!empty($a['email'])): ?>
+                  <span style="font-size:11px;color:var(--faint)"><?= htmlspecialchars($a['email']) ?></span>
+                  <?php endif; ?>
+                  <button class="btn-edit-agent" title="Edit agent details"
+                          onclick="openEditAgentModal(<?= htmlspecialchars(json_encode([
+                              'id'           => $a['id'],
+                              'agent_name'   => $a['agent_name'],
+                              'email'        => $a['email'] ?? '',
+                              'phone'        => $a['phone'] ?? '',
+                              'license_exp'  => $a['license_exp'] ?? '',
+                              'market_center'=> $mc === MC_UNASSIGNED ? '' : $mc,
+                              'state_code'   => $activeState,
+                          ]), ENT_QUOTES) ?>)">✎ Edit</button>
                   <button class="btn-move-mc" title="Move to a different Market Center"
-                          onclick="openMoveMC(this, <?= $a['id'] ?>, <?= json_encode($mc) ?>)">↪ Move</button>
+                          onclick="openMoveMC(this, <?= $a['id'] ?>, <?= htmlspecialchars(json_encode($mc), ENT_QUOTES) ?>)">↪ Move</button>
                   <div class="move-mc-inline" id="move-mc-<?= $a['id'] ?>">
                     <select class="move-mc-select">
                       <option value="">— pick MC —</option>
@@ -545,7 +620,7 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
               </td>
               <td>
                 <button class="btn-remove" title="Remove from roster"
-                        onclick="removeAgent(<?= $a['id'] ?>, <?= json_encode($a['agent_name']) ?>)">✕</button>
+                        onclick="removeAgent(<?= $a['id'] ?>, <?= htmlspecialchars(json_encode($a['agent_name']), ENT_QUOTES) ?>)">✕</button>
               </td>
             </tr>
             <?php endforeach; ?>
@@ -577,7 +652,7 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
   <select id="bulk-bic" class="bulk-select">
     <option value="">— none / keep existing —</option>
     <?php foreach ($bicOpts as $be): ?>
-    <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars($be) ?></option>
+    <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars(mc_name_for_email($nameByEmail, $be)) ?></option>
     <?php endforeach; ?>
   </select>
   <button class="btn-bulk-assign" onclick="doBulkAssign()">Assign</button>
@@ -615,6 +690,37 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
   </div>
 </div>
 
+<!-- Edit Agent Modal -->
+<div class="modal-overlay" id="editAgentModalOverlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeEditAgentModal()">×</button>
+    <h3>Edit Agent</h3>
+    <div class="modal-sub" id="ea-sub"></div>
+    <input type="hidden" id="ea-id">
+    <input type="hidden" id="ea-state">
+    <label class="mf-label">Name</label>
+    <input id="ea-name" class="mf-input" type="text" maxlength="120" autocomplete="off">
+    <label class="mf-label">Email</label>
+    <input id="ea-email" class="mf-input" type="email" maxlength="200" autocomplete="off">
+    <label class="mf-label">Phone</label>
+    <input id="ea-phone" class="mf-input" type="tel" maxlength="30" autocomplete="off">
+    <label class="mf-label">Market Center</label>
+    <input id="ea-mc" class="mf-input" type="text" maxlength="80" list="ea-mc-datalist" autocomplete="off">
+    <datalist id="ea-mc-datalist">
+      <?php foreach ($mcOptsAssign as $opt): ?>
+      <option value="<?= htmlspecialchars($opt['name']) ?>">
+      <?php endforeach; ?>
+    </datalist>
+    <label class="mf-label">License Expiry <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+    <input id="ea-exp" class="mf-input" type="date">
+    <div class="mf-err" id="ea-err"></div>
+    <div class="mf-btns">
+      <button class="mf-save" id="ea-save" onclick="saveEditAgent()">Save Changes</button>
+      <button class="mf-cancel" onclick="closeEditAgentModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add MC Modal -->
 <div class="modal-overlay" id="addMCModalOverlay">
   <div class="modal">
@@ -633,14 +739,14 @@ foreach (local_db()->query("SELECT slug, name, bic_email, mc_leader_email FROM m
     <select id="mc-bic" class="mf-input">
       <option value="">— none —</option>
       <?php foreach ($bicOpts as $be): ?>
-      <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars($be) ?></option>
+      <option value="<?= htmlspecialchars($be) ?>"><?= htmlspecialchars(mc_name_for_email($nameByEmail, $be)) ?></option>
       <?php endforeach; ?>
     </select>
     <label class="mf-label">MC Leader <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
     <select id="mc-leader" class="mf-input">
       <option value="">— none —</option>
       <?php foreach ($mcLeaderOpts as $le): ?>
-      <option value="<?= htmlspecialchars($le) ?>"><?= htmlspecialchars($le) ?></option>
+      <option value="<?= htmlspecialchars($le) ?>"><?= htmlspecialchars(mc_name_for_email($nameByEmail, $le)) ?></option>
       <?php endforeach; ?>
     </select>
     <div class="mf-err" id="mc-err"></div>
@@ -704,7 +810,7 @@ function saveNewAgent() {
         if (!d.ok) { err.textContent = d.error || 'Error saving.'; err.style.display = ''; return; }
         closeAddModal();
         // Reload the page to show the new agent in the correct state/MC
-        window.location.href = 'backoffice_roster.php?state=' + encodeURIComponent(state);
+        navigatePreservingMCState('backoffice_roster.php?state=' + encodeURIComponent(state));
     })
     .catch(()=>{ btn.disabled=false; btn.textContent='Add to Roster'; err.textContent='Network error.'; err.style.display=''; });
 }
@@ -744,7 +850,7 @@ function saveNewMC() {
         btn.disabled = false; btn.textContent = 'Add Market Center';
         if (!d.ok) { err.textContent = d.error || 'Error saving.'; err.style.display = ''; return; }
         closeAddMCModal();
-        window.location.href = 'backoffice_roster.php?state=' + encodeURIComponent(state);
+        navigatePreservingMCState('backoffice_roster.php?state=' + encodeURIComponent(state));
     })
     .catch(() => {
         btn.disabled = false; btn.textContent = 'Add Market Center';
@@ -754,7 +860,7 @@ function saveNewMC() {
 
 // ── Remove agent ─────────────────────────────────────────────────────────────
 function removeAgent(id, name) {
-    if (!confirm('Remove ' + name + ' from the roster?\n\nThis is logged and can be reviewed in Weekly Changes. The agent can be restored from the changes report.')) return;
+    if (!confirm('Remove ' + name + ' from the roster?\n\nThey will be moved to the Offboarding Queue for deprovisioning, and this is logged in Weekly Changes. The agent can be restored from the changes report or by cancelling their offboarding.')) return;
     fetch('api/roster_agent.php', {
         method:'POST', credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
@@ -819,7 +925,7 @@ function doBulkAssign() {
         btn.disabled = false; btn.textContent = 'Assign';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
         // Reload so agents appear under their new MC group
-        window.location.reload();
+        reloadPreservingMCState();
     })
     .catch(()=>{ btn.disabled=false; btn.textContent='Assign'; alert('Network error.'); });
 }
@@ -866,7 +972,7 @@ function saveMoveMC(rosterId) {
     .then(d => {
         saveBtn.disabled = false; saveBtn.textContent = 'Save';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
-        window.location.reload();
+        reloadPreservingMCState();
     })
     .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
 }
@@ -904,7 +1010,7 @@ function saveRetention(rosterId) {
     .then(d => {
         saveBtn.disabled = false; saveBtn.textContent = 'Save';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
-        window.location.reload();
+        reloadPreservingMCState();
     })
     .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
 }
@@ -916,6 +1022,9 @@ function saveEditMC(panelId, oldName, slug) {
     const newName = panel.querySelector('.mc-edit-name').value.trim();
     const bic     = panel.querySelector('.mc-edit-bic').value;
     const leader  = panel.querySelector('.mc-edit-leader').value;
+    const address = panel.querySelector('.mc-edit-address').value.trim();
+    const city    = panel.querySelector('.mc-edit-city').value.trim();
+    const zip     = panel.querySelector('.mc-edit-zip').value.trim();
     if (!newName) { alert('Name is required.'); return; }
 
     const btn = panel.querySelector('.mc-edit-save');
@@ -931,7 +1040,8 @@ function saveEditMC(panelId, oldName, slug) {
             headers:{'Content-Type':'application/json'},
             body: JSON.stringify({action:'save', edit_slug:slug, name:newName,
                                   state_code:ACTIVE_STATE, sort_ord:0,
-                                  bic_email:bic, mc_leader_email:leader})
+                                  bic_email:bic, mc_leader_email:leader,
+                                  address:address, city:city, zip:zip})
         }).then(r=>r.json()));
     }
 
@@ -947,7 +1057,7 @@ function saveEditMC(panelId, oldName, slug) {
         btn.disabled = false; btn.textContent = 'Save Changes';
         const failed = results.find(r => !r.ok);
         if (failed) { alert('Save failed: ' + (failed.error||'Unknown')); return; }
-        window.location.reload();
+        reloadPreservingMCState();
     }).catch(err => {
         btn.disabled = false; btn.textContent = 'Save Changes';
         alert('Error: ' + err.message);
@@ -968,7 +1078,7 @@ function deleteMC(slug, mcName, agentCount) {
     .then(r=>r.json())
     .then(d => {
         if (!d.ok) { alert('Delete failed: ' + (d.error||'Unknown')); return; }
-        window.location.reload();
+        reloadPreservingMCState();
     })
     .catch(err => alert('Error: ' + err.message));
 }
@@ -987,12 +1097,63 @@ function importMCsFromRoster() {
         if (!d.ok) { alert('Import failed: ' + (d.error||'Unknown')); return; }
         if (d.added === 0) { alert('All CRM Market Centers are already in the list.'); return; }
         alert(`Imported ${d.added} new Market Center${d.added!==1?'s':''} from the CRM.`);
-        window.location.reload();
+        reloadPreservingMCState();
     })
     .catch(err => { btn.disabled=false; btn.textContent='↓ Import MCs from CRM'; alert('Error: '+err.message); });
 }
 
+// ── Edit agent modal ─────────────────────────────────────────────────────────
+function openEditAgentModal(data) {
+    document.getElementById('ea-id').value    = data.id;
+    document.getElementById('ea-state').value = data.state_code;
+    document.getElementById('ea-name').value  = data.agent_name;
+    document.getElementById('ea-email').value = data.email  || '';
+    document.getElementById('ea-phone').value = data.phone  || '';
+    document.getElementById('ea-mc').value    = data.market_center || '';
+    document.getElementById('ea-exp').value   = data.license_exp || '';
+    document.getElementById('ea-sub').textContent = data.agent_name;
+    document.getElementById('ea-err').style.display = 'none';
+    document.getElementById('editAgentModalOverlay').classList.add('open');
+    document.getElementById('ea-name').focus();
+}
+function closeEditAgentModal() {
+    document.getElementById('editAgentModalOverlay').classList.remove('open');
+}
+document.getElementById('editAgentModalOverlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeEditAgentModal();
+});
+function saveEditAgent() {
+    const id    = parseInt(document.getElementById('ea-id').value);
+    const state = document.getElementById('ea-state').value;
+    const name  = document.getElementById('ea-name').value.trim();
+    const email = document.getElementById('ea-email').value.trim();
+    const phone = document.getElementById('ea-phone').value.trim();
+    const mc    = document.getElementById('ea-mc').value.trim();
+    const exp   = document.getElementById('ea-exp').value;
+    const err   = document.getElementById('ea-err');
+    err.style.display = 'none';
+    if (!name) { err.textContent = 'Name is required.'; err.style.display = ''; return; }
+    const btn = document.getElementById('ea-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    fetch('api/roster_agent.php', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action:'edit', id, agent_name:name, email, phone,
+                              market_center:mc, state_code:state, license_exp:exp})
+    })
+    .then(r => r.json())
+    .then(d => {
+        btn.disabled = false; btn.textContent = 'Save Changes';
+        if (!d.ok) { err.textContent = d.error || 'Save failed.'; err.style.display = ''; return; }
+        closeEditAgentModal();
+        reloadPreservingMCState();
+    })
+    .catch(() => { btn.disabled=false; btn.textContent='Save Changes'; err.textContent='Network error.'; err.style.display=''; });
+}
+
 // ── Collapsible MC groups ────────────────────────────────────────────────────
+const MC_STATE_KEY = 'agentedge_open_mcs';
+
 function toggleMCGroup(heading) {
     const contentId = heading.dataset.contentId;
     const content = document.getElementById(contentId);
@@ -1000,6 +1161,7 @@ function toggleMCGroup(heading) {
     const isOpen = heading.classList.contains('mc-open');
     heading.classList.toggle('mc-open', !isOpen);
     content.classList.toggle('mc-open', !isOpen);
+    persistMCState();
 }
 document.querySelectorAll('.mc-heading').forEach(function(h) {
     h.addEventListener('click', function(e) {
@@ -1007,6 +1169,71 @@ document.querySelectorAll('.mc-heading').forEach(function(h) {
         toggleMCGroup(h);
     });
 });
+
+// Remember which MC groups are open across reloads/navigations so edits don't collapse everything.
+function persistMCState() {
+    const openIds = Array.from(document.querySelectorAll('.mc-heading.mc-open'))
+        .map(function(h) { return h.dataset.contentId; })
+        .filter(Boolean);
+    try { sessionStorage.setItem(MC_STATE_KEY, JSON.stringify(openIds)); } catch (e) {}
+}
+function reloadPreservingMCState() {
+    persistMCState();
+    window.location.reload();
+}
+function navigatePreservingMCState(url) {
+    persistMCState();
+    window.location.href = url;
+}
+(function restoreMCState() {
+    let openIds;
+    try { openIds = JSON.parse(sessionStorage.getItem(MC_STATE_KEY) || '[]'); } catch (e) { openIds = []; }
+    openIds.forEach(function(contentId) {
+        const content = document.getElementById(contentId);
+        if (!content) return;
+        const heading = document.querySelector('.mc-heading[data-content-id="' + contentId + '"]');
+        content.classList.add('mc-open');
+        if (heading) heading.classList.add('mc-open');
+    });
+})();
+
+// ── Agent search ──────────────────────────────────────────────────────────────
+function filterRoster(q) {
+    q = q.trim().toLowerCase();
+    let totalMatches = 0;
+    document.querySelectorAll('.mc-group-content').forEach(function(content) {
+        const heading = document.querySelector('.mc-heading[data-content-id="' + content.id + '"]');
+        let anyVisible = false;
+        content.querySelectorAll('tr[data-agent]').forEach(function(row) {
+            const hay = (row.dataset.agent + ' ' + (row.dataset.email || '')).toLowerCase();
+            const match = !q || hay.includes(q);
+            row.style.display = match ? '' : 'none';
+            if (match) { anyVisible = true; totalMatches++; }
+        });
+        if (!heading) return;
+        if (q) {
+            heading.style.display = anyVisible ? '' : 'none';
+            heading.classList.toggle('mc-open', anyVisible);
+            content.classList.toggle('mc-open', anyVisible);
+        } else {
+            heading.style.display = '';
+            heading.classList.remove('mc-open');
+            content.classList.remove('mc-open');
+        }
+    });
+    const countEl = document.getElementById('roster-search-count');
+    const clearEl = document.getElementById('roster-search-clear');
+    if (countEl) countEl.textContent = q ? totalMatches + ' match' + (totalMatches !== 1 ? 'es' : '') : '';
+    if (clearEl) clearEl.style.display = q ? '' : 'none';
+    if (!q) persistMCState();
+}
+function clearRosterSearch() {
+    const input = document.getElementById('roster-search');
+    if (!input) return;
+    input.value = '';
+    filterRoster('');
+    input.focus();
+}
 
 function toggleEditMC(panelId) {
     const panel = document.getElementById(panelId);
@@ -1037,7 +1264,7 @@ function fmtVol(v) {
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-fetch('api/backoffice_production.php',{credentials:'same-origin'})
+fetch('api/backoffice_production.php',{credentials:'same-origin',cache:'no-store'})
     .then(r=>r.json())
     .then(d=>{
         const loading=document.getElementById('prod-loading');

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/geocode.php';
 
 header('Content-Type: application/json');
 $agent = require_login();
@@ -19,6 +20,9 @@ if ($action === 'save') {
     $editSlug    = trim($in['edit_slug']      ?? '');
     $bicEmail    = strtolower(trim($in['bic_email']       ?? ''));
     $leaderEmail = strtolower(trim($in['mc_leader_email'] ?? ''));
+    $address     = trim($in['address'] ?? '');
+    $city        = trim($in['city']    ?? '');
+    $zip         = trim($in['zip']     ?? '');
 
     // On edit keep the existing slug stable — it's a permanent identifier, not derived from name.
     // Only compute a new slug when adding a brand-new MC.
@@ -30,18 +34,42 @@ if ($action === 'save') {
         // Fetch old record before update so we can detect what changed.
         $oldRow = null;
         if ($editSlug) {
-            $s = $db->prepare("SELECT name, bic_email FROM market_centers WHERE slug=?");
+            $s = $db->prepare("SELECT name, bic_email, address, city, zip, lat, lng FROM market_centers WHERE slug=?");
             $s->execute([$editSlug]);
             $oldRow = $s->fetch(PDO::FETCH_ASSOC);
         }
 
+        // Only re-geocode when the address actually changed (or it's a brand-new MC with an address),
+        // to avoid hammering the Census API on every unrelated field edit.
+        $addressChanged = !$oldRow || $oldRow['address'] !== $address || $oldRow['city'] !== $city || $oldRow['zip'] !== $zip;
+        $lat = $oldRow['lat'] ?? null;
+        $lng = $oldRow['lng'] ?? null;
+        $geocodedAt = $oldRow['geocoded_at'] ?? '';
+        $geocodeOk  = true;
+        if ($addressChanged) {
+            if ($address === '' && $city === '' && $zip === '') {
+                $lat = null; $lng = null; $geocodedAt = '';
+            } else {
+                $coords = geocode_address($address, $city, $state, $zip);
+                if ($coords) {
+                    $lat = $coords['lat']; $lng = $coords['lng'];
+                    $geocodedAt = date('Y-m-d H:i:s');
+                } else {
+                    $lat = null; $lng = null; $geocodedAt = '';
+                    $geocodeOk = false;
+                }
+            }
+        }
+
         $db->prepare(
-            "INSERT INTO market_centers (slug, name, state_code, sort_ord, enabled, bic_email, mc_leader_email)
-             VALUES (?, ?, ?, ?, 1, ?, ?)
+            "INSERT INTO market_centers (slug, name, state_code, sort_ord, enabled, bic_email, mc_leader_email, address, city, zip, lat, lng, geocoded_at)
+             VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(slug) DO UPDATE SET
                name=excluded.name, state_code=excluded.state_code, sort_ord=excluded.sort_ord,
-               bic_email=excluded.bic_email, mc_leader_email=excluded.mc_leader_email"
-        )->execute([$slug, $name, $state, $ord, $bicEmail, $leaderEmail]);
+               bic_email=excluded.bic_email, mc_leader_email=excluded.mc_leader_email,
+               address=excluded.address, city=excluded.city, zip=excluded.zip,
+               lat=excluded.lat, lng=excluded.lng, geocoded_at=excluded.geocoded_at"
+        )->execute([$slug, $name, $state, $ord, $bicEmail, $leaderEmail, $address, $city, $zip, $lat, $lng, $geocodedAt]);
 
         // Propagate display-name change to every innovate_roster row that referenced the old name.
         if ($oldRow && $oldRow['name'] !== $name) {
@@ -59,6 +87,7 @@ if ($action === 'save') {
             'ok' => true, 'slug' => $slug, 'name' => $name,
             'state_code' => $state, 'sort_ord' => $ord,
             'bic_email' => $bicEmail, 'mc_leader_email' => $leaderEmail,
+            'geocode_ok' => $geocodeOk,
         ]);
     } catch (\Throwable $e) {
         echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
