@@ -256,6 +256,24 @@ function complete_offboard_step(PDO $pdo, int $queueId, string $toolKey, string 
     maybe_notify_next_actionable_step($pdo, 'offboard', $queueId);
 }
 
+// Queue a short confirmation email to the agent when their onboarding is
+// marked complete (api/onboard_action.php's complete_onboarding action).
+function notify_onboard_completed(string $agentName, string $agentEmail): void {
+    $subject = "Your onboarding is complete — welcome aboard!";
+    $body    = implode("\n", [
+        "Hi {$agentName},",
+        "",
+        "Your onboarding is complete. Welcome aboard!",
+        "",
+        "— AgentEdge",
+    ]);
+
+    $db  = local_db();
+    $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+    )->execute([$agentEmail, 'email', $subject, $body, '']);
+}
+
 // Queue an email to the departing agent with a link to fill out their exit
 // interview. Sent when an admin clicks "Send Exit Interview" — the agent's
 // AgentEdge login is still active at this point (account inactivation is a

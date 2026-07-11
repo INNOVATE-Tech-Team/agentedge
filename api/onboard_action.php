@@ -329,7 +329,20 @@ if ($action === 'complete_onboarding') {
 
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);
-    json_out(['ok'=>true]);
+
+    try {
+        require_once __DIR__ . '/../lib/notifications.php';
+        notify_onboard_completed($row['agent_name'], $row['agent_email']);
+    } catch (\Throwable $e) {}
+
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true]);
+    try {
+        require_once __DIR__ . '/../lib/notifications.php';
+        dispatch_notification_queue();
+    } catch (\Throwable $e) {}
+    exit;
 }
 
 // ── POST: cancel_onboarding ───────────────────────────────────────────────────
