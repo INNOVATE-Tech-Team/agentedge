@@ -261,7 +261,16 @@ if ($action === 'provision') {
         require_once __DIR__ . '/../lib/pandadoc.php';
         $existingDocId = $pdo->prepare("SELECT pandadoc_document_id FROM onboard_steps WHERE queue_id=? AND tool_key=?");
         $existingDocId->execute([$queueId, $toolKey]);
-        $result = pandadoc_send_document($entry['agent_name'], $entry['agent_email'], $existingDocId->fetchColumn() ?: null);
+        $result = pandadoc_send_document(
+            $entry['agent_name'], $entry['agent_email'], $existingDocId->fetchColumn() ?: null,
+            function (string $docId) use ($pdo, $queueId, $toolKey) {
+                // Persist immediately, before the slower poll/send steps below —
+                // if this request gets interrupted partway, the document id
+                // still needs to be recoverable (the webhook matches on it).
+                $pdo->prepare("UPDATE onboard_steps SET pandadoc_document_id=? WHERE queue_id=? AND tool_key=?")
+                    ->execute([$docId, $queueId, $toolKey]);
+            }
+        );
     }
 
     // A doc_signing send only puts the document in front of the agent —

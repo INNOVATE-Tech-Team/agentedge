@@ -29,10 +29,24 @@ function pandadoc_request(string $method, string $path, ?array $body = null): ar
     return ['ok' => $code >= 200 && $code < 300, 'code' => $code, 'data' => $d];
 }
 
+// Statuses a document can already be in if a prior attempt got far enough to
+// send it before this function (or the request handling it) was interrupted.
+const PANDADOC_ALREADY_SENT_STATUSES = [
+    'document.sent', 'document.viewed', 'document.waiting_approval',
+    'document.approved', 'document.completed', 'document.waiting_pay', 'document.paid',
+];
+
 // Creates a document from the configured onboarding template and sends it to
 // the agent for signature. Pass $existingDocId to resume a document that was
 // already created by a prior (failed) attempt instead of creating a duplicate.
-function pandadoc_send_document(string $agentName, string $agentEmail, ?string $existingDocId = null): array {
+// Pass $onCreated to get the new document id as soon as it exists — the
+// create/poll/send round trip below can take several seconds, and if the
+// caller's request gets interrupted partway (e.g. PHP aborts on client
+// disconnect), the document already exists/may already be sent on PandaDoc's
+// side, so the id needs to be persisted immediately rather than only on
+// full success — otherwise nothing (including the completion webhook) can
+// ever be reconciled back to it.
+function pandadoc_send_document(string $agentName, string $agentEmail, ?string $existingDocId = null, ?callable $onCreated = null): array {
     $c      = cfg();
     $apiKey = $c['pandadoc_api_key'] ?? '';
     if ($apiKey === '') return ['ok'=>false,'error'=>'PandaDoc API key not configured'];
@@ -46,10 +60,18 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
     $first = $parts[0];
     $last  = $parts[1] ?? '';
 
-    $docId = $existingDocId;
+    $docId  = $existingDocId;
     $status = '';
 
-    if (!$docId) {
+    if ($docId) {
+        // Resuming a document from a prior attempt — check where it actually
+        // is before assuming it still needs to be sent.
+        $check  = pandadoc_request('GET', "/public/v1/documents/{$docId}/details");
+        $status = $check['data']['status'] ?? '';
+        if (in_array($status, PANDADOC_ALREADY_SENT_STATUSES, true)) {
+            return ['ok'=>true,'document_id'=>$docId];
+        }
+    } else {
         $create = pandadoc_request('POST', '/public/v1/documents', [
             'name'          => "Onboarding Agreement - {$agentName}",
             'template_uuid' => $templateId,
@@ -68,6 +90,8 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
         $status = $create['data']['status'] ?? '';
         if (!$docId) return ['ok'=>false,'error'=>'PandaDoc did not return a document id'];
     }
+
+    if ($onCreated) $onCreated($docId);
 
     // Newly created documents start in 'document.uploaded' while PandaDoc
     // finishes processing the template and must reach 'document.draft'
