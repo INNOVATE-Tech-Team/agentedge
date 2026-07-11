@@ -67,74 +67,69 @@ $photo = $user['picture'] ?? null;
 
 if ($email === '') { google_fail('token_exchange_failed'); }
 
-// Local-first: if this email already has an AgentEdge credential row
-// (migrated from Perfex, or backfilled from a prior password login), trust
-// that identity directly — no need to touch Perfex at all for this sign-in.
-$localCred = local_credential_lookup($email);
-if ($localCred) {
-    $agent = credential_to_agent($localCred);
-    if (empty($agent['photo']) && $photo) $agent['photo'] = $photo;
-} else {
-    // Match against tblstaff (Perfex) — the same source of truth password logins use.
-    $u = db_one(
-        "SELECT staffid, email, firstname, lastname, profile_image, active
-         FROM tblstaff WHERE email = ? LIMIT 1",
-        [$email]
-    );
+// Match against tblstaff (Perfex) — the same source of truth password logins use.
+$u = db_one(
+    "SELECT staffid, email, firstname, lastname, profile_image, active
+     FROM tblstaff WHERE email = ? LIMIT 1",
+    [$email]
+);
 
-    if ($u) {
-        if (!empty($c['require_active']) && (int)$u['active'] !== 1) {
-            google_fail('account_disabled');
-        }
-        $agent = [
-            'id'    => (int)$u['staffid'],
-            'email' => $u['email'],
-            'name'  => trim($u['firstname'] . ' ' . $u['lastname']) ?: $name,
-            'photo' => $u['profile_image'] ?: $photo,
-        ];
-    } else {
-        // Not staff in Perfex. Accept if either:
-        // (1) this email already has a role assigned locally — covers admins/
-        //     super_admins who aren't Perfex staff, or
-        // (2) it's in the CRM roster — covers agents not yet synced to tblstaff.
-        // We never silently create access for an email that matches neither.
-        $hasRole = false;
+if ($u) {
+    if (!empty($c['require_active']) && (int)$u['active'] !== 1) {
+        google_fail('account_disabled');
+    }
+    $agent = [
+        'id'    => (int)$u['staffid'],
+        'email' => $u['email'],
+        'name'  => trim($u['firstname'] . ' ' . $u['lastname']) ?: $name,
+        'photo' => $u['profile_image'] ?: $photo,
+    ];
+} else {
+    // Not staff in Perfex. Accept if either:
+    // (1) this email already has a role assigned locally — covers admins/
+    //     super_admins who aren't Perfex staff, or
+    // (2) it's in the CRM roster — covers agents not yet synced to tblstaff.
+    // We never silently create access for an email that matches neither.
+    require_once __DIR__ . '/local_db.php';
+    $hasRole = false;
+    if (function_exists('local_db')) {
         try {
             $rs = local_db()->prepare("SELECT 1 FROM agent_roles WHERE email = ? LIMIT 1");
             $rs->execute([$email]);
             $hasRole = (bool)$rs->fetchColumn();
         } catch (\Throwable $e) {}
-
-        if (!$hasRole) {
-            $whoami = null;
-            $base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-            $tok    = $c['crm_token'] ?? '';
-            if ($tok !== '') {
-                $wUrl = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
-                $wRaw = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
-                $whoami = $wRaw ? json_decode($wRaw, true) : null;
-            }
-            if (!$whoami || empty($whoami['email'])) {
-                google_fail('user_create_failed');
-            }
-            if (!empty($whoami['name'])) $name = $whoami['name'];
-
-            // First Google sign-in for a roster agent not in tblstaff — provision a
-            // default role so role-gated pages and /api/permissions.php have a row to read.
-            try {
-                local_db()->prepare("INSERT OR IGNORE INTO agent_roles (email, role) VALUES (?, 'agent')")->execute([$email]);
-            } catch (\Throwable $e) {
-                google_fail('user_create_failed');
-            }
-        }
-
-        $agent = ['id' => 0, 'email' => $email, 'name' => $name, 'photo' => $photo];
     }
+
+    if (!$hasRole) {
+        $whoami = null;
+        $base   = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+        $tok    = $c['crm_token'] ?? '';
+        if ($tok !== '') {
+            $wUrl = $base . '/public/whoami?token=' . urlencode($tok) . '&email=' . urlencode($email);
+            $wRaw = @file_get_contents($wUrl, false, stream_context_create(['http' => ['timeout' => 8, 'header' => "Accept: application/json\r\n"]]));
+            $whoami = $wRaw ? json_decode($wRaw, true) : null;
+        }
+        if (!$whoami || empty($whoami['email'])) {
+            google_fail('user_create_failed');
+        }
+        if (!empty($whoami['name'])) $name = $whoami['name'];
+
+        // First Google sign-in for a roster agent not in tblstaff — provision a
+        // default role so role-gated pages and /api/permissions.php have a row to read.
+        try {
+            local_db()->prepare("INSERT OR IGNORE INTO agent_roles (email, role) VALUES (?, 'agent')")->execute([$email]);
+        } catch (\Throwable $e) {
+            google_fail('user_create_failed');
+        }
+    }
+
+    $agent = ['id' => 0, 'email' => $email, 'name' => $name, 'photo' => $photo];
 }
 
 session_regenerate_id(true);
 $_SESSION['agent'] = $agent;
 unset($_SESSION['perms']); // force fresh permissions lookup
+log_login_event($agent['email'], $agent['name'], 'google');
 
 header('Location: index.php');
 exit;

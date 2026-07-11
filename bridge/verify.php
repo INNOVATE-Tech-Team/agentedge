@@ -3,7 +3,7 @@ mysqli_report(MYSQLI_REPORT_OFF);
 header('Content-Type: application/json');
 
 $BRIDGE_TOKEN = '69f875969332c128a5523ad1cfa4ed2bc06ea29b75a9f484';
-$DB_HOST = 'localhost';
+$DB_HOST = 'agents.innovateonline.com';
 $DB_NAME = 'innovate_agents';
 $DB_USER = 'innovate_agentedge_ro';
 $DB_PASS = 'Innovate2026!';
@@ -130,32 +130,6 @@ if ($action === 'dump') {
     $agents = [];
     while ($row = $res->fetch_assoc()) {
         $agents[] = ['staffid'=>(int)$row['staffid'],'firstname'=>$row['firstname']??'','lastname'=>$row['lastname']??'','email'=>strtolower(trim($row['email']??'')),'phone'=>$row['phonenumber']??''];
-    }
-    echo json_encode(['ok'=>true,'count'=>count($agents),'agents'=>$agents]);
-    exit;
-}
-
-// ---- One-time bulk password hash export (auth decoupling migration) -------
-// Exports every agent's existing bcrypt hash so AgentEdge can verify logins
-// locally without calling this bridge at all. Guarded by the same shared
-// token as every other action here — same security model as `dump`, which
-// already bulk-exports name/email/phone. Remove this action (or rotate
-// $BRIDGE_TOKEN) once the one-time migration script has run — see the auth
-// decoupling plan for the retirement criteria on the fallback path this feeds.
-if ($action === 'export_hashes') {
-    $res = $db->query("SELECT staffid, email, firstname, lastname, password, profile_image FROM tblstaff WHERE active = 1 ORDER BY staffid");
-    if (!$res) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>$db->error]); exit; }
-    $agents = [];
-    while ($row = $res->fetch_assoc()) {
-        $email = strtolower(trim($row['email'] ?? ''));
-        if ($email === '' || empty($row['password'])) continue;
-        $agents[] = [
-            'staffid'       => (int)$row['staffid'],
-            'email'         => $email,
-            'name'          => trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')),
-            'password_hash' => $row['password'],
-            'photo'         => $row['profile_image'] ?: null,
-        ];
     }
     echo json_encode(['ok'=>true,'count'=>count($agents),'agents'=>$agents]);
     exit;

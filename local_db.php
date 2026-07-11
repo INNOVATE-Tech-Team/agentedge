@@ -269,19 +269,25 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
-    // tblstaff auth. A row is created either by the one-time bulk hash
-    // migration (source='migrated') or by backfilling after a successful
-    // Perfex-bridge login (source='local') — see attempt_login() in auth.php.
-    // name/photo/staffid are a denormalized identity cache so a fully local
-    // login never needs to hit Perfex at all.
-    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_credentials (
+    // tblstaff auth, checked first in attempt_login() (auth.php) before
+    // falling back to the Perfex bridge. Deliberately just email+hash —
+    // display identity (name/photo) is resolved fresh from tblstaff/
+    // innovate_roster on each login rather than cached here.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_passwords (
         email         TEXT PRIMARY KEY,
         password_hash TEXT NOT NULL,
-        staffid       INTEGER NOT NULL DEFAULT 0,
-        name          TEXT NOT NULL DEFAULT '',
-        photo         TEXT,
-        source        TEXT NOT NULL DEFAULT 'local',  -- 'migrated' | 'local'
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        updated_at    TEXT NOT NULL DEFAULT ''
+    )");
+
+    // Login audit trail — every successful sign-in, password or Google.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS login_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        email        TEXT    NOT NULL DEFAULT '',
+        name         TEXT    NOT NULL DEFAULT '',
+        method       TEXT    NOT NULL DEFAULT 'password',
+        ip           TEXT    NOT NULL DEFAULT '',
+        user_agent   TEXT    NOT NULL DEFAULT '',
+        logged_in_at TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
     // Forgot-password reset tokens — single-use, short-lived. Also doubles as

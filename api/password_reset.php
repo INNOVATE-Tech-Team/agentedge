@@ -1,8 +1,9 @@
 <?php
 // Forgot-password request + confirm — the local replacement for Perfex's
-// reset_url (agents.innovateonline.com/admin/authentication/forgot_password).
-// Also doubles as the "set your initial password" step for agents
-// provisioned directly in AgentEdge with no Perfex account to fall back on.
+// admin/authentication/forgot_password page. Also doubles as the "set your
+// initial password" step for agents provisioned directly in AgentEdge with
+// no Perfex account to fall back on. Writes to agent_passwords, the same
+// table attempt_login() (auth.php) already checks first on every sign-in.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../lib/notifications.php';
@@ -20,7 +21,12 @@ if ($action === 'request') {
     $generic = ['ok' => true, 'message' => 'If that email has an AgentEdge account, a reset link is on its way.'];
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) { echo json_encode($generic); exit; }
 
-    $known = local_credential_lookup($email) !== null;
+    $known = false;
+    try {
+        $rs = local_db()->prepare("SELECT 1 FROM agent_passwords WHERE email=?");
+        $rs->execute([$email]);
+        $known = (bool)$rs->fetchColumn();
+    } catch (\Throwable $e) {}
     if (!$known) {
         try {
             $rs = local_db()->prepare("SELECT 1 FROM agent_roles WHERE email=?");
@@ -70,35 +76,31 @@ if ($action === 'confirm') {
         exit;
     }
 
-    $email   = $row['email'];
-    $cred    = local_credential_lookup($email);
-    $name    = $cred['name'] ?? '';
-    $staffid = (int)($cred['staffid'] ?? 0);
-    $photo   = $cred['photo'] ?? null;
-
-    // Best-effort identity for a brand-new local account (no prior credential
-    // row): fall back to the intake form's name rather than leaving it blank.
-    if ($name === '') {
-        try {
-            $ist = local_db()->prepare("SELECT full_name FROM agent_intake WHERE email=?");
-            $ist->execute([$email]);
-            $name = (string)($ist->fetchColumn() ?: $email);
-        } catch (\Throwable $e) { $name = $email; }
-    }
-
+    $email = $row['email'];
     local_db()->prepare(
-        "INSERT INTO agent_credentials (email, password_hash, staffid, name, photo, source, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'reset', datetime('now'))
+        "INSERT INTO agent_passwords (email, password_hash, updated_at)
+         VALUES (?, ?, datetime('now'))
          ON CONFLICT(email) DO UPDATE SET password_hash=excluded.password_hash, updated_at=excluded.updated_at"
-    )->execute([$email, password_hash($new, PASSWORD_BCRYPT), $staffid, $name, $photo]);
+    )->execute([$email, password_hash($new, PASSWORD_BCRYPT)]);
 
     local_db()->prepare("UPDATE password_reset_tokens SET used_at=datetime('now') WHERE token=?")->execute([$token]);
 
-    // Log the agent straight in — no reason to make them re-enter the
-    // password they just set.
+    // Resolve identity (name/photo/staffid) the exact same way a normal login
+    // would — tblstaff first, then innovate_roster — rather than duplicating
+    // that logic here. The password we just stored will match immediately.
+    $agent = attempt_login($email, $new);
+    if (!$agent) {
+        // Should be unreachable (we just wrote the hash attempt_login checks
+        // first), but never leave the agent stuck on a "success" response
+        // with no session.
+        echo json_encode(['ok' => false, 'error' => 'Password saved, but sign-in failed — please try signing in normally.']);
+        exit;
+    }
+
     session_regenerate_id(true);
-    $_SESSION['agent'] = ['id' => $staffid, 'email' => $email, 'name' => $name, 'photo' => $photo];
+    $_SESSION['agent'] = $agent;
     unset($_SESSION['perms']);
+    log_login_event($agent['email'], $agent['name'] ?? '', 'password_reset');
 
     echo json_encode(['ok' => true]);
     exit;

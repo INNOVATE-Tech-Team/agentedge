@@ -1,15 +1,17 @@
 <?php
 if (defined('AGENTEDGE_AUTH_LOADED')) return;
 define('AGENTEDGE_AUTH_LOADED', true);
-// Session + auth helpers. Login now checks AgentEdge's own local
-// agent_credentials table first (see attempt_login()); Perfex tblstaff via
-// the bridge/direct-DB path is a fallback for agents not yet migrated there,
-// kept during the transition off Perfex — see docs/plans on the auth
-// decoupling effort for the retirement criteria.
-require_once __DIR__ . '/local_db.php';
+// Session + auth helpers. Agents sign in with their existing Perfex (tblstaff)
+// email + password (bcrypt), so there's no new account to manage.
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
+}
+
+// Load local SQLite for the password-override table (agent_passwords).
+// Use require_once so it's safe to call from any entry point that already loaded it.
+if (file_exists(__DIR__ . '/local_db.php')) {
+    require_once __DIR__ . '/local_db.php';
 }
 
 function current_agent(): ?array {
@@ -49,100 +51,68 @@ function require_login(): array {
     return $a;
 }
 
-// AgentEdge's own local credential lookup — the replacement for Perfex
-// tblstaff auth. Keyed by lowercased email, same convention as every other
-// agent-keyed table in local_db.php.
-function local_credential_lookup(string $email): ?array {
-    $st = local_db()->prepare("SELECT * FROM agent_credentials WHERE email=?");
-    $st->execute([strtolower(trim($email))]);
-    return $st->fetch(PDO::FETCH_ASSOC) ?: null;
-}
-
-function credential_to_agent(array $cred): array {
-    return [
-        'id'    => (int)$cred['staffid'],
-        'email' => $cred['email'],
-        'name'  => $cred['name'],
-        'photo' => $cred['photo'] ?: null,
-    ];
-}
-
-// Called after a successful Perfex-backed login (bridge or direct-DB) for an
-// agent with no local credential row yet — captures a fresh local bcrypt hash
-// of the password they just proved they know, plus their identity, so every
-// subsequent login for this agent skips Perfex entirely. Never overwrites a
-// 'migrated' row with stale identity data on every login — only inserts once
-// or refreshes if the underlying Perfex identity actually changed.
-function backfill_local_credential(array $agent, string $password): void {
-    $email = strtolower(trim($agent['email'] ?? ''));
-    if ($email === '') return;
-    try {
-        local_db()->prepare(
-            "INSERT INTO agent_credentials (email, password_hash, staffid, name, photo, source, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'local', datetime('now'))
-             ON CONFLICT(email) DO UPDATE SET
-                password_hash=excluded.password_hash, staffid=excluded.staffid,
-                name=excluded.name, photo=excluded.photo, updated_at=excluded.updated_at"
-        )->execute([
-            $email,
-            password_hash($password, PASSWORD_BCRYPT),
-            (int)($agent['id'] ?? 0),
-            (string)($agent['name'] ?? ''),
-            $agent['photo'] ?? null,
-        ]);
-    } catch (\Throwable $e) {}
-}
-
-// Verify email + password. Local-first: if this agent already has a row in
-// agent_credentials (from the bulk migration or a prior backfill), verify
-// against it directly — zero Perfex/bridge calls. Otherwise fall back to the
-// pre-existing Perfex-backed paths and backfill on success, so the fallback
-// path organically empties out as agents log in. See the auth-decoupling
-// plan for the criteria to eventually remove the fallback entirely.
+// Verify email + password against tblstaff. Returns the agent array or null.
 function attempt_login(string $email, string $password): ?array {
     $email = trim($email);
-    if ($email === '' || $password === '') return null;
-
-    $cred = local_credential_lookup($email);
-    if ($cred) {
-        if (!password_verify($password, $cred['password_hash'])) return null;
-        return credential_to_agent($cred);
-    }
-
     $c = cfg();
-    $agent = null;
 
-    // Preferred fallback: the Perfex login bridge — verifies the agent's
-    // existing password over HTTPS on innovateonline.com (works from
-    // Lightsail, where we can't reach the Perfex database directly).
-    if (!empty($c['auth_bridge_url'])) {
-        $agent = attempt_login_bridge($email, $password, $c);
-    } elseif (!empty($c['demo'])) {
-        // Sample-data mode: any non-empty login works (no database, no real
-        // auth, and nothing worth persisting to agent_credentials).
-        return ['id' => 1, 'email' => $email, 'name' => 'Demo Agent', 'photo' => null];
-    } else {
-        $u = db_one(
-            "SELECT staffid, email, firstname, lastname, password, profile_image, active, role
-             FROM tblstaff WHERE email = ? LIMIT 1",
-            [$email]
-        );
-        if ($u
-            && (empty($c['require_active']) || (int)$u['active'] === 1)
-            && (empty($c['agent_role_ids']) || in_array((int)$u['role'], array_map('intval', $c['agent_role_ids']), true))
-            && password_verify($password, (string)$u['password'])
-        ) {
-            $agent = [
-                'id'    => (int)$u['staffid'],
-                'email' => $u['email'],
-                'name'  => trim($u['firstname'] . ' ' . $u['lastname']),
-                'photo' => $u['profile_image'] ?: null,
-            ];
-        }
+    // Step 0 — check local AgentEdge password table (SQLite).
+    // This allows us to set a default or custom password without touching Perfex.
+    if (function_exists('local_db') && $email !== '' && $password !== '') {
+        try {
+            $stmt = local_db()->prepare("SELECT password_hash FROM agent_passwords WHERE email=? LIMIT 1");
+            $stmt->execute([strtolower($email)]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row && password_verify($password, $row['password_hash'])) {
+                // Fetch display info from tblstaff first, then innovate_roster as fallback
+                $u = null;
+                try { $u = db_one("SELECT staffid, email, firstname, lastname, profile_image FROM tblstaff WHERE email=? LIMIT 1", [$email]); } catch (\Throwable $e) {}
+                if ($u) {
+                    return [
+                        'id'    => (int)$u['staffid'],
+                        'email' => $u['email'],
+                        'name'  => trim($u['firstname'] . ' ' . $u['lastname']),
+                        'photo' => $u['profile_image'] ?: null,
+                    ];
+                }
+                // Try innovate_roster for display name (e.g. super_admin not in tblstaff)
+                $rname = '';
+                try {
+                    $rs = local_db()->prepare("SELECT agent_name FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1");
+                    $rs->execute([strtolower($email)]);
+                    $rname = $rs->fetchColumn() ?: '';
+                } catch (\Throwable $e) {}
+                return ['id' => 0, 'email' => $email, 'name' => $rname ?: $email, 'photo' => null];
+            }
+        } catch (\Throwable $e) {}
     }
 
-    if ($agent) backfill_local_credential($agent, $password);
-    return $agent;
+    // Preferred: the Perfex login bridge — verifies the agent's existing
+    // password over HTTPS on innovateonline.com (works from Lightsail, where
+    // we can't reach the Perfex database directly).
+    if (!empty($c['auth_bridge_url'])) {
+        return attempt_login_bridge($email, $password, $c);
+    }
+    // Sample-data mode: any non-empty login works (no database, no real auth).
+    if (!empty($c['demo'])) {
+        if (trim($email) === '' || $password === '') return null;
+        return ['id' => 1, 'email' => trim($email), 'name' => 'Demo Agent', 'photo' => null];
+    }
+    $u = db_one(
+        "SELECT staffid, email, firstname, lastname, password, profile_image, active, role
+         FROM tblstaff WHERE email = ? LIMIT 1",
+        [trim($email)]
+    );
+    if (!$u) return null;
+    if (!empty($c['require_active']) && (int)$u['active'] !== 1) return null;
+    if (!empty($c['agent_role_ids']) && !in_array((int)$u['role'], array_map('intval', $c['agent_role_ids']), true)) return null;
+    if (!password_verify($password, (string)$u['password'])) return null;
+    return [
+        'id'    => (int)$u['staffid'],
+        'email' => $u['email'],
+        'name'  => trim($u['firstname'] . ' ' . $u['lastname']),
+        'photo' => $u['profile_image'] ?: null,
+    ];
 }
 
 // Generic authenticated call to the Perfex login bridge (bridge/verify.php),
@@ -194,4 +164,18 @@ function attempt_login_bridge(string $email, string $password, array $c): ?array
         'name'  => $d['name'] ?? $email,
         'photo' => $d['photo'] ?? null,
     ];
+}
+
+// ── Login event logging ───────────────────────────────────────────────────────
+
+function log_login_event(string $email, string $name, string $method): void {
+    if (!function_exists("local_db")) return;
+    try {
+        $ip = $_SERVER["HTTP_X_FORWARDED_FOR"] ?? $_SERVER["REMOTE_ADDR"] ?? "";
+        $ip = trim(explode(",", $ip)[0]);
+        $ua = substr($_SERVER["HTTP_USER_AGENT"] ?? "", 0, 300);
+        local_db()->prepare(
+            "INSERT INTO login_events (email,name,method,ip,user_agent) VALUES (?,?,?,?,?)"
+        )->execute([strtolower($email), $name, $method, $ip, $ua]);
+    } catch (\Throwable $e) {}
 }

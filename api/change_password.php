@@ -1,8 +1,9 @@
 <?php
 // Change the logged-in agent's own password — writes to AgentEdge's local
-// agent_credentials table (see auth.php's local_credential_lookup()/
-// backfill_local_credential()), replacing the old bridge-only implementation
-// that depended on Perfex tblstaff being writable.
+// agent_passwords table (checked first by attempt_login() in auth.php),
+// replacing the old bridge-only implementation that depended on Perfex
+// tblstaff being writable (its DB user is read-only, so that path was
+// likely already broken).
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 header('Content-Type: application/json');
@@ -28,36 +29,18 @@ if (strlen($new) < 8) {
 
 $email = strtolower(trim($me['email']));
 
-// Verify the current password the same way attempt_login() would: local
-// credential first, falling back to the Perfex-backed path only if this
-// agent has no local row yet.
-$cred = local_credential_lookup($email);
-if ($cred) {
-    if (!password_verify($current, $cred['password_hash'])) {
-        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']);
-        exit;
-    }
-} else {
-    $reverify = attempt_login($email, $current);
-    if (!$reverify) {
-        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']);
-        exit;
-    }
-    // attempt_login() already backfilled agent_credentials on that successful
-    // verify above — re-fetch so the update below targets the real row.
-    $cred = local_credential_lookup($email);
+// Re-verify the current password through the exact same precedence
+// attempt_login() already uses (agent_passwords first, then the Perfex
+// bridge/direct-DB fallback) rather than duplicating that logic here.
+if (!attempt_login($email, $current)) {
+    echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']);
+    exit;
 }
 
 local_db()->prepare(
-    "INSERT INTO agent_credentials (email, password_hash, staffid, name, photo, source, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'local', datetime('now'))
+    "INSERT INTO agent_passwords (email, password_hash, updated_at)
+     VALUES (?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET password_hash=excluded.password_hash, updated_at=excluded.updated_at"
-)->execute([
-    $email,
-    password_hash($new, PASSWORD_BCRYPT),
-    (int)($cred['staffid'] ?? $me['id'] ?? 0),
-    (string)($cred['name'] ?? $me['name'] ?? ''),
-    $cred['photo'] ?? ($me['photo'] ?? null),
-]);
+)->execute([$email, password_hash($new, PASSWORD_BCRYPT)]);
 
 echo json_encode(['ok' => true]);
