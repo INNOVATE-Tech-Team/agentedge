@@ -8,21 +8,16 @@ $agent = require_login();
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
 
-// MC options for the role modal (same list admin_roles.php uses)
-$c     = cfg();
-$base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
-$token = $c['crm_token'] ?? '';
-$url   = $base . '/public/retention-roster' . ($token ? '?token=' . urlencode($token) : '');
-$ctx   = stream_context_create(['http' => ['timeout' => 12, 'header' => "Accept: application/json\r\n"]]);
-$raw   = @file_get_contents($url, false, $ctx);
-$roster = ($raw !== false) ? (json_decode($raw, true) ?? []) : [];
-
+// MC options for the role modal — sourced from the local market_centers
+// table (the same list Back Office's Agent Roster manages), not the CRM
+// feed. Role scoping (mc_slugs on agent_roles) is checked against these
+// slugs elsewhere in the app, so a market center only matters here once it's
+// actually registered locally; anything that only exists under a different
+// name in the CRM feed (e.g. "Professional Drive" vs the registered "Myrtle
+// Beach") isn't a valid, sluggable scoping target anyway.
 $mc_opts = [];
-foreach ($roster as $a) {
-    $mc   = $a['marketCenter'] ?? '';
-    if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
-    $slug = slugify_mc($mc);
-    if ($mc && $slug && !isset($mc_opts[$slug])) $mc_opts[$slug] = $mc;
+foreach (local_db()->query("SELECT slug, name FROM market_centers WHERE enabled=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC) as $mc) {
+    $mc_opts[$mc['slug']] = $mc['name'];
 }
 ksort($mc_opts);
 
