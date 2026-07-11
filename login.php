@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $err = 'Invalid email or password.';
 }
 
-$reset_url    = cfg()['reset_url']      ?? 'https://agents.innovateonline.com/admin/authentication/forgot_password';
+$reset_url    = 'forgot_password.php';
 $googleClient = cfg()['google_client_id'] ?? '';
 ?>
 <!doctype html>
@@ -88,8 +88,8 @@ $googleClient = cfg()['google_client_id'] ?? '';
         </div>
       </label>
       <button type="submit">Sign in</button>
-      <a class="login-forgot" href="<?= htmlspecialchars($reset_url) ?>" target="_blank" rel="noopener">Forgot password?</a>
-      <p class="login-note">Your password is the same as your INNOVATE back-office login.</p>
+      <a class="login-forgot" href="<?= htmlspecialchars($reset_url) ?>">Forgot password?</a>
+      <p class="login-note">Your password is the same as your INNOVATE back-office login until you reset it here.</p>
     </form>
   </div>
 </body>
