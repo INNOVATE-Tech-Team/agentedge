@@ -49,6 +49,19 @@ if ($lesson['type'] === 'quiz') {
 
 $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝'];
 $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
+
+function make_embed_url(string $url): string {
+    if (preg_match('/youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]+)/', $url, $m))
+        return 'https://www.youtube.com/embed/' . $m[1];
+    if (preg_match('/youtu\.be\/([a-zA-Z0-9_-]+)/', $url, $m))
+        return 'https://www.youtube.com/embed/' . $m[1];
+    if (preg_match('/vimeo\.com\/(\d+)(?:\/([a-f0-9]+))?/', $url, $m))
+        return 'https://player.vimeo.com/video/' . $m[1] . (!empty($m[2]) ? '?h=' . $m[2] : '');
+    if (preg_match('/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/', $url, $m))
+        return 'https://drive.google.com/file/d/' . $m[1] . '/preview';
+    return $url;
+}
+$embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) : '';
 ?>
 <!doctype html>
 <html lang="en">
@@ -143,7 +156,11 @@ $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
 
       <!-- Video lesson -->
       <?php if ($lesson['type'] === 'video'): ?>
-      <?php if ($lesson['file_key']): ?>
+      <?php if ($embedUrl): ?>
+      <div class="video-wrap" style="padding-top:56.25%;position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <iframe src="<?= htmlspecialchars($embedUrl) ?>" style="position:absolute;top:0;left:0;width:100%;height:100%;border:0" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" onload="scheduleEmbedComplete()"></iframe>
+      </div>
+      <?php elseif ($lesson['file_key']): ?>
       <div class="video-wrap">
         <video id="lesson-video" controls preload="metadata" onended="onVideoEnd()">
           <source src="api/uni_download.php?id=<?= $lessonId ?>" type="video/mp4">
@@ -270,6 +287,10 @@ const COURSE_ID = <?= $courseId ?>;
 let alreadyDone = <?= $isComplete ? 'true' : 'false' ?>;
 
 function onVideoEnd() { if (!alreadyDone) markComplete(); }
+
+function scheduleEmbedComplete() {
+  // For embedded videos: show the Mark as Complete button immediately (can't detect end via iframe).
+}
 
 function scheduleComplete() {
   // For doc lessons: mark complete 2s after opening

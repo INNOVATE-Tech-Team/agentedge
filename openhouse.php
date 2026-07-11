@@ -23,11 +23,16 @@ $params     = [];
 if ($filterState !== '') { $whereExtra .= " AND l.state=?"; $params[] = $filterState; }
 if ($filterType  !== '') { $whereExtra .= " AND l.property_type=?"; $params[] = $filterType; }
 
+// Hide listings that have no current/active time slot, unless the listing is
+// flagged no_schedule (vacant, intentionally left "available anytime").
 $listQ = $db->prepare("
     SELECT l.*
     FROM oh_listings l
     WHERE l.visible=1
       AND LOWER(l.listing_agent_email) != ?
+      AND (l.no_schedule=1 OR EXISTS (
+          SELECT 1 FROM oh_slots s WHERE s.listing_id=l.id AND s.slot_date >= date('now')
+      ))
       {$whereExtra}
     ORDER BY l.created_at DESC
 ");
@@ -46,6 +51,7 @@ if ($listingIds) {
                (SELECT COUNT(*) FROM oh_requests r WHERE r.slot_id=s.id AND r.status='pending')  AS pending_count
         FROM oh_slots s
         WHERE s.listing_id IN ({$inPH})
+          AND s.slot_date >= date('now')
         ORDER BY s.slot_date, s.start_time
     ");
     $sQ->execute($listingIds);
@@ -130,7 +136,7 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
               <div class="oh-card-agent">Listed by <?= h($lst['listing_agent_name'] ?: $lst['listing_agent_email']) ?></div>
 
               <?php if (empty($slots)): ?>
-                <div style="font-size:12px;color:#bbb;font-style:italic">No time slots listed</div>
+                <div style="font-size:12px;color:#7c3aed;font-weight:600">Available anytime — contact listing agent to schedule</div>
               <?php else: ?>
                 <div class="oh-card-slots">
                   <?php foreach ($slots as $slot):

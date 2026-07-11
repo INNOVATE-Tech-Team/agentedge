@@ -28,7 +28,7 @@ try {
     $required = [
         'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
         'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
-        'emergency_name', 'emergency_phone', 'bio',
+        'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
     ];
     foreach ($required as $field) {
         if ($fv($field) === '') {
@@ -39,7 +39,7 @@ try {
     }
 
     // ── Duplicate check ───────────────────────────────────────────────────────
-    $dup = local_db()->prepare("SELECT id FROM agent_intake WHERE LOWER(email)=? AND submitted=1");
+    $dup = local_db()->prepare("SELECT email FROM agent_intake WHERE LOWER(email)=? AND submitted=1");
     $dup->execute([$email]);
     if ($dup->fetch()) {
         http_response_code(409);
@@ -57,7 +57,7 @@ try {
         'personal_email', 'commissions_email',
         'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
         'drivers_license', 'gender',
-        'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'email_signature',
+        'website', 'additional_websites', 'facebook', 'linkedin', 'skype',
         'corporation_start', 'corporation_end', 'career_start',
         'prior_occupation', 'prior_affiliation', 'specialty',
         'full_time', 'show_on_internet',
@@ -94,6 +94,20 @@ try {
              submitted_at=COALESCE(agent_intake.submitted_at, excluded.submitted_at),
              updated_at=excluded.updated_at"
     )->execute(array_merge([$email], array_map($resolveField, $fields), [$now, $now]));
+
+    // ── Additional licenses (rewritten in full on every submit) ──────────────
+    local_db()->prepare("DELETE FROM agent_intake_licenses WHERE agent_email=?")->execute([$email]);
+    $additionalLicenses = is_array($body['additional_licenses'] ?? null) ? $body['additional_licenses'] : [];
+    $insLicense = local_db()->prepare(
+        "INSERT INTO agent_intake_licenses (agent_email, license_number, license_state, license_exp) VALUES (?,?,?,?)"
+    );
+    foreach ($additionalLicenses as $lic) {
+        $num   = trim($lic['license_number'] ?? '');
+        $state = trim($lic['license_state'] ?? '');
+        $exp   = trim($lic['license_exp'] ?? '');
+        if ($num === '' && $state === '' && $exp === '') continue;
+        $insLicense->execute([$email, $num, $state, $exp]);
+    }
 
     // ── Add to onboard_queue if not already present ───────────────────────────
     $exists = local_db()->prepare("SELECT id FROM onboard_queue WHERE LOWER(agent_email)=?");

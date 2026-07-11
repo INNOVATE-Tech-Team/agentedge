@@ -69,3 +69,53 @@ function add_or_reactivate_roster_agent(
 
     return ['id' => $id, 'reactivated' => false];
 }
+
+// Propagate identity fields (name/email/phone) from one edited innovate_roster row
+// to every other active row for the same agent in other states. state_code,
+// market_center, and license_exp are intentionally left alone — they're
+// legitimately different per state (e.g. a license is issued per state).
+//
+// Matches siblings the same way add_or_reactivate_roster_agent() does: prefer an
+// exact canonical_agent_id match (agents onboarded through Add-to-Team carry this);
+// fall back to a case-insensitive match on the row's name *before* this edit, scoped
+// to other rows that also have no canonical_agent_id (legacy/manually-added agents).
+function sync_roster_identity(
+    PDO $pdo,
+    int $editedId,
+    string $oldName,
+    ?string $canonicalAgentId,
+    string $newName,
+    string $email,
+    string $phone,
+    string $changedBy
+): void {
+    if ($canonicalAgentId) {
+        $siblings = $pdo->prepare(
+            "SELECT id, state_code FROM innovate_roster
+              WHERE id != ? AND active = 1 AND canonical_agent_id = ?"
+        );
+        $siblings->execute([$editedId, $canonicalAgentId]);
+    } else {
+        $oldName = trim($oldName);
+        if ($oldName === '') return;
+        $siblings = $pdo->prepare(
+            "SELECT id, state_code FROM innovate_roster
+              WHERE id != ? AND active = 1 AND canonical_agent_id IS NULL
+                AND LOWER(agent_name) = LOWER(?)"
+        );
+        $siblings->execute([$editedId, $oldName]);
+    }
+
+    $rows = $siblings->fetchAll(PDO::FETCH_ASSOC);
+    if (!$rows) return;
+
+    $update = $pdo->prepare("UPDATE innovate_roster SET agent_name = ?, email = ?, phone = ? WHERE id = ?");
+    $log    = $pdo->prepare(
+        "INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by)
+         SELECT agent_name, state_code, market_center, license_exp, 'synced', ? FROM innovate_roster WHERE id = ?"
+    );
+    foreach ($rows as $row) {
+        $update->execute([$newName, $email, $phone, $row['id']]);
+        $log->execute([$changedBy, $row['id']]);
+    }
+}

@@ -4,6 +4,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/trestle.php';
 
 header('Content-Type: application/json');
 
@@ -21,46 +22,6 @@ if ($clientId === '' || $secret === '') {
     exit;
 }
 
-// ── Get / refresh OAuth2 access token ────────────────────────────────────────
-function trestle_token(string $clientId, string $secret): string {
-    $db      = local_db();
-    $now     = time();
-
-    // Check cached token (valid for at least 60 more seconds)
-    $tokRow  = $db->query("SELECT value FROM oh_prefs WHERE key='trestle_token'")->fetch(PDO::FETCH_ASSOC);
-    $expRow  = $db->query("SELECT value FROM oh_prefs WHERE key='trestle_token_expires'")->fetch(PDO::FETCH_ASSOC);
-    if ($tokRow && $expRow && (int)$expRow['value'] > $now + 60) {
-        return $tokRow['value'];
-    }
-
-    // Fetch new token
-    $ctx = stream_context_create(['http' => [
-        'method'        => 'POST',
-        'timeout'       => 12,
-        'header'        => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n",
-        'content'       => http_build_query([
-            'client_id'     => $clientId,
-            'client_secret' => $secret,
-            'grant_type'    => 'client_credentials',
-            'scope'         => 'api',
-        ]),
-        'ignore_errors' => true,
-    ]]);
-
-    $raw = @file_get_contents('https://api.cotality.com/trestle/oidc/connect/token', false, $ctx);
-    if ($raw === false) return '';
-
-    $d = json_decode($raw, true);
-    $token   = $d['access_token'] ?? '';
-    $expires = $now + (int)($d['expires_in'] ?? 3600);
-
-    if ($token) {
-        $db->prepare("INSERT OR REPLACE INTO oh_prefs (key,value) VALUES ('trestle_token',?)")->execute([$token]);
-        $db->prepare("INSERT OR REPLACE INTO oh_prefs (key,value) VALUES ('trestle_token_expires',?)")->execute([$expires]);
-    }
-
-    return $token;
-}
 
 $token = trestle_token($clientId, $secret);
 if ($token === '') {
@@ -93,23 +54,8 @@ if (empty($values)) { echo json_encode(['error' => 'not found']); exit; }
 
 $p = $values[0];
 
-// First media image
-$imageUrl = '';
-$media = $p['Media'] ?? [];
-if (is_array($media) && !empty($media)) {
-    $imageUrl = $media[0]['MediaURL'] ?? '';
-}
-
-// Normalize property type to our dropdown values
-$typeMap = [
-    'Residential'  => 'Residential',
-    'Condo'        => 'Condo',
-    'Condominium'  => 'Condo',
-    'Townhouse'    => 'Townhouse',
-    'Land'         => 'Land',
-    'Commercial'   => 'Commercial',
-];
-$propType = $typeMap[$p['PropertyType'] ?? ''] ?? 'Residential';
+$imageUrl = trestle_first_photo($p['Media'] ?? []);
+$propType = trestle_normalize_type($p['PropertyType'] ?? '');
 
 echo json_encode([
     'ok'                  => true,

@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../local_db.php';
 header('Content-Type: application/json');
 
 $me = current_agent();
@@ -17,4 +18,17 @@ if (!is_admin() && $tkt['agent_email'] !== $me['email']) { http_response_code(40
 
 $m = $db->prepare("SELECT * FROM support_ticket_messages WHERE ticket_id=? ORDER BY created_at");
 $m->execute([$id]);
-echo json_encode(['ok'=>true,'ticket'=>$tkt,'messages'=>$m->fetchAll(PDO::FETCH_ASSOC)]);
+
+$cc = $db->prepare("SELECT email, added_by, created_at FROM support_ticket_cc WHERE ticket_id=? ORDER BY created_at");
+$cc->execute([$id]);
+
+$ev = $db->prepare("SELECT event_type, detail, actor_email, created_at FROM support_ticket_events WHERE ticket_id=? ORDER BY created_at");
+$ev->execute([$id]);
+
+echo json_encode([
+    'ok'       => true,
+    'ticket'   => $tkt,
+    'messages' => $m->fetchAll(PDO::FETCH_ASSOC),
+    'cc'       => $cc->fetchAll(PDO::FETCH_ASSOC),
+    'events'   => $ev->fetchAll(PDO::FETCH_ASSOC),
+]);

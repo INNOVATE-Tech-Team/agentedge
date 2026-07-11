@@ -1,18 +1,16 @@
 <?php
 // The ordered list of provisioning steps every new agent goes through.
-// is_auto=true means AgentEdge can provision this automatically via API.
+// is_auto=true means AgentEdge can provision this automatically via API
+// (only 'fub' and 'constellation1' have real handlers, in api/onboard_action.php).
 // Manual steps require an admin to check them off.
+// Backed by step_defs (see local_db.php) — editable on admin_step_notify.php.
+require_once __DIR__ . '/local_db.php';
+
 function onboard_tools(): array {
-    return [
-        ['key'=>'agentedge',       'label'=>'AgentEdge Account',    'is_auto'=>false, 'note'=>'Created when added to queue'],
-        ['key'=>'intranet',        'label'=>'Company Intranet',      'is_auto'=>false, 'note'=>'Add user in everythinginnovate.com'],
-        ['key'=>'fub',             'label'=>'Follow Up Boss',        'is_auto'=>true,  'note'=>'Auto-provision via API'],
-        ['key'=>'constellation1',  'label'=>'Constellation1',        'is_auto'=>true,  'note'=>'Auto-provision via API'],
-        ['key'=>'dotloop',         'label'=>'DotLoop',               'is_auto'=>false, 'note'=>'Add manually in DotLoop admin'],
-        ['key'=>'listingstoleads', 'label'=>'ListingsToLeads',       'is_auto'=>false, 'note'=>'Add manually'],
-        ['key'=>'maxa',            'label'=>'MAXA Presents',         'is_auto'=>false, 'note'=>'Add manually'],
-        ['key'=>'mls',             'label'=>'MLS Access',            'is_auto'=>false, 'note'=>'Submit MLS new member form'],
-        ['key'=>'email_setup',     'label'=>'Email & Signature',     'is_auto'=>false, 'note'=>'Set up company email + signature'],
-        ['key'=>'training',        'label'=>'New Agent Training',    'is_auto'=>false, 'note'=>'Enroll in onboarding training program'],
-    ];
+    $rows = local_db()->query(
+        "SELECT step_key AS `key`, label, is_auto, note
+         FROM step_defs WHERE process='onboard' ORDER BY sort_ord, id"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as &$r) { $r['is_auto'] = (bool)$r['is_auto']; }
+    return $rows;
 }

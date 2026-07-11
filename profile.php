@@ -57,6 +57,23 @@ $agent = require_login();
         </section>
 
         <section class="card" style="margin-top:20px">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Password</h2>
+          <p class="form-sub" style="margin:0 0 18px">Change the password you use to sign in to AgentEdge.</p>
+          <div id="pw-msg" class="banner" hidden></div>
+
+          <div style="display:flex;flex-direction:column;gap:12px;max-width:340px">
+            <div class="field"><label>Current Password</label><input type="password" id="pw-current" autocomplete="current-password"></div>
+            <div class="field"><label>New Password</label><input type="password" id="pw-new" autocomplete="new-password"></div>
+            <div class="field"><label>Confirm New Password</label><input type="password" id="pw-confirm" autocomplete="new-password"></div>
+          </div>
+
+          <div style="margin-top:18px">
+            <button class="btn-save" id="pw-save" onclick="savePassword()">Change Password</button>
+            <span id="pw-status" style="font-size:12px;color:#888;margin-left:10px"></span>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:20px">
           <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Notification Preferences</h2>
           <p class="form-sub" style="margin:0 0 18px">Choose how you want to be notified when new announcements are posted.</p>
           <div id="notif-msg" class="banner" hidden></div>
@@ -105,6 +122,41 @@ $agent = require_login();
       togglePhoneField();
     }).catch(()=>{});
   })();
+
+  // ── Password change ─────────────────────────────────────────────────────────
+  function savePassword(){
+    const current = document.getElementById('pw-current').value;
+    const next    = document.getElementById('pw-new').value;
+    const confirm = document.getElementById('pw-confirm').value;
+    const btn = document.getElementById('pw-save');
+    const status = document.getElementById('pw-status');
+    const banner = document.getElementById('pw-msg');
+    banner.hidden = true;
+
+    if(!current || !next || !confirm){ status.textContent='Please fill in all fields.'; status.style.color='#c00'; return; }
+    if(next !== confirm){ status.textContent="New passwords don't match."; status.style.color='#c00'; return; }
+    if(next.length < 8){ status.textContent='New password must be at least 8 characters.'; status.style.color='#c00'; return; }
+
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    status.style.color = '#888';
+    fetch('api/change_password.php', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({current_password: current, new_password: next, confirm_password: confirm}),
+    }).then(r=>r.json()).then(d=>{
+      btn.disabled = false;
+      if(d.ok){
+        status.textContent = 'Saved!'; status.style.color='#5b8e0d';
+        document.getElementById('pw-current').value = '';
+        document.getElementById('pw-new').value = '';
+        document.getElementById('pw-confirm').value = '';
+        setTimeout(()=>status.textContent='',3000);
+      } else {
+        status.textContent = d.error || 'Error saving.'; status.style.color='#c00';
+      }
+    }).catch(()=>{ btn.disabled=false; status.textContent='Network error.'; status.style.color='#c00'; });
+  }
 
   function togglePhoneField(){
     const show = document.getElementById('notif-sms').checked;

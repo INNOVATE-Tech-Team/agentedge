@@ -76,6 +76,29 @@ function attempt_login(string $email, string $password): ?array {
     ];
 }
 
+// Generic authenticated call to the Perfex login bridge (bridge/verify.php),
+// for actions beyond login (e.g. change_password). Returns the decoded JSON
+// response, or null if the bridge isn't configured or unreachable.
+function bridge_request(string $action, array $payload = []): ?array {
+    $c = cfg();
+    if (empty($c['auth_bridge_url'])) return null;
+    $body = json_encode(array_merge(
+        ['token' => $c['auth_bridge_token'] ?? '', 'action' => $action],
+        $payload
+    ));
+    $ctx = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'timeout' => 12,
+        'header'  => "Content-Type: application/json\r\nAccept: application/json\r\n",
+        'content' => $body,
+        'ignore_errors' => true,
+    ]]);
+    $raw = @file_get_contents($c['auth_bridge_url'], false, $ctx);
+    if ($raw === false) return null;
+    $d = json_decode($raw, true);
+    return is_array($d) ? $d : null;
+}
+
 // Verify credentials through the Perfex login bridge (a small endpoint on
 // innovateonline.com that checks tblstaff bcrypt and returns the agent).
 function attempt_login_bridge(string $email, string $password, array $c): ?array {

@@ -99,7 +99,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $fst->execute([$email]);
     $headshots = $fst->fetchAll(PDO::FETCH_ASSOC);
 
-    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots]);
+    $lst = $pdo->prepare(
+        "SELECT license_number, license_state, license_exp FROM agent_intake_licenses WHERE agent_email=? ORDER BY id"
+    );
+    $lst->execute([$email]);
+    $additionalLicenses = $lst->fetchAll(PDO::FETCH_ASSOC);
+
+    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots, 'additional_licenses' => $additionalLicenses]);
 }
 
 // ── All remaining actions require POST ────────────────────────────────────────
@@ -184,7 +190,7 @@ $fields = [
     'personal_email', 'commissions_email',
     'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
     'drivers_license', 'gender',
-    'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'email_signature',
+    'website', 'additional_websites', 'facebook', 'linkedin', 'skype',
     'corporation_start', 'corporation_end', 'career_start',
     'prior_occupation', 'prior_affiliation', 'specialty',
     'full_time', 'show_on_internet',
@@ -213,7 +219,7 @@ $resolveField = function (string $f) use ($fv, $body): string {
 $required = [
     'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
     'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
-    'emergency_name', 'emergency_phone', 'bio',
+    'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
 ];
 $complete = true;
 foreach ($required as $r) if ($fv($r) === '') { $complete = false; break; }
@@ -248,5 +254,19 @@ $pdo->prepare(
     array_map($resolveField, $fields),
     [$isSubmitted ? 1 : 0, ($isSubmitted && !$wasSubmitted) ? $now : null, $now]
 ));
+
+// ── Additional licenses (rewritten in full on every save) ─────────────────────
+$pdo->prepare("DELETE FROM agent_intake_licenses WHERE agent_email=?")->execute([$email]);
+$additionalLicenses = is_array($body['additional_licenses'] ?? null) ? $body['additional_licenses'] : [];
+$insLicense = $pdo->prepare(
+    "INSERT INTO agent_intake_licenses (agent_email, license_number, license_state, license_exp) VALUES (?,?,?,?)"
+);
+foreach ($additionalLicenses as $lic) {
+    $num   = trim($lic['license_number'] ?? '');
+    $state = trim($lic['license_state'] ?? '');
+    $exp   = trim($lic['license_exp'] ?? '');
+    if ($num === '' && $state === '' && $exp === '') continue;
+    $insLicense->execute([$email, $num, $state, $exp]);
+}
 
 intake_json_out(['ok' => true, 'submitted' => $isSubmitted]);

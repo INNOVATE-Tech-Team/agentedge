@@ -21,6 +21,7 @@ $toolsJson = json_encode(array_values($tools));
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Onboarding — AgentEdge</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>
@@ -123,7 +124,8 @@ $toolsJson = json_encode(array_values($tools));
   </div>
 
   <script>
-    window.ONBOARD_TOOLS = <?= $toolsJson ?>;
+    window.ONBOARD_TOOLS  = <?= $toolsJson ?>;
+    window.ONBOARD_OPEN_ID = <?= (int)($_GET['open'] ?? 0) ?>;
   </script>
   <script src="assets/onboard.js"></script>
 </body>

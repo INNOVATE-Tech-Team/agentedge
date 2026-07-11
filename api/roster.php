@@ -37,7 +37,7 @@ try {
         $key = strtolower(trim($r['agent_name']));
         $mc  = trim($r['market_center']);
         $st  = trim($r['state_code']);
-        if ($mc !== '') $localMC[$key] = $st ? "$st - $mc" : $mc;
+        if ($mc !== '') $localMC[$key] = mc_label($mc, $st);
     }
 } catch (\Exception $e) {}
 
@@ -48,7 +48,9 @@ if ($data !== null) {
     $seenNames = [];
     foreach ($data as $a) {
         $name = trim($a['fullName'] ?? ($a['email'] ?? 'Agent'));
-        $seenNames[strtolower($name)] = true;
+        $key  = strtolower($name);
+        if (isset($seenNames[$key])) continue; // CRM feed occasionally returns dup records for the same agent
+        $seenNames[$key] = true;
         // Prefer local MC assignment; fall back to CRM field
         $mc = $localMC[strtolower($name)] ?? null;
         if ($mc === null) {
@@ -82,7 +84,7 @@ if ($data !== null) {
         $agents[] = [
             'id'           => null,
             'name'         => $name,
-            'marketCenter' => $mc !== '' ? ($st ? "$st - $mc" : $mc) : '',
+            'marketCenter' => $mc !== '' ? mc_label($mc, $st) : '',
             'brokerage'    => 'INNOVATE Real Estate',
             'email'        => '',
             'phone'        => '',

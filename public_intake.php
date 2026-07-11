@@ -1,6 +1,10 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/local_db.php';
+
+$intakeMarketCenters = local_db()
+    ->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
+    ->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!doctype html>
 <html lang="en">
@@ -57,6 +61,22 @@ require_once __DIR__ . '/local_db.php';
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     .form-grid .field.full { grid-column: 1 / -1; }
     @media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+
+    /* Office checkbox list */
+    .office-checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; max-height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 7px; padding: 10px 12px; }
+    @media (max-width: 520px) { .office-checklist { grid-template-columns: 1fr; } }
+    .office-checklist label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #333; padding: 3px 0; text-transform: none; font-weight: 400; letter-spacing: 0; }
+    .office-checklist input[type=checkbox] { width: auto; margin: 0; }
+    .office-checklist.invalid { border-color: #e53935; }
+
+    /* Additional licenses */
+    .license-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0 10px; align-items: end; margin-bottom: 10px; }
+    @media (max-width: 520px) { .license-row { grid-template-columns: 1fr; } }
+    .license-row .field { margin-bottom: 0; }
+    .btn-remove-license { border: 1px solid #ddd; background: #fff; color: #888; border-radius: 7px; padding: 9px 12px; font-size: 13px; cursor: pointer; height: fit-content; }
+    .btn-remove-license:hover { border-color: #e53935; color: #e53935; }
+    .btn-add-license { border: 1px dashed #82C112; background: #f0f5e8; color: #5b8e0d; border-radius: 7px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
+    .btn-add-license:hover { background: #e4f0d8; }
 
     /* Submit */
     .form-actions { margin-top: 24px; }
@@ -151,6 +171,8 @@ require_once __DIR__ . '/local_db.php';
           <input type="text" id="f-nar_number" name="nar_number" required>
         </div>
       </div>
+      <div id="additional-licenses"></div>
+      <button type="button" class="btn-add-license" id="btn-add-license">+ Add Another License</button>
 
       <!-- MLS Information -->
       <div class="form-section-h">MLS Information</div>
@@ -174,27 +196,15 @@ require_once __DIR__ . '/local_db.php';
       <div class="form-section-h">INNOVATE Office</div>
       <div class="form-grid">
         <div class="field full">
-          <label>Office Location</label>
-          <select id="f-office_location" name="office_location" required>
-            <option value="">— Select your office —</option>
-            <option value="Myrtle Beach">Myrtle Beach</option>
-            <option value="Surfside Beach">Surfside Beach</option>
-            <option value="Pawleys Island">Pawleys Island</option>
-            <option value="North Myrtle Beach">North Myrtle Beach</option>
-            <option value="Conway">Conway</option>
-            <option value="Little River">Little River</option>
-            <option value="Longs/Loris">Longs/Loris</option>
-            <option value="Columbia">Columbia</option>
-            <option value="Lexington">Lexington</option>
-            <option value="Chapin/Newberry">Chapin/Newberry</option>
-            <option value="Florence">Florence</option>
-            <option value="Sumter">Sumter</option>
-            <option value="Augusta">Augusta</option>
-            <option value="Charlotte">Charlotte</option>
-            <option value="Wilmington">Wilmington</option>
-            <option value="Greenville">Greenville</option>
-            <option value="Remote">Remote</option>
-          </select>
+          <label>Which INNOVATE office(s) are you joining? <span class="opt">(check all that apply)</span></label>
+          <div class="office-checklist" id="office-checklist">
+            <?php foreach ($intakeMarketCenters as $mc): ?>
+            <label>
+              <input type="checkbox" name="office_locations" value="<?= htmlspecialchars($mc['name'], ENT_QUOTES) ?>">
+              <?= htmlspecialchars($mc['name'], ENT_QUOTES) ?><?= $mc['state_code'] ? ' (' . htmlspecialchars($mc['state_code'], ENT_QUOTES) . ')' : '' ?>
+            </label>
+            <?php endforeach; ?>
+          </div>
         </div>
       </div>
 
@@ -347,8 +357,8 @@ require_once __DIR__ . '/local_db.php';
           </select>
         </div>
         <div class="field">
-          <label>Referring Agent <span class="opt">(optional)</span></label>
-          <input type="text" id="f-referring_agent" name="referring_agent" placeholder="Who referred you?">
+          <label>Which agent was the reason you decided to join INNOVATE?</label>
+          <input type="text" id="f-referring_agent" name="referring_agent" required placeholder="Enter N/A if it was not a specific agent">
         </div>
         <div class="field">
           <label>Languages Spoken <span class="opt">(optional)</span></label>
@@ -392,10 +402,6 @@ require_once __DIR__ . '/local_db.php';
           <label>Skype <span class="opt">(optional)</span></label>
           <input type="text" id="f-skype" name="skype" placeholder="Skype username">
         </div>
-        <div class="field full">
-          <label>Email Signature <span class="opt">(optional)</span></label>
-          <textarea id="f-email_signature" name="email_signature" rows="3" placeholder="Text used at the bottom of your outgoing emails"></textarea>
-        </div>
       </div>
 
       <!-- Bio & Marketing -->
@@ -428,10 +434,14 @@ require_once __DIR__ . '/local_db.php';
 
 <script>
 (function () {
-  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','office_location','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio'];
-  var TOTAL = REQUIRED_IDS.length;
+  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
+  var TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
 
   function el(id) { return document.getElementById(id); }
+
+  function officeChecked() {
+    return document.querySelectorAll('#office-checklist input:checked').length > 0;
+  }
 
   function calcProgress() {
     var done = 0;
@@ -439,6 +449,7 @@ require_once __DIR__ . '/local_db.php';
       var node = el('f-' + id);
       if (node && node.value && node.value.trim() !== '') done++;
     });
+    if (officeChecked()) done++;
     return done;
   }
 
@@ -476,6 +487,43 @@ require_once __DIR__ . '/local_db.php';
     node.addEventListener('change', updateProgress);
   });
 
+  // Additional licenses — repeatable rows
+  var licenseRowCount = 0;
+  function addLicenseRow() {
+    licenseRowCount++;
+    var idx = licenseRowCount;
+    var row = document.createElement('div');
+    row.className = 'license-row';
+    row.dataset.licenseRow = idx;
+    row.innerHTML =
+      '<div class="field"><label>Real Estate License #</label><input type="text" class="al-number"></div>' +
+      '<div class="field"><label>License State</label><input type="text" class="al-state" placeholder="e.g. SC, NC"></div>' +
+      '<div class="field"><label>License Expiration Date</label><input type="date" class="al-exp"></div>' +
+      '<button type="button" class="btn-remove-license">Remove</button>';
+    row.querySelector('.btn-remove-license').addEventListener('click', function() { row.remove(); });
+    el('additional-licenses').appendChild(row);
+  }
+  el('btn-add-license').addEventListener('click', addLicenseRow);
+
+  function collectAdditionalLicenses() {
+    var out = [];
+    document.querySelectorAll('#additional-licenses .license-row').forEach(function(row) {
+      var number = row.querySelector('.al-number').value.trim();
+      var state  = row.querySelector('.al-state').value.trim();
+      var exp    = row.querySelector('.al-exp').value.trim();
+      if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+    });
+    return out;
+  }
+
+  // Office checklist — clear invalid styling once at least one box is checked
+  document.querySelectorAll('#office-checklist input').forEach(function(node) {
+    node.addEventListener('change', function() {
+      el('office-checklist').classList.toggle('invalid', !officeChecked());
+      updateProgress();
+    });
+  });
+
   el('intake-form').addEventListener('submit', function(e) {
     e.preventDefault();
 
@@ -488,6 +536,10 @@ require_once __DIR__ . '/local_db.php';
         missing.push(id);
       }
     });
+    if (!officeChecked()) {
+      el('office-checklist').classList.add('invalid');
+      missing.push('office_locations');
+    }
     if (missing.length > 0) {
       el('form-error').textContent = 'Please fill in all required fields before submitting.';
       // Scroll to first invalid field
@@ -522,7 +574,8 @@ require_once __DIR__ . '/local_db.php';
       nar_number:      el('f-nar_number').value.trim(),
       mls_board:       el('f-mls_board').value.trim(),
       mls_id:          el('f-mls_id').value.trim(),
-      office_location: el('f-office_location').value.trim(),
+      office_location: Array.from(document.querySelectorAll('#office-checklist input:checked')).map(function(n) { return n.value; }).join(', '),
+      additional_licenses: collectAdditionalLicenses(),
       birthday:        el('f-birthday').value.trim(),
       spouse_name:     el('f-spouse_name').value.trim(),
       gender:          el('f-gender').value.trim(),
@@ -546,7 +599,6 @@ require_once __DIR__ . '/local_db.php';
       facebook:            el('f-facebook').value.trim(),
       linkedin:            el('f-linkedin').value.trim(),
       skype:               el('f-skype').value.trim(),
-      email_signature:     el('f-email_signature').value.trim(),
       specialty:           el('f-specialty').value.trim(),
       career_start:        el('f-career_start').value.trim(),
       prior_occupation:    el('f-prior_occupation').value.trim(),

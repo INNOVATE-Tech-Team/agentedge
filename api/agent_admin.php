@@ -39,17 +39,18 @@ $adminEmail = strtolower(trim($agent['email'] ?? ''));
 
 $pdo->prepare(
     "INSERT INTO agent_admin
-        (email, tax_1099_type, gets_1099, terminated_date, agent_team, coached_by, managed_by, updated_by, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?)
+        (email, tax_1099_type, gets_1099, terminated_date, agent_team, coached_by, managed_by, recruit_source_email, updated_by, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(email) DO UPDATE SET
-        tax_1099_type   = excluded.tax_1099_type,
-        gets_1099       = excluded.gets_1099,
-        terminated_date = excluded.terminated_date,
-        agent_team      = excluded.agent_team,
-        coached_by      = excluded.coached_by,
-        managed_by      = excluded.managed_by,
-        updated_by      = excluded.updated_by,
-        updated_at      = excluded.updated_at"
+        tax_1099_type         = excluded.tax_1099_type,
+        gets_1099             = excluded.gets_1099,
+        terminated_date       = excluded.terminated_date,
+        agent_team            = excluded.agent_team,
+        coached_by            = excluded.coached_by,
+        managed_by            = excluded.managed_by,
+        recruit_source_email  = excluded.recruit_source_email,
+        updated_by            = excluded.updated_by,
+        updated_at            = excluded.updated_at"
 )->execute([
     $email,
     $fv('tax_1099_type'),
@@ -58,6 +59,7 @@ $pdo->prepare(
     $fv('agent_team'),
     $fv('coached_by'),
     $fv('managed_by'),
+    strtolower($fv('recruit_source_email')),
     $adminEmail,
     $now,
 ]);
