@@ -274,6 +274,65 @@ function notify_onboard_completed(string $agentName, string $agentEmail): void {
     )->execute([$agentEmail, 'email', $subject, $body, '']);
 }
 
+// Queue an email to the Director of Coaching + Launch Facilitator(s) to assign
+// a Launch Coach and LAUNCH class. Only called for new agents (no prior
+// brokerage affiliation on their intake form) — experienced transfers skip this.
+function notify_coach_assignment_needed(string $agentName, string $agentEmail): void {
+    $db   = local_db();
+    $st   = $db->prepare("SELECT email FROM agent_roles WHERE role IN ('director_of_coaching','launch_facilitator')");
+    $st->execute();
+    $emails = array_values(array_unique(array_filter(array_map('trim', $st->fetchAll(PDO::FETCH_COLUMN)))));
+    if (!$emails) return;
+
+    $subject = "New Agent — Assign Launch Coach & LAUNCH Class: {$agentName}";
+    $body    = implode("\n", [
+        "{$agentName} ({$agentEmail}) is a new agent who just completed onboarding.",
+        "",
+        "Please assign a Launch Coach and enroll them in the next LAUNCH class.",
+        "",
+        "— AgentEdge",
+    ]);
+
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+    );
+    foreach ($emails as $email) {
+        $ins->execute([$email, 'email', $subject, $body, '']);
+    }
+}
+
+// Queue a completion email to the agent's BIC and Market Center Leader,
+// looked up from market_centers by matching the agent's market center name.
+// A non-matching/blank market center is a no-op, not an error — shouldn't
+// block onboarding completion over a mismatched free-text field.
+function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, string $marketCenter): void {
+    $marketCenter = trim($marketCenter);
+    if ($marketCenter === '') return;
+
+    $db = local_db();
+    $st = $db->prepare("SELECT bic_email, mc_leader_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+    $st->execute([$marketCenter]);
+    $mc = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$mc) return;
+
+    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    if (!$emails) return;
+
+    $subject = "Onboarding Complete: {$agentName}";
+    $body    = implode("\n", [
+        "{$agentName} ({$agentEmail}) has completed onboarding at {$marketCenter}.",
+        "",
+        "— AgentEdge",
+    ]);
+
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+    );
+    foreach ($emails as $email) {
+        $ins->execute([$email, 'email', $subject, $body, '']);
+    }
+}
+
 // Queue an email to the departing agent with a link to fill out their exit
 // interview. Sent when an admin clicks "Send Exit Interview" — the agent's
 // AgentEdge login is still active at this point (account inactivation is a

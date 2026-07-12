@@ -8,12 +8,15 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 
 const ROLE_LABELS = [
-    'super_admin' => 'Super Admin',
-    'staff'       => 'Staff',
-    'recruiter'   => 'Recruiter',
-    'bic'         => 'Broker in Charge',
-    'mc_leader'   => 'Market Center Leader',
-    'agent'       => 'Agent',
+    'super_admin'          => 'Super Admin',
+    'staff'                => 'Staff',
+    'recruiter'            => 'Recruiter',
+    'bic'                  => 'Broker in Charge',
+    'mc_leader'            => 'Market Center Leader',
+    'launch_coach'         => 'Launch Coach',
+    'director_of_coaching' => 'Director of Coaching',
+    'launch_facilitator'   => 'Launch Facilitator',
+    'agent'                => 'Agent',
 ];
 
 // Legacy CRM role names → canonical AgentEdge role names.

@@ -43,6 +43,14 @@ $intakeAgents = local_db()->query(
      ORDER BY i.submitted DESC, i.updated_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
 
+$launchCoaches = local_db()->query(
+    "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
+     FROM agent_roles ar
+     LEFT JOIN agent_intake i ON i.email = ar.email
+     WHERE ar.role = 'launch_coach'
+     ORDER BY full_name"
+)->fetchAll(PDO::FETCH_ASSOC);
+
 $additionalLicensesByEmail = [];
 foreach (local_db()->query(
     "SELECT agent_email, license_number, license_state, license_exp FROM agent_intake_licenses ORDER BY agent_email, id"
@@ -383,7 +391,12 @@ $pendingCount = count($pendingAgents);
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Coached By</span>
-                  <input type="text" id="admin-coached-<?= $idx ?>" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                    <?php foreach ($launchCoaches as $lc): ?>
+                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Managed By</span>
@@ -424,7 +437,12 @@ $pendingCount = count($pendingAgents);
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Coached By</span>
-                  <input type="text" id="admin-coached-<?= $idx ?>" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                    <?php foreach ($launchCoaches as $lc): ?>
+                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Managed By</span>

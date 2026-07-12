@@ -362,6 +362,34 @@ function local_db(): PDO {
         submitted_at        TEXT,
         updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     )");
+    // Migration: personal/contact details + online presence fields
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_email      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN commissions_email   TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line1       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line2       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN city                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN state               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN zip                 TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN country             TEXT NOT NULL DEFAULT 'United States'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN drivers_license     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN gender              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN website             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN additional_websites TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN facebook            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN linkedin            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN skype               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN email_signature     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Migration: professional background + entity/tax fields (self-reported by the agent)
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_tax_id_enc  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporate_tax_id_enc TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_start    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_end      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN career_start         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_occupation     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_affiliation    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN specialty            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN full_time            INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN show_on_internet     INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
@@ -502,6 +530,22 @@ function local_db(): PDO {
         sent_at    TEXT
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
+
+    // General-purpose "do Y at future time X" scheduling engine, drained by
+    // cron/process_scheduled_tasks.php. task_type is dispatched in a switch
+    // there — first consumer is 'onboard_followup_text' (the 10-day
+    // post-onboarding check-in text), more task types can be added later
+    // without a new table.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type    TEXT    NOT NULL,
+        payload_json TEXT    NOT NULL DEFAULT '{}',
+        fire_at      TEXT    NOT NULL,
+        status       TEXT    NOT NULL DEFAULT 'pending',  -- pending | sent | failed
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        executed_at  TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sched_tasks_due ON scheduled_tasks(status, fire_at)");
 
     // ── Document Library (legacy simple Resources page) ───────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
