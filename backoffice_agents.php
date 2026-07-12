@@ -67,6 +67,50 @@ $pendingAgents = local_db()->query(
      ORDER BY q.added_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
 
+// Active roster agents with no agent_intake row at all — never started a
+// profile (as opposed to $pendingAgents, which is mid-onboarding). Matched
+// by email when the roster row has one, falling back to an exact name match
+// since many older/manually-added roster rows have no email on file.
+$missingAgents = [];
+
+$rosterRows = local_db()->query(
+    "SELECT agent_name, email, state_code, market_center FROM innovate_roster WHERE active=1"
+)->fetchAll(PDO::FETCH_ASSOC);
+
+$byRosterName = [];
+foreach ($rosterRows as $r) {
+    $key = strtolower(trim($r['agent_name']));
+    if ($key === '') continue;
+    if (!isset($byRosterName[$key])) {
+        $byRosterName[$key] = ['agent_name' => $r['agent_name'], 'email' => $r['email'], 'states' => [], 'mcs' => []];
+    }
+    if ($r['email'] && !$byRosterName[$key]['email']) $byRosterName[$key]['email'] = $r['email'];
+    if ($r['state_code'])    $byRosterName[$key]['states'][] = $r['state_code'];
+    if ($r['market_center']) $byRosterName[$key]['mcs'][]    = $r['market_center'];
+}
+
+$intakeEmails = [];
+$intakeNames  = [];
+foreach ($intakeAgents as $ia) {
+    if ($ia['email'])     $intakeEmails[strtolower(trim($ia['email']))]     = true;
+    if ($ia['full_name']) $intakeNames[strtolower(trim($ia['full_name']))]  = true;
+}
+
+foreach ($byRosterName as $key => $r) {
+    $email = strtolower(trim($r['email'] ?? ''));
+    $hasByEmail = $email !== '' && isset($intakeEmails[$email]);
+    $hasByName  = isset($intakeNames[$key]);
+    if (!$hasByEmail && !$hasByName) {
+        $missingAgents[] = [
+            'full_name'       => $r['agent_name'],
+            'email'           => $r['email'] ?: '',
+            'office_location' => implode(', ', array_unique($r['mcs'])),
+            'state_code'      => implode(', ', array_unique($r['states'])),
+        ];
+    }
+}
+usort($missingAgents, fn($x, $y) => strcasecmp($x['full_name'], $y['full_name']));
+
 $hsCount = [];
 foreach (local_db()->query("SELECT agent_email, COUNT(*) as cnt FROM agent_intake_files GROUP BY agent_email")->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $hsCount[strtolower($r['agent_email'])] = (int)$r['cnt'];
@@ -94,6 +138,7 @@ $submittedCount = count(array_filter($intakeAgents, fn($a) => !empty($a['submitt
 $draftCount = count($intakeAgents) - $submittedCount;
 $totalWithForms = count($intakeAgents);
 $pendingCount = count($pendingAgents);
+$missingCount = count($missingAgents);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -197,6 +242,10 @@ $pendingCount = count($pendingAgents);
         <div class="rs-num"><?= $pendingCount ?></div>
         <div class="rs-lbl">Pending</div>
       </div>
+      <div class="rs-tile amber">
+        <div class="rs-num"><?= $missingCount ?></div>
+        <div class="rs-lbl">No Profile</div>
+      </div>
     </div>
 
     <div class="ag-toolbar">
@@ -208,6 +257,7 @@ $pendingCount = count($pendingAgents);
       <button class="ag-tab" data-tab="submitted">Submitted</button>
       <button class="ag-tab" data-tab="draft">Draft</button>
       <button class="ag-tab" data-tab="pending">Pending</button>
+      <button class="ag-tab" data-tab="missing">No Profile</button>
     </div>
 
     <div class="table-wrap">
@@ -515,6 +565,40 @@ $pendingCount = count($pendingAgents);
           </tr>
 <?php endforeach; ?>
 
+<?php foreach ($missingAgents as $idx => $m):
+  $rowId = 'mrow-' . $idx;
+  $detailId = 'mdetail-' . $idx;
+?>
+          <tr class="data-row" id="<?= $rowId ?>" data-tab="missing"
+              data-search="<?= h(strtolower($m['full_name'] . ' ' . $m['email'] . ' ' . $m['office_location'])) ?>">
+            <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this)">&#9658;</button></td>
+            <td><strong><?= h($m['full_name'] ?: '—') ?></strong></td>
+            <td><?= h($m['email'] ?: '—') ?></td>
+            <td><?= h($m['office_location'] ?: '—') ?></td>
+            <td><span class="dg-value empty" style="font-size:12px">—</span></td>
+            <td><span class="st-badge" style="background:#fff3e0;color:#c87800">No Profile</span></td>
+            <td><span class="dg-value empty" style="font-size:12px">—</span></td>
+          </tr>
+          <tr class="detail-row" id="<?= $detailId ?>" style="display:none" data-tab="missing">
+            <td colspan="7">
+              <div class="detail-grid">
+                <div class="dg-section">Roster Info</div>
+                <div class="dg-field"><span class="dg-label">Name</span><?= dv($m['full_name']) ?></div>
+                <div class="dg-field"><span class="dg-label">Email on File</span><?= dv($m['email']) ?></div>
+                <div class="dg-field"><span class="dg-label">Market Center(s)</span><?= dv($m['office_location']) ?></div>
+                <div class="dg-field"><span class="dg-label">State(s)</span><?= dv($m['state_code']) ?></div>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">Intake Form</span>
+                  <span class="dg-value empty">No profile started — never submitted an intake form</span>
+                </div>
+                <div class="detail-actions">
+                  <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>')">Create Profile →</button>
+                </div>
+              </div>
+            </td>
+          </tr>
+<?php endforeach; ?>
+
         </tbody>
       </table>
       <div class="no-results" id="noResults" style="display:none">No agents match your search.</div>
@@ -785,6 +869,21 @@ $pendingCount = count($pendingAgents);
   // agent_intake's full-date birthday shown in this modal — round-trip it
   // untouched so saving the modal never blanks it out.
   var emExtraBirthday = '';
+
+  // Roster agents with no agent_intake row yet often have no email on file
+  // either (older/manually-added rows) — ask for it before opening the modal,
+  // since email is agent_intake's primary key and can't be edited inside it.
+  window.createMissingProfile = function (email, name) {
+    if (!email) {
+      email = (prompt('Enter ' + name + '’s email to create their profile:') || '').trim();
+      if (!email) return;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        alert('That doesn’t look like a valid email address.');
+        return;
+      }
+    }
+    openEditModal(email, name);
+  };
 
   window.openEditModal = function (email, name) {
     emCurrentEmail = email;
