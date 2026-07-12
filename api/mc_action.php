@@ -133,12 +133,22 @@ if ($action === 'import') {
         $mc = $a['marketCenter'] ?? '';
         if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
         if (!$mc) continue;
-        $slug = slugify_mc($mc);
+
+        // CRM market center names are often state-prefixed ("SC - Conway"),
+        // while AgentEdge's own are plain city names ("Conway") — strip the
+        // prefix before slugifying so this matches the existing MC instead
+        // of creating a same-office duplicate under a different slug.
+        $state  = '';
+        $mcName = $mc;
+        if (preg_match('/^([A-Z]{2})\s*[-–]\s*(.+)$/', $mc, $m)) {
+            $state  = $m[1];
+            $mcName = trim($m[2]);
+        }
+
+        $slug = slugify_mc($mcName);
         if (isset($seen[$slug])) continue;
         $seen[$slug] = true;
-        $state = '';
-        if (preg_match('/^([A-Z]{2})\s*[-–]/', $mc, $m)) $state = $m[1];
-        $ins->execute([$slug, $mc, $state]);
+        $ins->execute([$slug, $mcName, $state]);
         if ($ins->rowCount() > 0) $added++;
     }
     echo json_encode(['ok'=>true, 'added'=>$added]);
