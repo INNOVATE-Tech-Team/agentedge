@@ -87,7 +87,13 @@ function render(rows) {
   const empty = document.getElementById('roster-empty');
   const body  = document.getElementById('roster-body');
   const count = document.getElementById('roster-count');
-  const assignedCount = rows.filter(a => a.marketCenter).length;
+  // Dedupe by name — an agent licensed in multiple states has one row per
+  // market center they're assigned to, so counting rows directly would tally
+  // the same person once per state instead of once per person.
+  const uniqueAssigned = new Set(
+    rows.filter(a => a.marketCenter).map(a => (a.name || '').toLowerCase())
+  );
+  const assignedCount = uniqueAssigned.size;
   count.textContent = `${assignedCount} agent${assignedCount === 1 ? '' : 's'}`;
   if (rows.length === 0) { table.hidden = true; empty.hidden = false; return; }
   empty.hidden = true; table.hidden = false;
