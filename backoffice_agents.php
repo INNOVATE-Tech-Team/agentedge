@@ -592,7 +592,7 @@ $missingCount = count($missingAgents);
                   <span class="dg-value empty">No profile started — never submitted an intake form</span>
                 </div>
                 <div class="detail-actions">
-                  <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>')">Create Profile →</button>
+                  <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>', '<?= h($m['office_location']) ?>')">Create Profile →</button>
                 </div>
               </div>
             </td>
@@ -871,21 +871,42 @@ $missingCount = count($missingAgents);
   var emExtraBirthday = '';
 
   // Roster agents with no agent_intake row yet often have no email on file
-  // either (older/manually-added rows) — ask for it before opening the modal,
-  // since email is agent_intake's primary key and can't be edited inside it.
-  window.createMissingProfile = function (email, name) {
-    if (!email) {
-      email = (prompt('Enter ' + name + '’s email to create their profile:') || '').trim();
-      if (!email) return;
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        alert('That doesn’t look like a valid email address.');
-        return;
-      }
+  // either (older/manually-added rows). Rather than asking the admin to
+  // retype everything, try a CRM lookup by name first (same search_crm
+  // action already used by the onboarding/offboarding add-agent forms) to
+  // pull email/phone/market center — only fall back to a manual prompt if
+  // the CRM has no match.
+  function askForEmail(name, marketCenter) {
+    var entered = (prompt('No CRM match found. Enter ' + name + '’s email to create their profile:') || '').trim();
+    if (!entered) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entered)) {
+      alert('That doesn’t look like a valid email address.');
+      return;
     }
-    openEditModal(email, name);
+    openEditModal(entered, name, { office_location: marketCenter || '' });
+  }
+
+  window.createMissingProfile = function (email, name, marketCenter) {
+    if (email) {
+      openEditModal(email, name, { office_location: marketCenter || '' });
+      return;
+    }
+
+    fetch('api/onboard_action.php?action=search_crm&q=' + encodeURIComponent(name), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var results = (d.ok && d.results) ? d.results : [];
+        var match = results.find(function (r) { return (r.name || '').toLowerCase() === name.toLowerCase(); }) || results[0];
+        if (match && match.email) {
+          openEditModal(match.email, name, { phone: match.phone || '', office_location: match.marketCenter || marketCenter || '' });
+        } else {
+          askForEmail(name, marketCenter);
+        }
+      })
+      .catch(function () { askForEmail(name, marketCenter); });
   };
 
-  window.openEditModal = function (email, name) {
+  window.openEditModal = function (email, name, prefill) {
     emCurrentEmail = email;
     document.getElementById('em-agent-name').textContent = name;
     document.getElementById('em-save-msg').textContent = 'Loading…';
@@ -901,7 +922,7 @@ $missingCount = count($missingAgents);
 
       EM_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);
-        if (node) node.value = intake[key] || '';
+        if (node) node.value = intake[key] || (prefill && prefill[key]) || '';
       });
       EM_CHECK_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);
