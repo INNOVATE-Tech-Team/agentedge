@@ -42,51 +42,6 @@ function renderNetwork(list) {
     <td class="num">${r.deals || 0}</td></tr>`).join('');
 }
 
-const escHtml = (s) => String(s || '')
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
-const STATUS_LABEL = { ACTIVE: 'Active', CLOSED: 'Closed', ARCHIVED: 'Archived' };
-
-function loopRow(l) {
-  const status = l.status || 'ACTIVE';
-  return `<tr>
-    <td>${escHtml(l.address || l.name)}</td>
-    <td><span class="loop-badge loop-${status.toLowerCase()}">${escHtml(STATUS_LABEL[status] || status)}</span></td>
-    <td class="num">${l.price ? usdShort(l.price) : '—'}</td>
-    <td>${escHtml(l.closing_date || '—')}</td>
-  </tr>`;
-}
-
-function renderLoops(loops) {
-  document.getElementById('dotloop-loading').hidden = true;
-
-  const open   = loops.filter(l => l.status === 'ACTIVE');
-  const closed = loops.filter(l => l.status !== 'ACTIVE');
-
-  document.getElementById('loops-open-body').innerHTML  = open.map(loopRow).join('');
-  document.getElementById('loops-closed-body').innerHTML = closed.map(loopRow).join('');
-  document.getElementById('loops-open-empty').hidden  = open.length > 0;
-  document.getElementById('loops-closed-empty').hidden = closed.length > 0;
-  document.getElementById('loops-open').hidden  = open.length === 0;
-  document.getElementById('loops-closed').hidden = closed.length === 0;
-  document.getElementById('dotloop-tables').hidden = false;
-}
-
-fetch('api/dotloop_loops.php', { credentials: 'same-origin' })
-  .then(r => r.ok ? r.json() : Promise.reject(r.status))
-  .then(d => {
-    document.getElementById('dotloop-loading').hidden = true;
-    if (!d.connected) {
-      document.getElementById('dotloop-no-link').hidden = false;
-      return;
-    }
-    renderLoops(d.loops || []);
-  })
-  .catch(() => {
-    document.getElementById('dotloop-loading').hidden = true;
-    document.getElementById('dotloop-error').hidden = false;
-  });
-
 fetch('api/summary.php', { credentials: 'same-origin' })
   .then(r => r.ok ? r.json() : Promise.reject(r.status))
   .then(d => {

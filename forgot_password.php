@@ -14,8 +14,7 @@ if (current_agent()) { header('Location: index.php'); exit; }
 </head>
 <body class="login-body">
   <div class="login-card">
-    <div class="brand">INNOVATE</div>
-    <div class="brand-sub">AgentEdge</div>
+    <a href="index.php" class="login-logo"><img src="assets/logo.png" alt="INNOVATE Real Estate"></a>
 
     <p class="login-hint">Enter your email and we'll send you a link to set a new password.</p>
 
@@ -28,6 +27,9 @@ if (current_agent()) { header('Location: index.php'); exit; }
       <button type="submit" id="fp-btn">Send reset link</button>
       <a class="login-forgot" href="login.php">Back to sign in</a>
     </form>
+  </div>
+  <div class="login-footer">
+    &copy; <?= date('Y') ?> Copyright INNOVATE Real Estate &middot; <a href="privacy.php">Privacy Policy</a>
   </div>
 
   <script>
