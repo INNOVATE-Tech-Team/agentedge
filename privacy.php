@@ -54,7 +54,7 @@
 
   <h2 id="sms">4. SMS / Text Message Notifications</h2>
   <p><strong>Program name:</strong> AgentEdge SMS Notifications, operated by INNOVATE Real Estate. This section describes exactly how that opt-in works and what you'll receive if you turn it on.</p>
-  <p><strong>How you opt in.</strong> Log in to AgentEdge at <a href="https://agentedge.innovateonline.com/login.php">agentedge.innovateonline.com</a>, go to <strong>My Profile</strong>, and find the <strong>Notification Preferences</strong> card. There you can turn on <strong>"Text (SMS) notifications"</strong> and enter a US mobile number. Below is exactly what that control looks like inside the product:</p>
+  <p><strong>How you opt in.</strong> Log in to AgentEdge at <a href="https://agents.innovateonline.com/login.php">agents.innovateonline.com</a>, go to <strong>My Profile</strong>, and find the <strong>Notification Preferences</strong> card. There you can turn on <strong>"Text (SMS) notifications"</strong> and enter a US mobile number. Below is exactly what that control looks like inside the product:</p>
   <div class="contact-box" style="max-width:420px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
       <div>

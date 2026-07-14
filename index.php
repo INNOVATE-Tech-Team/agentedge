@@ -63,7 +63,7 @@ $agent = require_login();
           <div class="tile tile-blue"><div class="tile-val" id="t-volume">—</div><div class="tile-lbl">Sales Volume</div></div>
           <div class="tile tile-green"><div class="tile-val" id="t-closed">—</div><div class="tile-lbl">Closed Deals</div></div>
           <div class="tile tile-amber"><div class="tile-val" id="t-residual">—</div><div class="tile-lbl">Residual Income</div></div>
-          <div class="tile tile-red"><div class="tile-val" id="t-recruits">—</div><div class="tile-lbl">Recruits</div></div>
+          <div class="tile tile-red"><div class="tile-val" id="t-recruits">—</div><div class="tile-lbl">Agents In Growth Network</div></div>
         </section>
 
         <div id="ann-panel" class="card ann-panel" style="display:none">

@@ -260,6 +260,8 @@ function render_sidebar(string $current, array $agent): void {
 
     // MC-specific links injected here by mc-links.js
     echo '<div id="mc-resources" hidden></div>';
+    // Agent's own favorite links injected here by mc-links.js
+    echo '<div id="my-links" hidden></div>';
     $who = htmlspecialchars($agent['name'] ?: $agent['email']);
     $role = role_label($perms['role'] ?? 'agent');
     echo '</nav><div class="sb-foot"><div class="sb-who">' . $who . '<span class="sb-role">' . htmlspecialchars($role) . '</span></div>';
