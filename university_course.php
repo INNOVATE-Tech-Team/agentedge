@@ -22,6 +22,13 @@ $ls = $db->prepare("SELECT * FROM uni_lessons WHERE course_id=? ORDER BY sort_or
 $ls->execute([$courseId]);
 $lessons = $ls->fetchAll(PDO::FETCH_ASSOC);
 
+// Folders
+$fs = $db->prepare("SELECT * FROM uni_folders WHERE course_id=? ORDER BY sort_ord,id");
+$fs->execute([$courseId]);
+$folders = $fs->fetchAll(PDO::FETCH_ASSOC);
+$lessonsByFolder = [];
+foreach ($lessons as $lesson) { $lessonsByFolder[$lesson['folder_id'] ?: 0][] = $lesson; }
+
 // This agent's progress
 $progressMap = [];
 if ($lessons) {
@@ -37,13 +44,15 @@ $certQ = $db->prepare("SELECT cert_code, issued_at FROM uni_certs WHERE agent_em
 $certQ->execute([$email, $courseId]);
 $cert = $certQ->fetch(PDO::FETCH_ASSOC);
 
-$totalLessons = count($lessons);
-$doneLessons  = count($progressMap);
+// Placeholders don't count toward completion or the cert
+$gradableLessons = array_values(array_filter($lessons, fn($l) => $l['type'] !== 'placeholder'));
+$totalLessons = count($gradableLessons);
+$doneLessons  = count(array_filter($gradableLessons, fn($l) => isset($progressMap[$l['id']])));
 $pct          = $totalLessons > 0 ? round($doneLessons / $totalLessons * 100) : 0;
 
 // Find first incomplete lesson for "Continue" button
 $firstIncomplete = null;
-foreach ($lessons as $lesson) {
+foreach ($gradableLessons as $lesson) {
     if (!isset($progressMap[$lesson['id']])) { $firstIncomplete = $lesson['id']; break; }
 }
 ?>
@@ -72,10 +81,14 @@ foreach ($lessons as $lesson) {
     .course-progress-fill{height:100%;background:#82C112;border-radius:3px;transition:width 400ms}
     .course-header-cta{padding:10px 20px;background:#82C112;color:#000;font-weight:800;font-size:13px;border-radius:6px;text-decoration:none;white-space:nowrap;align-self:center}
     .course-header-cta:hover{background:#5b8e0d;color:#fff}
-    .lesson-list{display:flex;flex-direction:column;gap:8px}
+    .lesson-list{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+    .folder-section{margin-bottom:6px}
+    .folder-section-title{font-size:12px;font-weight:800;color:#888;margin:4px 0 8px}
     .lesson-row{display:flex;align-items:center;gap:14px;padding:14px 18px;background:white;border:1px solid #e5e5e5;border-radius:8px;text-decoration:none;color:inherit;transition:border-color 100ms,box-shadow 100ms}
     .lesson-row:hover{border-color:#c3dfa8;box-shadow:0 2px 8px rgba(0,0,0,.06)}
     .lesson-row.completed{border-left:3px solid #82C112}
+    .lesson-row.placeholder{opacity:.55;cursor:default}
+    .lesson-row.placeholder:hover{border-color:#e5e5e5;box-shadow:none}
     .lesson-num{font-size:12px;font-weight:800;color:#bbb;width:24px;flex-shrink:0;text-align:right}
     .lesson-type-icon{font-size:18px;flex-shrink:0}
     .lesson-info{flex:1}
@@ -148,37 +161,59 @@ foreach ($lessons as $lesson) {
         <?php if (!$lessons): ?>
         <div style="color:#bbb;text-align:center;padding:32px;font-size:13px">No lessons added to this course yet.</div>
         <?php else: ?>
-        <div class="lesson-list">
-          <?php foreach ($lessons as $i => $lesson):
-            $prog      = $progressMap[$lesson['id']] ?? null;
-            $isDone    = $prog !== null;
-            $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝'];
+        <?php
+          $lessonNum = 0;
+          $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
+          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => 'Coming Soon', 'upload' => 'Upload'];
+          function render_learner_lesson_row($lesson, &$lessonNum, $progressMap, $typeIcons, $typeLabels) {
+            $isPlaceholder = $lesson['type'] === 'placeholder';
+            $prog   = $progressMap[$lesson['id']] ?? null;
+            $isDone = $prog !== null;
             $typeIcon  = $typeIcons[$lesson['type']] ?? '📄';
             $dur       = $lesson['duration_sec'] > 0 ? gmdate($lesson['duration_sec'] >= 3600 ? 'G\h i\m' : 'i\m s\s', $lesson['duration_sec']) : '';
-            $typeLabel = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz'][$lesson['type']] ?? '';
-          ?>
-          <a class="lesson-row<?= $isDone ? ' completed' : '' ?>" href="university_lesson.php?id=<?= (int)$lesson['id'] ?>">
-            <div class="lesson-num"><?= $i + 1 ?></div>
-            <div class="lesson-type-icon"><?= $typeIcon ?></div>
-            <div class="lesson-info">
-              <div class="lesson-title"><?= htmlspecialchars($lesson['title']) ?></div>
-              <div class="lesson-meta">
-                <?= $typeLabel ?>
-                <?php if ($dur): ?>&nbsp;·&nbsp;<?= $dur ?><?php endif; ?>
+            $typeLabel = $typeLabels[$lesson['type']] ?? '';
+            $tag = $isPlaceholder ? 'div' : 'a';
+            if (!$isPlaceholder) $lessonNum++;
+            ?>
+            <<?= $tag ?> class="lesson-row<?= $isDone ? ' completed' : '' ?><?= $isPlaceholder ? ' placeholder' : '' ?>" <?= $isPlaceholder ? '' : 'href="university_lesson.php?id=' . (int)$lesson['id'] . '"' ?>>
+              <div class="lesson-num"><?= $isPlaceholder ? '' : $lessonNum ?></div>
+              <div class="lesson-type-icon"><?= $typeIcon ?></div>
+              <div class="lesson-info">
+                <div class="lesson-title"><?= htmlspecialchars($lesson['title']) ?></div>
+                <div class="lesson-meta">
+                  <?= $typeLabel ?>
+                  <?php if ($dur): ?>&nbsp;·&nbsp;<?= $dur ?><?php endif; ?>
+                </div>
               </div>
-            </div>
-            <div class="lesson-status">
-              <?php if ($isDone && $lesson['type'] === 'quiz' && $prog['score'] !== null): ?>
-              <span class="status-quiz-score"><?= $prog['score'] ?>%</span>
-              <?php elseif ($isDone): ?>
-              <span class="status-done">✓ Done</span>
-              <?php else: ?>
-              <span class="status-todo">○</span>
-              <?php endif; ?>
-            </div>
-          </a>
-          <?php endforeach; ?>
+              <div class="lesson-status">
+                <?php if ($isPlaceholder): ?>
+                <span class="status-todo" style="font-size:11px;color:#ccc;font-weight:700">Coming Soon</span>
+                <?php elseif ($isDone && $lesson['type'] === 'quiz' && $prog['score'] !== null): ?>
+                <span class="status-quiz-score"><?= $prog['score'] ?>%</span>
+                <?php elseif ($isDone): ?>
+                <span class="status-done">✓ Done</span>
+                <?php else: ?>
+                <span class="status-todo">○</span>
+                <?php endif; ?>
+              </div>
+            </<?= $tag ?>>
+            <?php
+          }
+        ?>
+        <?php foreach ($folders as $folder): ?>
+        <div class="folder-section">
+          <div class="folder-section-title">📁 <?= htmlspecialchars($folder['title']) ?></div>
+          <div class="lesson-list">
+            <?php foreach ($lessonsByFolder[$folder['id']] ?? [] as $lesson) render_learner_lesson_row($lesson, $lessonNum, $progressMap, $typeIcons, $typeLabels); ?>
+          </div>
         </div>
+        <?php endforeach; ?>
+        <?php if ($lessonsByFolder[0] ?? null): ?>
+        <?php if ($folders): ?><div class="folder-section-title">Ungrouped</div><?php endif; ?>
+        <div class="lesson-list">
+          <?php foreach ($lessonsByFolder[0] as $lesson) render_learner_lesson_row($lesson, $lessonNum, $progressMap, $typeIcons, $typeLabels); ?>
+        </div>
+        <?php endif; ?>
         <?php endif; ?>
       </div>
 

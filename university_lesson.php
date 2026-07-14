@@ -37,17 +37,36 @@ $progQ->execute([$email, $lessonId]);
 $progress = $progQ->fetch(PDO::FETCH_ASSOC);
 $isComplete = $progress !== null;
 
-// Quiz questions (without correct_index — never sent to client)
+// Quiz questions (without correct_index/correct_indexes — never sent to client)
 $questions = [];
 if ($lesson['type'] === 'quiz') {
-    $qs = $db->prepare("SELECT id, question, options FROM uni_questions WHERE lesson_id=? ORDER BY sort_ord,id");
+    $qs = $db->prepare("SELECT id, question, options, qtype FROM uni_questions WHERE lesson_id=? ORDER BY sort_ord,id");
     $qs->execute([$lessonId]);
     $questions = $qs->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($questions as &$q) { $q['options'] = json_decode($q['options'] ?? '[]', true) ?: []; }
+    foreach ($questions as &$q) {
+        $q['options'] = json_decode($q['options'] ?? '[]', true) ?: [];
+        $q['qtype']   = $q['qtype'] ?: 'single';
+    }
     unset($q);
 }
 
-$typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝'];
+// Attachments (extra downloadable files, alongside the primary video/doc file)
+$attachments = [];
+if (in_array($lesson['type'], ['video','doc','upload'])) {
+    $as = $db->prepare("SELECT id, original_name FROM uni_lesson_files WHERE lesson_id=? ORDER BY sort_ord,id");
+    $as->execute([$lessonId]);
+    $attachments = $as->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Existing learner-upload submission
+$mySubmission = null;
+if ($lesson['type'] === 'upload') {
+    $us = $db->prepare("SELECT original_name, submitted_at FROM uni_learner_uploads WHERE lesson_id=? AND agent_email=?");
+    $us->execute([$lessonId, $email]);
+    $mySubmission = $us->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
+$typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
 $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
 
 function make_embed_url(string $url): string {
@@ -126,6 +145,19 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
     .cert-banner-sub{font-size:12px;color:#888}
     .cert-banner a{padding:8px 16px;background:#f5c842;color:#000;font-weight:800;font-size:12px;border-radius:6px;text-decoration:none;white-space:nowrap}
     .cert-banner a:hover{background:#d4a800}
+    /* Attachments */
+    .attach-list{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+    .attach-item{display:flex;align-items:center;gap:10px;padding:10px 16px;background:white;border:1px solid #e5e5e5;border-radius:8px;text-decoration:none;color:inherit;font-size:13px;font-weight:700}
+    .attach-item:hover{border-color:#82C112;color:#5b8e0d}
+    /* Learner upload lesson */
+    .upload-dropzone{border:2px dashed #ccc;border-radius:10px;padding:36px;text-align:center;cursor:pointer;margin-bottom:20px}
+    .upload-dropzone:hover,.upload-dropzone.drag{border-color:#82C112;background:#f9fdf5}
+    .upload-dropzone p{margin:4px 0;font-size:13px;color:#888}
+    .upload-submitted{background:#e8f5e9;border:2px solid #82C112;border-radius:10px;padding:20px 24px;margin-bottom:20px}
+    .upload-submitted-title{font-size:14px;font-weight:800;color:#2e7d32;margin-bottom:4px}
+    .upload-submitted-sub{font-size:12px;color:#555;margin-bottom:10px}
+    /* Placeholder lesson */
+    .placeholder-wrap{border:1px dashed #ddd;border-radius:10px;padding:48px;text-align:center;background:#fafafa;margin-bottom:20px}
   </style>
 </head>
 <body>
@@ -154,8 +186,29 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
         <?php if ($isComplete): ?>&nbsp;<span style="color:#82C112;font-size:13px;font-weight:700">✓ Completed</span><?php endif; ?>
       </div>
 
+      <?php
+        function render_attachments($attachments) {
+          if (!$attachments) return;
+          ?>
+          <div class="attach-list">
+            <?php foreach ($attachments as $att): ?>
+            <a class="attach-item" href="api/uni_download.php?attachment=<?= (int)$att['id'] ?>" target="_blank">📎 <?= htmlspecialchars($att['original_name'] ?: 'Download file') ?></a>
+            <?php endforeach; ?>
+          </div>
+          <?php
+        }
+      ?>
+
+      <!-- Placeholder lesson (not yet available) -->
+      <?php if ($lesson['type'] === 'placeholder'): ?>
+      <div class="placeholder-wrap">
+        <div style="font-size:40px;margin-bottom:10px">🧩</div>
+        <div style="font-size:15px;font-weight:800;color:#888">This lesson isn't available yet</div>
+        <div style="font-size:13px;color:#bbb;margin-top:4px">Check back soon — this content is coming.</div>
+      </div>
+
       <!-- Video lesson -->
-      <?php if ($lesson['type'] === 'video'): ?>
+      <?php elseif ($lesson['type'] === 'video'): ?>
       <?php if ($embedUrl): ?>
       <div class="video-wrap" style="padding-top:56.25%;position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:20px">
         <iframe src="<?= htmlspecialchars($embedUrl) ?>" style="position:absolute;top:0;left:0;width:100%;height:100%;border:0" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" onload="scheduleEmbedComplete()"></iframe>
@@ -178,6 +231,7 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
         <div class="lesson-content"><?= $lesson['content_html'] ?></div>
       </div>
       <?php endif; ?>
+      <?php render_attachments($attachments); ?>
       <div id="complete-area">
         <?php if ($isComplete): ?>
         <span class="done-badge">✓ Lesson Complete</span>
@@ -205,6 +259,7 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
         <div class="lesson-content"><?= $lesson['content_html'] ?></div>
       </div>
       <?php endif; ?>
+      <?php render_attachments($attachments); ?>
       <div id="complete-area">
         <?php if ($isComplete): ?>
         <span class="done-badge">✓ Lesson Complete</span>
@@ -235,15 +290,20 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
         <?php else: ?>
         <div id="quiz-form">
           <div class="quiz-progress" id="quiz-progress">Question 1 of <?= count($questions) ?></div>
-          <?php foreach ($questions as $qi => $q): ?>
+          <?php foreach ($questions as $qi => $q): $qtype = $q['qtype'] ?: 'single'; ?>
           <div class="question-card" id="qcard-<?= $qi ?>" style="<?= $qi > 0 ? 'display:none' : '' ?>">
             <div class="question-text"><?= htmlspecialchars($q['question']) ?></div>
+            <?php if ($qtype === 'text'): ?>
+            <textarea id="qtext-<?= $qi ?>" rows="4" style="width:100%;box-sizing:border-box;padding:10px 14px;border:1.5px solid #e0e0e0;border-radius:8px;font-size:13px;font-family:inherit" placeholder="Type your answer…" oninput="answers[<?= $qi ?>]=this.value"></textarea>
+            <div style="font-size:11px;color:#aaa;margin-top:6px">This response is reviewed manually and doesn't affect your score.</div>
+            <?php else: ?>
             <?php foreach ($q['options'] as $oi => $opt): ?>
-            <label class="option-label" id="opt-<?= $qi ?>-<?= $oi ?>" onclick="selectOption(<?= $qi ?>,<?= $oi ?>,this)">
-              <input type="radio" name="q<?= $qi ?>" value="<?= $oi ?>">
+            <label class="option-label" id="opt-<?= $qi ?>-<?= $oi ?>" onclick="selectOption(<?= $qi ?>,<?= $oi ?>,this,'<?= $qtype ?>')">
+              <input type="<?= $qtype === 'multiple' ? 'checkbox' : 'radio' ?>" name="q<?= $qi ?>" value="<?= $oi ?>">
               <?= htmlspecialchars($opt) ?>
             </label>
             <?php endforeach; ?>
+            <?php endif; ?>
           </div>
           <?php endforeach; ?>
           <div class="quiz-nav">
@@ -257,6 +317,30 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
         <div id="complete-area"></div>
         <?php endif; ?>
       </div>
+
+      <!-- Learner upload lesson -->
+      <?php elseif ($lesson['type'] === 'upload'): ?>
+      <?php if ($lesson['content_html']): ?>
+      <div class="card" style="padding:20px 24px;margin-bottom:20px">
+        <div class="lesson-content"><?= $lesson['content_html'] ?></div>
+      </div>
+      <?php endif; ?>
+      <?php render_attachments($attachments); ?>
+      <?php if ($mySubmission): ?>
+      <div class="upload-submitted">
+        <div class="upload-submitted-title">✓ Submitted</div>
+        <div class="upload-submitted-sub"><?= htmlspecialchars($mySubmission['original_name']) ?> — <?= date('F j, Y g:ia', strtotime($mySubmission['submitted_at'])) ?></div>
+        <button class="btn-cancel" style="background:white;border:1.5px solid #ccc;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700" onclick="document.getElementById('upload-input').click()">Re-upload</button>
+      </div>
+      <?php else: ?>
+      <div class="upload-dropzone" onclick="document.getElementById('upload-input').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleUploadDrop(event)">
+        <div style="font-size:32px;margin-bottom:6px">📤</div>
+        <p><strong>Click to upload</strong> or drag your file here</p>
+      </div>
+      <?php endif; ?>
+      <input type="file" id="upload-input" style="display:none" onchange="submitLearnerUpload(this.files[0])">
+      <div class="upload-status" id="upload-status" style="font-size:12px;color:#888;min-height:18px"></div>
+      <div id="complete-area"></div>
       <?php endif; ?>
 
       <!-- Cert banner (shown after completion if earned) -->
@@ -327,15 +411,40 @@ function showCertBanner(cert) {
   </div>`;
 }
 
+// ── Learner upload lesson ────────────────────────────────────────────────────
+function handleUploadDrop(e) { e.preventDefault(); e.currentTarget.classList.remove('drag'); if (e.dataTransfer.files[0]) submitLearnerUpload(e.dataTransfer.files[0]); }
+function submitLearnerUpload(file) {
+  if (!file) return;
+  const status = document.getElementById('upload-status');
+  status.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('action', 'submit_learner_upload');
+  fd.append('lesson_id', LESSON_ID);
+  fd.append('file', file);
+  fetch('api/uni_progress.php', { method: 'POST', credentials: 'same-origin', body: fd })
+    .then(r => r.json()).then(d => {
+      if (d.ok) { status.textContent = ''; location.reload(); }
+      else status.textContent = 'Error: ' + (d.error || 'upload failed');
+    });
+}
+
 // ── Quiz logic ─────────────────────────────────────────────────────────────
 const TOTAL_Q = <?= count($questions) ?>;
+const QTYPES = <?= json_encode(array_map(fn($q) => $q['qtype'] ?: 'single', $questions)) ?>;
 let currentQ = 0;
-const answers = new Array(TOTAL_Q).fill(null);
+const answers = QTYPES.map(t => t === 'multiple' ? [] : (t === 'text' ? '' : null));
 
-function selectOption(qIdx, optIdx, el) {
-  document.querySelectorAll(`#qcard-${qIdx} .option-label`).forEach(l => l.classList.remove('selected'));
-  el.classList.add('selected');
-  answers[qIdx] = optIdx;
+function selectOption(qIdx, optIdx, el, qtype) {
+  if (qtype === 'multiple') {
+    el.classList.toggle('selected');
+    const set = new Set(answers[qIdx]);
+    if (set.has(optIdx)) set.delete(optIdx); else set.add(optIdx);
+    answers[qIdx] = [...set];
+  } else {
+    document.querySelectorAll(`#qcard-${qIdx} .option-label`).forEach(l => l.classList.remove('selected'));
+    el.classList.add('selected');
+    answers[qIdx] = optIdx;
+  }
 }
 
 function quizNav(dir) {
@@ -350,7 +459,8 @@ function quizNav(dir) {
 }
 
 function submitQuiz() {
-  if (answers.includes(null)) { alert('Please answer all questions before submitting.'); return; }
+  const unanswered = answers.some((a, i) => QTYPES[i] === 'multiple' ? a.length === 0 : (QTYPES[i] === 'text' ? !String(a || '').trim() : a === null));
+  if (unanswered) { alert('Please answer all questions before submitting.'); return; }
   const btn = document.getElementById('quiz-submit');
   btn.disabled = true;
   btn.textContent = 'Grading…';

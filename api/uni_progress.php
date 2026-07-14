@@ -9,6 +9,38 @@ $me = current_agent();
 if (!$me) { http_response_code(401); echo json_encode(['error'=>'not signed in']); exit; }
 $email = $me['email'];
 $db    = local_db();
+$uniDir = __DIR__ . '/../data/uni/';
+
+// Learner file submission for 'upload'-type lessons (multipart POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_FILES['file']) && ($_POST['action'] ?? '') === 'submit_learner_upload') {
+    $lessonId = (int)($_POST['lesson_id'] ?? 0);
+    $file     = $_FILES['file'];
+    if (!$lessonId) { http_response_code(400); echo json_encode(['error'=>'lesson_id required']); exit; }
+    if ($file['error'] !== UPLOAD_ERR_OK) { http_response_code(400); echo json_encode(['error'=>'upload error ' . $file['error']]); exit; }
+
+    $ls = $db->prepare("SELECT l.*, c.published FROM uni_lessons l JOIN uni_courses c ON c.id=l.course_id WHERE l.id=?");
+    $ls->execute([$lessonId]);
+    $lesson = $ls->fetch(PDO::FETCH_ASSOC);
+    if (!$lesson || (!$lesson['published'] && !is_admin())) { http_response_code(404); echo json_encode(['error'=>'not found']); exit; }
+    if ($lesson['type'] !== 'upload') { http_response_code(400); echo json_encode(['error'=>'not an upload lesson']); exit; }
+
+    $old = $db->prepare("SELECT file_key FROM uni_learner_uploads WHERE lesson_id=? AND agent_email=?");
+    $old->execute([$lessonId, $email]); $oldKey = $old->fetchColumn();
+    if ($oldKey && file_exists($uniDir . $oldKey)) @unlink($uniDir . $oldKey);
+
+    $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $key  = uniqid('', true) . ($ext ? ".$ext" : '');
+    if (!move_uploaded_file($file['tmp_name'], $uniDir . $key)) { http_response_code(500); echo json_encode(['error'=>'save failed']); exit; }
+
+    $db->prepare("INSERT INTO uni_learner_uploads (lesson_id,agent_email,file_key,original_name,submitted_at) VALUES (?,?,?,?,datetime('now'))
+                  ON CONFLICT(lesson_id,agent_email) DO UPDATE SET file_key=excluded.file_key,original_name=excluded.original_name,submitted_at=datetime('now')")
+       ->execute([$lessonId, $email, $key, $file['name']]);
+    $db->prepare("INSERT OR IGNORE INTO uni_progress (agent_email,lesson_id,completed_at,score,attempts) VALUES (?,?,datetime('now'),NULL,1)")
+       ->execute([$email, $lessonId]);
+
+    $cert = maybe_issue_cert($db, $email, (int)$lesson['course_id']);
+    echo json_encode(['ok'=>true,'name'=>$file['name'],'cert'=>$cert]); exit;
+}
 
 // GET — progress summary for a course
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -52,7 +84,7 @@ if ($action === 'complete') {
     $ls->execute([$lessonId]);
     $lesson = $ls->fetch(PDO::FETCH_ASSOC);
     if (!$lesson || (!$lesson['published'] && !is_admin())) { http_response_code(404); echo json_encode(['error'=>'not found']); exit; }
-    if ($lesson['type'] === 'quiz') { http_response_code(400); echo json_encode(['error'=>'use submit_quiz for quiz lessons']); exit; }
+    if (in_array($lesson['type'], ['quiz','upload','placeholder'])) { http_response_code(400); echo json_encode(['error'=>'not a completable lesson via this action']); exit; }
 
     $db->prepare("INSERT OR IGNORE INTO uni_progress (agent_email,lesson_id,completed_at,score,attempts) VALUES (?,?,datetime('now'),NULL,1)")
        ->execute([$email, $lessonId]);
@@ -74,16 +106,40 @@ if ($action === 'submit_quiz') {
     if (!$lesson || (!$lesson['published'] && !is_admin())) { http_response_code(404); echo json_encode(['error'=>'not found']); exit; }
     if ($lesson['type'] !== 'quiz') { http_response_code(400); echo json_encode(['error'=>'not a quiz lesson']); exit; }
 
-    $qs = $db->prepare("SELECT id, correct_index FROM uni_questions WHERE lesson_id=? ORDER BY sort_ord,id");
+    $qs = $db->prepare("SELECT id, qtype, correct_indexes, correct_index FROM uni_questions WHERE lesson_id=? ORDER BY sort_ord,id");
     $qs->execute([$lessonId]);
     $questions = $qs->fetchAll(PDO::FETCH_ASSOC);
     if (!$questions) { http_response_code(400); echo json_encode(['error'=>'no questions in this quiz']); exit; }
 
-    $correct = 0;
+    // Clear any prior recorded answers for this learner/lesson (re-attempt overwrites)
+    $db->prepare("DELETE FROM uni_quiz_answers WHERE lesson_id=? AND agent_email=?")->execute([$lessonId, $email]);
+    $insAns = $db->prepare("INSERT INTO uni_quiz_answers (lesson_id,agent_email,question_id,answer_text,selected_indexes) VALUES (?,?,?,?,?)");
+
+    $correct  = 0;
+    $gradable = 0;
     foreach ($questions as $i => $q) {
-        if (isset($answers[$i]) && (int)$answers[$i] === (int)$q['correct_index']) $correct++;
+        $qtype = $q['qtype'] ?: 'single';
+        $given = $answers[$i] ?? null;
+
+        if ($qtype === 'text') {
+            $insAns->execute([$lessonId, $email, $q['id'], is_string($given) ? trim($given) : '', '[]']);
+            continue;
+        }
+
+        $gradable++;
+        $expected = json_decode($q['correct_indexes'] ?: '[]', true) ?: [(int)$q['correct_index']];
+        sort($expected);
+        if ($qtype === 'multiple') {
+            $selected = is_array($given) ? array_values(array_unique(array_map('intval', $given))) : [];
+            sort($selected);
+            if ($selected === $expected) $correct++;
+        } else { // single
+            $selected = [is_numeric($given) ? (int)$given : -1];
+            if ($selected === $expected) $correct++;
+        }
+        $insAns->execute([$lessonId, $email, $q['id'], '', json_encode($selected)]);
     }
-    $score  = count($questions) > 0 ? (int)round($correct / count($questions) * 100) : 0;
+    $score  = $gradable > 0 ? (int)round($correct / $gradable * 100) : 100;
     $passed = $score >= 70;
 
     // Track attempt count
@@ -106,7 +162,7 @@ if ($action === 'submit_quiz') {
         'score'   => $score,
         'passed'  => $passed,
         'correct' => $correct,
-        'total'   => count($questions),
+        'total'   => $gradable,
         'cert'    => $cert,
     ]);
     exit;
@@ -117,7 +173,7 @@ echo json_encode(['error'=>'unknown action']);
 
 // Issue a certificate if all lessons in the course are complete. Returns cert row or null.
 function maybe_issue_cert(PDO $db, string $email, int $courseId): ?array {
-    $ts = $db->prepare("SELECT COUNT(*) FROM uni_lessons WHERE course_id=?");
+    $ts = $db->prepare("SELECT COUNT(*) FROM uni_lessons WHERE course_id=? AND type!='placeholder'");
     $ts->execute([$courseId]);
     $total = (int)$ts->fetchColumn();
     if ($total === 0) return null;
