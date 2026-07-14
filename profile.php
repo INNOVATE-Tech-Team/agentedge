@@ -99,7 +99,7 @@ $agent = require_login();
               <div id="phone-field" style="margin-top:10px;display:none">
                 <input type="tel" id="notif-phone" placeholder="(843) 555-1234"
                   style="padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box">
-                <div style="font-size:11px;color:#aaa;margin-top:4px">US numbers only. Standard message rates apply.</div>
+                <div style="font-size:11px;color:#aaa;margin-top:4px">US numbers only. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="privacy.php#sms" target="_blank" style="color:#82C112">SMS terms</a>.</div>
               </div>
             </div>
           </div>
