@@ -3,6 +3,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/notifications.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
@@ -77,8 +78,12 @@ if ($action === 'create') {
         "INSERT INTO suggestions (submitted_by,submitter_name,category,title,body,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?)"
     )->execute([$myEmail, $myName, $cat, $title, $bodyT, $now, $now]);
+    $suggestionId = (int)$db->lastInsertId();
 
-    echo json_encode(['ok'=>true, 'id'=>(int)$db->lastInsertId()]);
+    notify_suggestion_created($suggestionId, $title, $bodyT, $cat, $myName, $myEmail);
+
+    echo json_encode(['ok'=>true, 'id'=>$suggestionId]);
+    dispatch_notification_queue();
     exit;
 }
 

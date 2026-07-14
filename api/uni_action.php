@@ -50,6 +50,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_FILES['file'])) {
         echo json_encode(['ok'=>true,'key'=>$key]); exit;
     }
 
+    if ($action === 'upload_lesson_attachment') {
+        $lessonId = (int)($_POST['lesson_id'] ?? 0);
+        if (!$lessonId) { http_response_code(400); echo json_encode(['error'=>'lesson_id required']); exit; }
+        if (!move_uploaded_file($file['tmp_name'], $dest)) { http_response_code(500); echo json_encode(['error'=>'save failed']); exit; }
+        $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lesson_files WHERE lesson_id=?"); $mo->execute([$lessonId]);
+        $nextOrd = ((int)$mo->fetchColumn()) + 10;
+        $db->prepare("INSERT INTO uni_lesson_files (lesson_id,file_key,original_name,sort_ord) VALUES (?,?,?,?)")
+           ->execute([$lessonId, $key, $file['name'], $nextOrd]);
+        echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId(),'key'=>$key,'name'=>$file['name']]); exit;
+    }
+
+    if ($action === 'upload_content_image') {
+        if (!in_array($file['type'], ['image/jpeg','image/png','image/gif','image/webp'])) {
+            http_response_code(400); echo json_encode(['error'=>'image files only (jpeg/png/gif/webp)']); exit;
+        }
+        if (!move_uploaded_file($file['tmp_name'], $dest)) { http_response_code(500); echo json_encode(['error'=>'save failed']); exit; }
+        echo json_encode(['ok'=>true,'key'=>$key]); exit;
+    }
+
     http_response_code(400); echo json_encode(['error'=>'unknown upload action']); exit;
 }
 
@@ -82,6 +101,38 @@ if ($action === 'delete_category') {
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
     $db->prepare("UPDATE uni_courses SET category_id=NULL WHERE category_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_categories WHERE id=?")->execute([$id]);
+    echo json_encode(['ok'=>true]); exit;
+}
+
+// ── Folders ───────────────────────────────────────────────────────────────
+if ($action === 'list_folders') {
+    $courseId = (int)($in['course_id'] ?? 0);
+    if (!$courseId) { http_response_code(400); echo json_encode(['error'=>'course_id required']); exit; }
+    $s = $db->prepare("SELECT * FROM uni_folders WHERE course_id=? ORDER BY sort_ord,id");
+    $s->execute([$courseId]);
+    echo json_encode(['ok'=>true,'folders'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
+}
+if ($action === 'create_folder') {
+    $courseId = (int)($in['course_id'] ?? 0);
+    $title    = trim($in['title'] ?? '');
+    if (!$courseId || !$title) { http_response_code(400); echo json_encode(['error'=>'course_id and title required']); exit; }
+    $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_folders WHERE course_id=?"); $mo->execute([$courseId]);
+    $nextOrd = ((int)$mo->fetchColumn()) + 10;
+    $db->prepare("INSERT INTO uni_folders (course_id,title,sort_ord) VALUES (?,?,?)")->execute([$courseId, $title, $nextOrd]);
+    echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
+}
+if ($action === 'update_folder') {
+    $id    = (int)($in['id'] ?? 0);
+    $title = trim($in['title'] ?? '');
+    if (!$id || !$title) { http_response_code(400); echo json_encode(['error'=>'id and title required']); exit; }
+    $db->prepare("UPDATE uni_folders SET title=? WHERE id=?")->execute([$title, $id]);
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'delete_folder') {
+    $id = (int)($in['id'] ?? 0);
+    if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $db->prepare("UPDATE uni_lessons SET folder_id=NULL WHERE folder_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_folders WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
 
@@ -126,13 +177,21 @@ if ($action === 'delete_course') {
     // Delete lesson files
     $les = $db->prepare("SELECT file_key FROM uni_lessons WHERE course_id=? AND file_key!=''"); $les->execute([$id]);
     foreach ($les->fetchAll(PDO::FETCH_COLUMN) as $fk) { if (file_exists($uniDir . $fk)) @unlink($uniDir . $fk); }
-    // Cascade: questions → progress → certs → lessons → course
+    // Cascade: attachments/questions/answers/progress/uploads → certs → lessons → folders → course
     $lids = $db->prepare("SELECT id FROM uni_lessons WHERE course_id=?"); $lids->execute([$id]);
     foreach ($lids->fetchAll(PDO::FETCH_COLUMN) as $lid) {
+        $af = $db->prepare("SELECT file_key FROM uni_lesson_files WHERE lesson_id=?"); $af->execute([$lid]);
+        foreach ($af->fetchAll(PDO::FETCH_COLUMN) as $fk) { if (file_exists($uniDir . $fk)) @unlink($uniDir . $fk); }
+        $uf = $db->prepare("SELECT file_key FROM uni_learner_uploads WHERE lesson_id=?"); $uf->execute([$lid]);
+        foreach ($uf->fetchAll(PDO::FETCH_COLUMN) as $fk) { if (file_exists($uniDir . $fk)) @unlink($uniDir . $fk); }
+        $db->prepare("DELETE FROM uni_lesson_files WHERE lesson_id=?")->execute([$lid]);
         $db->prepare("DELETE FROM uni_questions WHERE lesson_id=?")->execute([$lid]);
+        $db->prepare("DELETE FROM uni_quiz_answers WHERE lesson_id=?")->execute([$lid]);
         $db->prepare("DELETE FROM uni_progress WHERE lesson_id=?")->execute([$lid]);
+        $db->prepare("DELETE FROM uni_learner_uploads WHERE lesson_id=?")->execute([$lid]);
     }
     $db->prepare("DELETE FROM uni_lessons WHERE course_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_folders WHERE course_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_certs WHERE course_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_courses WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
@@ -142,7 +201,9 @@ if ($action === 'delete_course') {
 if ($action === 'list_lessons') {
     $courseId = (int)($in['course_id'] ?? 0);
     if (!$courseId) { http_response_code(400); echo json_encode(['error'=>'course_id required']); exit; }
-    $s = $db->prepare("SELECT *, (SELECT COUNT(*) FROM uni_questions WHERE lesson_id=uni_lessons.id) as question_count FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
+    $s = $db->prepare("SELECT *, (SELECT COUNT(*) FROM uni_questions WHERE lesson_id=uni_lessons.id) as question_count,
+                       (SELECT COUNT(*) FROM uni_lesson_files WHERE lesson_id=uni_lessons.id) as attachment_count
+                       FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
     $s->execute([$courseId]);
     echo json_encode(['ok'=>true,'lessons'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
 }
@@ -150,18 +211,20 @@ if ($action === 'create_lesson') {
     $courseId = (int)($in['course_id'] ?? 0);
     $title    = trim($in['title'] ?? '');
     if (!$courseId || !$title) { http_response_code(400); echo json_encode(['error'=>'course_id and title required']); exit; }
-    $type = in_array($in['type'] ?? '', ['video','doc','quiz']) ? $in['type'] : 'video';
+    $type = in_array($in['type'] ?? '', ['video','doc','quiz','placeholder','upload']) ? $in['type'] : 'video';
+    $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
     $mo   = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE course_id=?"); $mo->execute([$courseId]);
     $nextOrd = ((int)$mo->fetchColumn()) + 10;
-    $db->prepare("INSERT INTO uni_lessons (course_id,title,sort_ord,type,embed_url,content_html,duration_sec) VALUES (?,?,?,?,?,?,?)")
-       ->execute([$courseId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0)]);
+    $db->prepare("INSERT INTO uni_lessons (course_id,folder_id,title,sort_ord,type,embed_url,content_html,duration_sec) VALUES (?,?,?,?,?,?,?,?)")
+       ->execute([$courseId, $folderId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0)]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_lesson') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
-    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,embed_url=?,content_html=?,duration_sec=? WHERE id=?")
-       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), $id]);
+    $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
+    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,folder_id=?,embed_url=?,content_html=?,duration_sec=? WHERE id=?")
+       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), $folderId, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_lesson') {
@@ -170,16 +233,58 @@ if ($action === 'delete_lesson') {
     $fkQ = $db->prepare("SELECT file_key FROM uni_lessons WHERE id=?"); $fkQ->execute([$id]);
     $fk  = $fkQ->fetchColumn();
     if ($fk && file_exists($uniDir . $fk)) @unlink($uniDir . $fk);
+    $af = $db->prepare("SELECT file_key FROM uni_lesson_files WHERE lesson_id=?"); $af->execute([$id]);
+    foreach ($af->fetchAll(PDO::FETCH_COLUMN) as $afk) { if (file_exists($uniDir . $afk)) @unlink($uniDir . $afk); }
+    $uf = $db->prepare("SELECT file_key FROM uni_learner_uploads WHERE lesson_id=?"); $uf->execute([$id]);
+    foreach ($uf->fetchAll(PDO::FETCH_COLUMN) as $ufk) { if (file_exists($uniDir . $ufk)) @unlink($uniDir . $ufk); }
+    $db->prepare("DELETE FROM uni_lesson_files WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_questions WHERE lesson_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_quiz_answers WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_progress WHERE lesson_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_learner_uploads WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_lessons WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'reorder_lessons') {
+    // order: array of lesson ids (legacy, flat) OR array of {id, folder_id} objects (folder-aware)
     $order = $in['order'] ?? [];
     if (!is_array($order)) { http_response_code(400); echo json_encode(['error'=>'order array required']); exit; }
-    $upd = $db->prepare("UPDATE uni_lessons SET sort_ord=? WHERE id=?");
-    foreach ($order as $i => $lessonId) $upd->execute([($i + 1) * 10, (int)$lessonId]);
+    $upd = $db->prepare("UPDATE uni_lessons SET sort_ord=?,folder_id=? WHERE id=?");
+    foreach ($order as $i => $item) {
+        if (is_array($item)) {
+            $lessonId = (int)($item['id'] ?? 0);
+            $folderId = !empty($item['folder_id']) ? (int)$item['folder_id'] : null;
+        } else {
+            $lessonId = (int)$item;
+            $folderId = null;
+        }
+        if ($lessonId) $upd->execute([($i + 1) * 10, $folderId, $lessonId]);
+    }
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'reorder_folders') {
+    $order = $in['order'] ?? [];
+    if (!is_array($order)) { http_response_code(400); echo json_encode(['error'=>'order array required']); exit; }
+    $upd = $db->prepare("UPDATE uni_folders SET sort_ord=? WHERE id=?");
+    foreach ($order as $i => $folderId) $upd->execute([($i + 1) * 10, (int)$folderId]);
+    echo json_encode(['ok'=>true]); exit;
+}
+
+// ── Lesson attachments ─────────────────────────────────────────────────────
+if ($action === 'list_lesson_attachments') {
+    $lessonId = (int)($in['lesson_id'] ?? 0);
+    if (!$lessonId) { http_response_code(400); echo json_encode(['error'=>'lesson_id required']); exit; }
+    $s = $db->prepare("SELECT * FROM uni_lesson_files WHERE lesson_id=? ORDER BY sort_ord,id");
+    $s->execute([$lessonId]);
+    echo json_encode(['ok'=>true,'files'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
+}
+if ($action === 'delete_lesson_attachment') {
+    $id = (int)($in['id'] ?? 0);
+    if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $fkQ = $db->prepare("SELECT file_key FROM uni_lesson_files WHERE id=?"); $fkQ->execute([$id]);
+    $fk  = $fkQ->fetchColumn();
+    if ($fk && file_exists($uniDir . $fk)) @unlink($uniDir . $fk);
+    $db->prepare("DELETE FROM uni_lesson_files WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
 
@@ -195,24 +300,32 @@ if ($action === 'create_question') {
     $lessonId = (int)($in['lesson_id'] ?? 0);
     $question = trim($in['question'] ?? '');
     $options  = $in['options'] ?? [];
-    if (!$lessonId || !$question || !is_array($options) || count($options) < 2) {
-        http_response_code(400); echo json_encode(['error'=>'lesson_id, question, and at least 2 options required']); exit;
+    $qtype    = in_array($in['qtype'] ?? '', ['single','multiple','text']) ? $in['qtype'] : 'single';
+    $correctIdx = array_values(array_map('intval', is_array($in['correct_indexes'] ?? null) ? $in['correct_indexes'] : [(int)($in['correct_index'] ?? 0)]));
+    if (!$lessonId || !$question) { http_response_code(400); echo json_encode(['error'=>'lesson_id and question required']); exit; }
+    if ($qtype !== 'text' && (!is_array($options) || count($options) < 2)) {
+        http_response_code(400); echo json_encode(['error'=>'at least 2 options required']); exit;
     }
+    if ($qtype === 'text') { $options = []; $correctIdx = []; }
     $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_questions WHERE lesson_id=?"); $mo->execute([$lessonId]);
     $nextOrd = ((int)$mo->fetchColumn()) + 10;
-    $db->prepare("INSERT INTO uni_questions (lesson_id,question,options,correct_index,sort_ord) VALUES (?,?,?,?,?)")
-       ->execute([$lessonId, $question, json_encode(array_values($options)), (int)($in['correct_index'] ?? 0), $nextOrd]);
+    $db->prepare("INSERT INTO uni_questions (lesson_id,question,options,correct_index,correct_indexes,qtype,sort_ord) VALUES (?,?,?,?,?,?,?)")
+       ->execute([$lessonId, $question, json_encode(array_values($options)), $correctIdx[0] ?? 0, json_encode($correctIdx), $qtype, $nextOrd]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_question') {
-    $id      = (int)($in['id'] ?? 0);
+    $id       = (int)($in['id'] ?? 0);
     $question = trim($in['question'] ?? '');
     $options  = $in['options'] ?? [];
-    if (!$id || !$question || !is_array($options) || count($options) < 2) {
-        http_response_code(400); echo json_encode(['error'=>'id, question, and 2+ options required']); exit;
+    $qtype    = in_array($in['qtype'] ?? '', ['single','multiple','text']) ? $in['qtype'] : 'single';
+    $correctIdx = array_values(array_map('intval', is_array($in['correct_indexes'] ?? null) ? $in['correct_indexes'] : [(int)($in['correct_index'] ?? 0)]));
+    if (!$id || !$question) { http_response_code(400); echo json_encode(['error'=>'id and question required']); exit; }
+    if ($qtype !== 'text' && (!is_array($options) || count($options) < 2)) {
+        http_response_code(400); echo json_encode(['error'=>'at least 2 options required']); exit;
     }
-    $db->prepare("UPDATE uni_questions SET question=?,options=?,correct_index=?,sort_ord=? WHERE id=?")
-       ->execute([$question, json_encode(array_values($options)), (int)($in['correct_index'] ?? 0), (int)($in['sort_ord'] ?? 0), $id]);
+    if ($qtype === 'text') { $options = []; $correctIdx = []; }
+    $db->prepare("UPDATE uni_questions SET question=?,options=?,correct_index=?,correct_indexes=?,qtype=?,sort_ord=? WHERE id=?")
+       ->execute([$question, json_encode(array_values($options)), $correctIdx[0] ?? 0, json_encode($correctIdx), $qtype, (int)($in['sort_ord'] ?? 0), $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_question') {

@@ -1,7 +1,7 @@
 <?php
 // The ordered list of deprovisioning steps every departing agent goes through.
 // is_auto=true means AgentEdge can deprovision this automatically via API
-// (only 'fub' and 'constellation1' have real handlers, in api/offboard_action.php).
+// ('fub', 'constellation1', and 'agentedge' have real handlers, in api/offboard_action.php).
 // Manual steps require an admin to check them off.
 // Backed by step_defs (see local_db.php) — editable on admin_step_notify.php.
 require_once __DIR__ . '/local_db.php';

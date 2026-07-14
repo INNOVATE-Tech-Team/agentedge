@@ -6,7 +6,7 @@ header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok'=>false,'error'=>'Not signed in']); exit; }
-if (!is_admin()) { http_response_code(403); echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
+if (!is_leader()) { http_response_code(403); echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
 
 $db = local_db();
 $method = $_SERVER['REQUEST_METHOD'];

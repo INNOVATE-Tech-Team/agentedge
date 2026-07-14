@@ -3,7 +3,8 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
+$canEdit = is_admin();
 $db = local_db();
 
 $categories = $db->query(
@@ -104,7 +105,7 @@ $courses = $db->query(
       <div class="card" style="padding:20px 24px" class="admin-section">
         <div class="section-header">
           <div class="section-title">📚 Categories</div>
-          <button class="btn-primary" onclick="openCatModal()">+ New Category</button>
+          <?php if ($canEdit): ?><button class="btn-primary" onclick="openCatModal()">+ New Category</button><?php endif; ?>
         </div>
         <?php if (!$categories): ?>
         <div style="color:#bbb;font-size:13px;padding:20px 0">No categories yet — create one to organize your courses.</div>
@@ -117,10 +118,12 @@ $courses = $db->query(
               <div class="cat-name"><?= htmlspecialchars($cat['name']) ?></div>
               <div class="cat-count"><?= $cat['course_count'] ?> course<?= $cat['course_count'] != 1 ? 's' : '' ?></div>
             </div>
+            <?php if ($canEdit): ?>
             <div class="cat-actions">
               <button class="btn-sm" onclick='editCat(<?= htmlspecialchars(json_encode($cat)) ?>)'>Edit</button>
               <button class="btn-sm btn-danger" onclick="deleteCat(<?= (int)$cat['id'] ?>, '<?= htmlspecialchars(addslashes($cat['name'])) ?>')">Del</button>
             </div>
+            <?php endif; ?>
           </div>
           <?php endforeach; ?>
         </div>
@@ -131,7 +134,7 @@ $courses = $db->query(
       <div class="card" style="padding:20px 24px">
         <div class="section-header">
           <div class="section-title">🎓 Courses</div>
-          <button class="btn-primary" onclick="newCourse()">+ New Course</button>
+          <?php if ($canEdit): ?><button class="btn-primary" onclick="newCourse()">+ New Course</button><?php endif; ?>
         </div>
         <?php if (!$courses): ?>
         <div class="empty-table">No courses yet. Click <strong>+ New Course</strong> to create the first one.</div>
@@ -162,11 +165,13 @@ $courses = $db->query(
                 <span class="<?= $c['published'] ? 'status-pub' : 'status-draft' ?>"><?= $c['published'] ? '● Published' : '○ Draft' ?></span>
               </td>
               <td>
+                <?php if ($canEdit): ?>
                 <div style="display:flex;gap:4px">
                   <a class="btn-sm" href="admin_university_course.php?id=<?= (int)$c['id'] ?>">Edit</a>
                   <button class="btn-sm" onclick='togglePublish(<?= (int)$c['id'] ?>,<?= $c['published'] ? 0 : 1 ?>,"<?= $c['published'] ? 'Unpublish' : 'Publish' ?>")'><?= $c['published'] ? 'Unpublish' : 'Publish' ?></button>
                   <button class="btn-sm btn-danger" onclick="deleteCourse(<?= (int)$c['id'] ?>,'<?= htmlspecialchars(addslashes($c['title'])) ?>')">Delete</button>
                 </div>
+                <?php endif; ?>
               </td>
             </tr>
             <?php endforeach; ?>

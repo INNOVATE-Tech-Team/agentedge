@@ -93,6 +93,58 @@ function gcal_update_event(string $calendar_id, string $token, string $event_id,
     return isset($d['id']) ? $d : null;
 }
 
+function gcal_get_event(string $calendar_id, string $token, string $event_id): ?array {
+    $url  = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events/' . urlencode($event_id);
+    $resp = @file_get_contents($url, false, stream_context_create(['http' => [
+        'method'        => 'GET',
+        'header'        => "Authorization: Bearer $token\r\nAccept: application/json\r\n",
+        'ignore_errors' => true,
+    ]]));
+    if (!$resp) return null;
+    $d = json_decode($resp, true);
+    return isset($d['id']) ? $d : null;
+}
+
+// Adds $email as a real attendee on the Calendar event (merges into the existing
+// attendee list, since the API's `attendees` field is a full replace on PATCH, not
+// an append) and asks Google to send that agent a native invite (sendUpdates=all).
+function gcal_add_attendee(string $calendar_id, string $token, string $event_id, string $email): ?array {
+    $event = gcal_get_event($calendar_id, $token, $event_id);
+    if (!$event) return null;
+    $attendees = $event['attendees'] ?? [];
+    foreach ($attendees as $a) {
+        if (strcasecmp($a['email'] ?? '', $email) === 0) return $event; // already an attendee
+    }
+    $attendees[] = ['email' => $email];
+    return gcal_update_event_sendupdates($calendar_id, $token, $event_id, ['attendees' => $attendees], 'all');
+}
+
+// Removes $email from the event's attendee list, if present.
+function gcal_remove_attendee(string $calendar_id, string $token, string $event_id, string $email): ?array {
+    $event = gcal_get_event($calendar_id, $token, $event_id);
+    if (!$event) return null;
+    $attendees = $event['attendees'] ?? [];
+    $filtered = array_values(array_filter($attendees, fn($a) => strcasecmp($a['email'] ?? '', $email) !== 0));
+    if (count($filtered) === count($attendees)) return $event; // wasn't an attendee
+    return gcal_update_event_sendupdates($calendar_id, $token, $event_id, ['attendees' => $filtered], 'all');
+}
+
+// Same as gcal_update_event() but lets the caller control Google's notification
+// behavior via ?sendUpdates= (the plain PATCH helper never sends attendee emails).
+function gcal_update_event_sendupdates(string $calendar_id, string $token, string $event_id, array $patch, string $send_updates): ?array {
+    $url  = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events/' . urlencode($event_id)
+          . '?' . http_build_query(['sendUpdates' => $send_updates]);
+    $resp = @file_get_contents($url, false, stream_context_create(['http' => [
+        'method'        => 'PATCH',
+        'header'        => "Authorization: Bearer $token\r\nContent-Type: application/json\r\nAccept: application/json\r\n",
+        'content'       => json_encode($patch),
+        'ignore_errors' => true,
+    ]]));
+    if (!$resp) return null;
+    $d = json_decode($resp, true);
+    return isset($d['id']) ? $d : null;
+}
+
 function gcal_delete_event(string $calendar_id, string $token, string $event_id): bool {
     $url = 'https://www.googleapis.com/calendar/v3/calendars/' . urlencode($calendar_id) . '/events/' . urlencode($event_id);
     @file_get_contents($url, false, stream_context_create(['http' => [

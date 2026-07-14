@@ -15,7 +15,7 @@ function load_agent_profile(string $email): ?array {
                 i.personal_email, i.commissions_email,
                 i.address_line1, i.address_line2, i.city, i.state, i.zip, i.country,
                 i.drivers_license, i.gender,
-                i.website, i.additional_websites, i.facebook, i.linkedin, i.skype,
+                i.website, i.additional_websites, i.facebook, i.linkedin, i.skype, i.instagram,
                 i.specialty, i.career_start, i.prior_occupation, i.prior_affiliation,
                 i.full_time, i.show_on_internet,
                 i.corporation_start, i.corporation_end,
@@ -57,6 +57,16 @@ function load_agent_latest_headshot(string $email): ?string {
     $st->execute([$email]);
     $key = $st->fetchColumn();
     return $key ?: null;
+}
+
+// Full headshot list (file_key + orig_name), used to render inline thumbnails
+// instead of linking out to the intake form.
+function load_agent_headshots(string $email): array {
+    $st = local_db()->prepare(
+        "SELECT file_key, orig_name FROM agent_intake_files WHERE agent_email=? ORDER BY uploaded_at"
+    );
+    $st->execute([$email]);
+    return $st->fetchAll(PDO::FETCH_ASSOC);
 }
 
 function load_agent_documents(string $email): array {

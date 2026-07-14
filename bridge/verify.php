@@ -3,10 +3,10 @@ mysqli_report(MYSQLI_REPORT_OFF);
 header('Content-Type: application/json');
 
 $BRIDGE_TOKEN = '69f875969332c128a5523ad1cfa4ed2bc06ea29b75a9f484';
-$DB_HOST = 'agents.innovateonline.com';
+$DB_HOST = 'perfex-db';
 $DB_NAME = 'innovate_agents';
 $DB_USER = 'innovate_agentedge_ro';
-$DB_PASS = 'Innovate2026!';
+$DB_PASS = '6e1974db7983e491dde46735f6103d6d245ef6e1';
 
 $in = json_decode(file_get_contents('php://input'), true);
 if (!is_array($in)) $in = $_POST;
@@ -139,13 +139,13 @@ if ($action === 'dump') {
 if ($action === 'agent_lookup') {
     $email = strtolower(trim((string)($in['email'] ?? '')));
     if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
-    $s = $db->prepare("SELECT staffid, email, firstname, lastname, profile_pic FROM tblstaff WHERE email = ? LIMIT 1");
+    $s = $db->prepare("SELECT staffid, email, firstname, lastname, profile_image FROM tblstaff WHERE email = ? LIMIT 1");
     if (!$s) { echo json_encode(['ok'=>false,'error'=>'query']); exit; }
     $s->bind_param('s', $email); $s->execute();
     $u = $s->get_result()->fetch_assoc(); $s->close();
     if (!$u) { echo json_encode(['ok'=>false]); exit; }
     $name = trim(($u['firstname'] ?? '') . ' ' . ($u['lastname'] ?? '')) ?: $email;
-    echo json_encode(['ok'=>true,'staffid'=>(int)$u['staffid'],'email'=>$u['email'],'name'=>$name,'photo'=>$u['profile_pic']??null]);
+    echo json_encode(['ok'=>true,'staffid'=>(int)$u['staffid'],'email'=>$u['email'],'name'=>$name,'photo'=>$u['profile_image']??null]);
     exit;
 }
 
@@ -177,6 +177,21 @@ if ($action === 'change_password') {
     $upd->close();
     if (!$ok) { echo json_encode(['ok'=>false,'error'=>'Could not update password (check DB user has UPDATE grant).']); exit; }
     echo json_encode(['ok'=>true]);
+    exit;
+}
+
+// ---- Deactivate agent (offboarding) ---------------------------------------
+if ($action === 'deactivate_agent') {
+    $email = trim((string)($in['email'] ?? ''));
+    if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
+    $stmt = $db->prepare("UPDATE tblstaff SET active = 0 WHERE email = ?");
+    if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $stmt->bind_param('s', $email);
+    $ok = $stmt->execute();
+    $matched = $stmt->affected_rows > 0;
+    $stmt->close();
+    if (!$ok) { echo json_encode(['ok'=>false,'error'=>'Could not update (check DB user has UPDATE grant on tblstaff).']); exit; }
+    echo json_encode(['ok'=>true,'matched'=>$matched]);
     exit;
 }
 

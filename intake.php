@@ -225,6 +225,7 @@ $intakeMarketCenters = local_db()
               <div class="field"><label>Additional Websites</label><input id="f-additional_websites" type="text" placeholder="https://"></div>
               <div class="field"><label>Facebook</label><input id="f-facebook" type="text" placeholder="https://facebook.com/..."></div>
               <div class="field"><label>LinkedIn</label><input id="f-linkedin" type="text" placeholder="https://linkedin.com/in/..."></div>
+              <div class="field"><label>Instagram</label><input id="f-instagram" type="text" placeholder="https://instagram.com/..."></div>
               <div class="field"><label>Skype</label><input id="f-skype" type="text" placeholder="Skype username"></div>
             </div>
 
@@ -289,7 +290,7 @@ $intakeMarketCenters = local_db()
 
     function setFields(intake) {
       if (!intake) return;
-      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','mls_board','mls_id','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','is_military','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
+      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','mls_board','mls_id','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','is_military','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','instagram','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
       map.forEach(function(key) {
         const node = el('f-' + key);
         if (node && intake[key] !== undefined && intake[key] !== null) {
@@ -510,6 +511,7 @@ $intakeMarketCenters = local_db()
         additional_websites: el('f-additional_websites').value,
         facebook:            el('f-facebook').value,
         linkedin:            el('f-linkedin').value,
+        instagram:           el('f-instagram').value,
         skype:               el('f-skype').value,
         specialty:           el('f-specialty').value,
         career_start:        el('f-career_start').value,

@@ -3,7 +3,8 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
+$canEdit = is_admin();
 $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
 ?>
 <!doctype html>
@@ -62,10 +63,12 @@ $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
     <main class="wrap">
       <div class="card" style="padding:20px 24px">
         <div id="breadcrumb" class="breadcrumb"></div>
+        <?php if ($canEdit): ?>
         <div class="doc-toolbar">
           <button class="btn-primary" onclick="openFolderModal()">+ New Folder</button>
           <button class="btn-primary" style="background:#e8f0ff;color:#2255cc" onclick="openUploadModal()">↑ Upload File</button>
         </div>
+        <?php endif; ?>
         <div class="doc-grid" id="doc-grid"><div class="empty-note">Loading…</div></div>
       </div>
     </main>
@@ -113,6 +116,7 @@ $folderId = isset($_GET['folder']) ? (int)$_GET['folder'] : null;
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function fmtSize(n){if(!n)return'';if(n>1048576)return(n/1048576).toFixed(1)+' MB';if(n>1024)return Math.round(n/1024)+' KB';return n+' B'}
 
+const canEdit = <?= json_encode($canEdit) ?>;
 let currentFolder = <?= json_encode($folderId) ?>;
 let currentData = {folders:[],files:[],breadcrumb:[]};
 let pendingFile = null;
@@ -156,7 +160,7 @@ function renderGrid(folders,files){
       <div class="doc-name">${esc(f.name)}</div>
       <div><span class="vis-badge vis-${esc(f.visibility)}">${visLabel(f.visibility)}</span></div>
       <div class="doc-actions">
-        <button class="btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(${f.id},'${esc(f.name).replace("'","\\'")}')">Delete</button>
+        ${canEdit?`<button class="btn-sm btn-danger" onclick="event.stopPropagation();deleteFolder(${f.id},'${esc(f.name).replace("'","\\'")}')">Delete</button>`:''}
       </div>
     </div>`;
   });
@@ -167,7 +171,7 @@ function renderGrid(folders,files){
       <div class="doc-meta">${fmtSize(f.size_bytes)}</div>
       <div class="doc-actions">
         <a class="btn-sm" href="api/doc_download.php?id=${f.id}" target="_blank" style="text-decoration:none;color:#5b8e0d;border-color:#c3dfa8">Download</a>
-        <button class="btn-sm btn-danger" onclick="deleteFile(${f.id},'${esc(f.name).replace("'","\\'")}')">Delete</button>
+        ${canEdit?`<button class="btn-sm btn-danger" onclick="deleteFile(${f.id},'${esc(f.name).replace("'","\\'")}')">Delete</button>`:''}
       </div>
     </div>`;
   });

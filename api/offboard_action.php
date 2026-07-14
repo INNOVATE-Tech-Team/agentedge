@@ -313,6 +313,11 @@ if ($action === 'provision') {
         require_once __DIR__ . '/../lib/c1.php';
         // c1_deactivate_user() is a stub — mark as manual until implemented
         $result = ['ok'=>false,'error'=>'Constellation1 deactivation not yet implemented — remove manually'];
+    } elseif ($toolKey === 'agentedge') {
+        require_once __DIR__ . '/../lib/agentedge_account.php';
+        $result = deactivate_agentedge_account(
+            $pdo, $entry['agent_email'], $entry['agent_name'], $entry['market_center'] ?? '', $agent['email']
+        );
     }
 
     if ($result['ok']) {

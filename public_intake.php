@@ -399,6 +399,10 @@ $intakeMarketCenters = local_db()
           <input type="text" id="f-linkedin" name="linkedin" placeholder="https://linkedin.com/in/...">
         </div>
         <div class="field">
+          <label>Instagram <span class="opt">(optional)</span></label>
+          <input type="text" id="f-instagram" name="instagram" placeholder="https://instagram.com/...">
+        </div>
+        <div class="field">
           <label>Skype <span class="opt">(optional)</span></label>
           <input type="text" id="f-skype" name="skype" placeholder="Skype username">
         </div>
@@ -598,6 +602,7 @@ $intakeMarketCenters = local_db()
       additional_websites: el('f-additional_websites').value.trim(),
       facebook:            el('f-facebook').value.trim(),
       linkedin:            el('f-linkedin').value.trim(),
+      instagram:           el('f-instagram').value.trim(),
       skype:               el('f-skype').value.trim(),
       specialty:           el('f-specialty').value.trim(),
       career_start:        el('f-career_start').value.trim(),

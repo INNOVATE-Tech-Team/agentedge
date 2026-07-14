@@ -231,27 +231,6 @@ async function calDraw() {
   updateTabCounts(evs);
 }
 
-function gcalAddUrl(ev) {
-  let dates;
-  if (ev.is_all_day) {
-    const s = (ev.start_dt || ev.date).replace(/-/g, '');
-    const endBase = ev.end_dt || ev.date;
-    const endObj  = new Date(endBase + 'T00:00:00');
-    endObj.setDate(endObj.getDate() + 1);
-    const e = endObj.toISOString().slice(0, 10).replace(/-/g, '');
-    dates = s + '/' + e;
-  } else {
-    const s = new Date(ev.start_dt).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    const e = new Date(ev.end_dt  ).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    dates = s + '/' + e;
-  }
-  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
-    + '&text='     + encodeURIComponent(ev.title       || '')
-    + '&dates='    + dates
-    + '&details='  + encodeURIComponent(ev.description || '')
-    + '&location=' + encodeURIComponent(ev.location    || '');
-}
-
 function updateTrainingBar() {
   const bar = document.getElementById('cal-training-bar');
   if (bar) bar.style.display = calFilter === 'training' ? 'flex' : 'none';
@@ -718,9 +697,6 @@ document.getElementById('cal-event-list-body').addEventListener('click', e => {
 
     const badge = btn.parentElement?.querySelector('.cal-reg-badge');
     if (badge && ev) badge.textContent = `${ev.registered_count}/${ev.capacity} registered`;
-
-    // On confirmed registration (not waitlisted), open Google Calendar to add the event
-    if (d.rsvped && ev) window.open(gcalAddUrl(ev), '_blank', 'noopener');
   })
   .catch(() => {})
   .finally(() => { btn.disabled = false; });

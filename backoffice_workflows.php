@@ -3,7 +3,8 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
+$canEdit = is_admin();
 ?>
 <!doctype html>
 <html lang="en">
@@ -74,7 +75,7 @@ if (!is_admin()) { header('Location: index.php'); exit; }
         <div id="boards-view">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
             <div style="font-size:13px;color:#888">Kanban boards for tracking internal tasks</div>
-            <button class="btn-primary" onclick="openCreateBoard()">+ New Board</button>
+            <?php if ($canEdit): ?><button class="btn-primary" onclick="openCreateBoard()">+ New Board</button><?php endif; ?>
           </div>
           <div class="boards-grid" id="boards-grid"><div class="empty-note">Loading…</div></div>
         </div>
@@ -83,7 +84,7 @@ if (!is_admin()) { header('Location: index.php'); exit; }
           <div class="board-header">
             <button class="back-btn" onclick="showBoards()">← All Boards</button>
             <div style="font-size:16px;font-weight:800;flex:1" id="board-title"></div>
-            <button class="btn-sm btn-danger" onclick="deleteCurrentBoard()">Delete Board</button>
+            <?php if ($canEdit): ?><button class="btn-sm btn-danger" onclick="deleteCurrentBoard()">Delete Board</button><?php endif; ?>
           </div>
           <div class="kanban" id="kanban"></div>
         </div>
@@ -118,8 +119,10 @@ if (!is_admin()) { header('Location: index.php'); exit; }
     <div class="field"><label>Due date</label><input type="date" id="card-due"></div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('card-modal')">Cancel</button>
+      <?php if ($canEdit): ?>
       <button class="btn-sm btn-danger" id="card-delete-btn" style="display:none;margin-right:auto" onclick="deleteCard()">Delete</button>
       <button class="btn-primary" onclick="saveCard()">Save</button>
+      <?php endif; ?>
     </div>
   </div>
 </div>
@@ -128,6 +131,7 @@ if (!is_admin()) { header('Location: index.php'); exit; }
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function api(body){return fetch('api/wf_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json())}
 
+const canEdit = <?= json_encode($canEdit) ?>;
 let boards=[], currentBoard=null, dragItem=null;
 
 // ── Board list ────────────────────────────────────────────────────────────────
@@ -143,7 +147,7 @@ function renderBoards(){
       <div class="board-meta">${esc(b.description||'')}</div>
       <div class="board-actions">
         <button class="btn-primary" style="font-size:12px;padding:5px 12px" onclick="openBoard(${b.id})">Open</button>
-        <button class="btn-sm btn-danger" onclick="deleteBoard(${b.id})">Delete</button>
+        ${canEdit?`<button class="btn-sm btn-danger" onclick="deleteBoard(${b.id})">Delete</button>`:''}
       </div>
     </div>`).join('');
 }
@@ -199,17 +203,17 @@ function renderKanban(stages){
            ondragover="onDragOver(event,this)" ondragleave="onDragLeave(this)" ondrop="onDrop(event,this)">
         ${st.items.map(item=>cardHtml(item)).join('')}
       </div>
-      <button class="kb-add-btn" onclick="openNewCard(${st.id},${currentBoard.board.id})">+ Add card</button>`;
+      ${canEdit?`<button class="kb-add-btn" onclick="openNewCard(${st.id},${currentBoard.board.id})">+ Add card</button>`:''}`;
     kb.appendChild(col);
-    // Wire drag listeners
-    col.querySelectorAll('.kb-card').forEach(el=>wireDrag(el,st.items.find(x=>x.id==el.dataset.id)));
+    // Wire drag listeners (edit rights only)
+    if (canEdit) col.querySelectorAll('.kb-card').forEach(el=>wireDrag(el,st.items.find(x=>x.id==el.dataset.id)));
   });
 }
 
 function cardHtml(item){
   const due = item.due_date ? '<span>📅 '+item.due_date.slice(0,10)+'</span>' : '';
   const ass = item.assigned_to ? '<span>👤 '+esc(item.assigned_to)+'</span>' : '';
-  return `<div class="kb-card" draggable="true" data-id="${item.id}" onclick="openEditCard(${item.id})">
+  return `<div class="kb-card" draggable="${canEdit}" data-id="${item.id}" onclick="openEditCard(${item.id})">
     <div class="kb-card-title">${esc(item.title)}</div>
     ${(item.description?`<div style="font-size:11px;color:#888;margin-bottom:4px;white-space:pre-wrap">${esc(item.description.slice(0,80))}${item.description.length>80?'…':''}</div>`:'') }
     <div class="kb-card-meta">${due}${ass}</div>
@@ -254,8 +258,9 @@ function openEditCard(id){
   document.getElementById('card-desc').value=item.description||'';
   document.getElementById('card-assignee').value=item.assigned_to||'';
   document.getElementById('card-due').value=(item.due_date||'').slice(0,10);
-  document.getElementById('card-modal-title').textContent='Edit Card';
-  document.getElementById('card-delete-btn').style.display='';
+  document.getElementById('card-modal-title').textContent=canEdit?'Edit Card':'Card Details';
+  ['card-title','card-desc','card-assignee','card-due'].forEach(id=>document.getElementById(id).disabled=!canEdit);
+  if (canEdit) document.getElementById('card-delete-btn').style.display='';
   document.getElementById('card-modal').classList.add('open');
 }
 function saveCard(){

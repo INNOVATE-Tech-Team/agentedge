@@ -127,7 +127,7 @@ $issueTypes = $db->query("SELECT * FROM support_issue_types ORDER BY sort_ord, n
       <!-- Departments -->
       <div class="vd-card">
         <h3>Departments</h3>
-        <p class="vd-sub">Shown to agents when they open a new ticket. Tickets route to the staff assigned below.</p>
+        <p class="vd-sub">Shown to agents when they open a new ticket. Ticket routing below no longer controls email notifications — those always go to super admins only.</p>
         <?php if ($depts): ?>
         <table>
           <thead><tr><th>Slug</th><th>Name</th><th>Sort</th><th></th></tr></thead>
@@ -204,7 +204,7 @@ $issueTypes = $db->query("SELECT * FROM support_issue_types ORDER BY sort_ord, n
       <!-- Staff routing -->
       <div class="vd-card">
         <h3>Route Staff to Departments</h3>
-        <p class="vd-sub">When a new ticket lands in a department, everyone routed to it gets an email. Departments with no one routed notify all admin/staff.</p>
+        <p class="vd-sub">This assignment is used for display purposes only. New ticket / reply emails always go to all super admins, regardless of routing below.</p>
         <form method="post">
           <input type="hidden" name="action" value="assign_staff">
           <div class="form-row">
@@ -242,7 +242,7 @@ $issueTypes = $db->query("SELECT * FROM support_issue_types ORDER BY sort_ord, n
           <?php endforeach; ?>
           </tbody>
         </table>
-        <?php else: ?><p style="color:#aaa;font-size:13px;margin-top:12px">No staff routed yet — every ticket notifies all admin/staff.</p><?php endif; ?>
+        <?php else: ?><p style="color:#aaa;font-size:13px;margin-top:12px">No staff routed yet. Every ticket notifies all super admins regardless.</p><?php endif; ?>
       </div>
 
       <!-- Predefined replies -->

@@ -199,9 +199,14 @@ function local_db(): PDO {
     )");
 
     // The onboarding/offboarding checklist itself — editable via
-    // admin_step_notify.php. is_auto=1 steps are wired to real provisioning
-    // code in api/onboard_action.php|offboard_action.php (currently 'fub' and
-    // 'constellation1' only) — adding a new step here is always a manual step.
+    // admin_step_notify.php. is_auto=1 steps show a "Provision Now" button
+    // wired to real provisioning code in api/onboard_action.php|offboard_action.php
+    // ('fub' and 'constellation1' have handlers, but are set is_auto=0 by
+    // default on the onboard side — FUB requires being under its seat limit,
+    // and Constellation1's handler is an unfinished stub — so they render as
+    // plain manual checklist items unless re-enabled; on the offboard side
+    // 'agentedge' also has a real handler — deactivate_agentedge_account() in
+    // lib/agentedge_account.php). Adding a new step here is always a manual step.
     $pdo->exec("CREATE TABLE IF NOT EXISTS step_defs (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
         process   TEXT    NOT NULL,   -- 'onboard' | 'offboard'
@@ -217,19 +222,18 @@ function local_db(): PDO {
     // this on an already-seeded install (or one with admin-added rows) is a no-op.
     $seedSteps = [
         ['onboard','agentedge',      'AgentEdge Account',   'Created when added to queue',              0, 10],
-        ['onboard','intranet',       'Company Intranet',    'Add user in everythinginnovate.com',       0, 20],
         ['onboard','doc_signing',    'Document Signing',    'Sent via PandaDoc — auto-completes once signed', 1, 25],
-        ['onboard','fub',            'Follow Up Boss',      'Auto-provision via API',                   1, 30],
-        ['onboard','constellation1', 'Constellation1',      'Auto-provision via API',                   1, 40],
+        ['onboard','fub',            'Follow Up Boss',      'Manual — add via Follow Up Boss admin',    0, 30],
+        ['onboard','constellation1', 'Constellation1',      'Manual — add via Constellation1',          0, 40],
         ['onboard','dotloop',        'DotLoop',              'Add manually in DotLoop admin',           0, 50],
         ['onboard','listingstoleads','ListingsToLeads',      'Add manually',                            0, 60],
         ['onboard','maxa',           'MAXA Presents',        'Add manually',                            0, 70],
-        ['onboard','mls',            'MLS Access',            'Submit MLS new member form',             0, 80],
         ['onboard','email_setup',    'Email & Signature',     'Set up company email + signature',       0, 90],
         ['onboard','training',       'New Agent Training',    'Enroll in onboarding training program',  0, 100],
 
         ['offboard','exit_interview',    'Exit Interview',           'Capture departure reason, last day, and book of business transfer', 0, 10],
         ['offboard','final_commissions', 'Final Commission Review',  'Confirm all pending deals are closed and final check issued',       0, 20],
+        ['offboard','agentedge',         'AgentEdge Account',        'Auto-deactivate — removes login + roster listing',                   1, 25],
         ['offboard','fub',               'Follow Up Boss',           'Auto-deactivate via API',                                            1, 30],
         ['offboard','constellation1',    'Constellation1',           'Auto-deactivate via API',                                            1, 40],
         ['offboard','dotloop',           'DotLoop',                  'Remove seat in DotLoop admin',                                       0, 50],
@@ -238,12 +242,20 @@ function local_db(): PDO {
         ['offboard','maxa',              'MAXA Presents',            'Remove from account',                                                0, 80],
         ['offboard','email_decom',       'Company Email',            'Decommission company email and signature',                           0, 90],
         ['offboard','intranet',          'Company Intranet',         'Remove from everythinginnovate.com',                                 0, 100],
-        ['offboard','agentedge',         'AgentEdge Account',        'Archive agent in AgentEdge (last step)',                             0, 110],
     ];
     $seedStepIns = $pdo->prepare(
         "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord) VALUES (?,?,?,?,?,?)"
     );
     foreach ($seedSteps as $s) { $seedStepIns->execute($s); }
+    // Migration: 'agentedge' offboard step moved from last (sort_ord 110, manual)
+    // to right after Final Commission Review (sort_ord 25, real auto-deactivate
+    // handler) — only touches installs still on the original default, so any
+    // admin customization via admin_step_notify.php is left alone.
+    $pdo->exec(
+        "UPDATE step_defs SET sort_ord=25, is_auto=1,
+            note='Auto-deactivate — removes login + roster listing'
+         WHERE process='offboard' AND step_key='agentedge' AND sort_ord=110 AND is_auto=0"
+    );
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
     // Other apps (intranet, CRM) call /api/permissions.php to read this.
@@ -259,6 +271,7 @@ function local_db(): PDO {
     // Migrations for existing installs
     try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN own_mc_slug TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN extra_roles_json TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
 
     // Per-agent extra fields: birthday, hire date, license renewal.
     // birthday and license_renewal are stored as MM-DD so they recur every year.
@@ -378,6 +391,7 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN facebook            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN linkedin            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN skype               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN instagram           TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN email_signature     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     // Migration: professional background + entity/tax fields (self-reported by the agent)
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_tax_id_enc  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
@@ -390,6 +404,12 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN specialty            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN full_time            INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN show_on_internet     INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
+    // Migration: remaining social platforms, so agent_intake can be the single
+    // source of truth for social links (previously split across agent_extra.social_json).
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN twitter             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN youtube             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN tiktok              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN blog                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
@@ -791,12 +811,21 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_courses_cat ON uni_courses(category_id)");
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_folders (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id  INTEGER NOT NULL,
+        title      TEXT    NOT NULL,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_folders_crs ON uni_folders(course_id)");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lessons (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         course_id    INTEGER NOT NULL,
         title        TEXT    NOT NULL,
         sort_ord     INTEGER NOT NULL DEFAULT 0,
-        type         TEXT    NOT NULL DEFAULT 'video',  -- video | doc | quiz
+        type         TEXT    NOT NULL DEFAULT 'video',  -- video | doc | quiz | placeholder | upload
         file_key     TEXT    NOT NULL DEFAULT '',
         content_html TEXT    NOT NULL DEFAULT '',
         duration_sec INTEGER NOT NULL DEFAULT 0,
@@ -804,6 +833,18 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_crs ON uni_lessons(course_id)");
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN embed_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN folder_id INTEGER"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_folder ON uni_lessons(folder_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lesson_files (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        file_key      TEXT    NOT NULL,
+        original_name TEXT    NOT NULL DEFAULT '',
+        sort_ord      INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lfiles_lesson ON uni_lesson_files(lesson_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_questions (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -814,6 +855,30 @@ function local_db(): PDO {
         sort_ord      INTEGER NOT NULL DEFAULT 0
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_q_lesson ON uni_questions(lesson_id)");
+    try { $pdo->exec("ALTER TABLE uni_questions ADD COLUMN qtype TEXT NOT NULL DEFAULT 'single'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_questions ADD COLUMN correct_indexes TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_quiz_answers (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id        INTEGER NOT NULL,
+        agent_email      TEXT    NOT NULL,
+        question_id      INTEGER NOT NULL,
+        answer_text      TEXT    NOT NULL DEFAULT '',
+        selected_indexes TEXT    NOT NULL DEFAULT '[]',
+        submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_qa_lesson ON uni_quiz_answers(lesson_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_learner_uploads (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        agent_email   TEXT    NOT NULL,
+        file_key      TEXT    NOT NULL,
+        original_name TEXT    NOT NULL DEFAULT '',
+        submitted_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(lesson_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lupload_lesson ON uni_learner_uploads(lesson_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_progress (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,

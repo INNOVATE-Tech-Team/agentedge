@@ -17,8 +17,7 @@ if ($token === '') { header('Location: forgot_password.php'); exit; }
 </head>
 <body class="login-body">
   <div class="login-card">
-    <div class="brand">INNOVATE</div>
-    <div class="brand-sub">AgentEdge</div>
+    <a href="index.php" class="login-logo"><img src="assets/logo.png" alt="INNOVATE Real Estate"></a>
 
     <p class="login-hint">Choose a new password (at least 8 characters).</p>
 
@@ -34,6 +33,9 @@ if ($token === '') { header('Location: forgot_password.php'); exit; }
       <button type="submit" id="rp-btn">Set password &amp; sign in</button>
       <a class="login-forgot" href="login.php">Back to sign in</a>
     </form>
+  </div>
+  <div class="login-footer">
+    &copy; <?= date('Y') ?> Copyright INNOVATE Real Estate &middot; <a href="privacy.php">Privacy Policy</a>
   </div>
 
   <script>

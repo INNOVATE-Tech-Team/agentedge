@@ -89,9 +89,8 @@ $tabs = [
       <path d="M24 14 L34 24 L24 34 L14 24 Z" stroke="#82C112" stroke-width="2.5" fill="none"/>
       <circle cx="24" cy="24" r="4" fill="#82C112"/>
     </svg>
-    <h2>Connect DotLoop</h2>
-    <p>Link your DotLoop account to view transaction loops, track closing dates and commissions, and access documents — all inside AgentEdge.</p>
-    <a href="dotloop_connect.php" style="display:inline-block;padding:12px 28px;background:#82C112;color:white;border-radius:8px;font-weight:700;font-size:14px;text-decoration:none;">Connect DotLoop Account</a>
+    <h2>DotLoop Integration — Coming Soon</h2>
+    <p>We're finalizing DotLoop's authorization for AgentEdge. Once that's approved, you'll be able to link your DotLoop account to view transaction loops, track closing dates and commissions, and access documents — all inside AgentEdge.</p>
   </div>
 
 <?php elseif ($apiError === '401'): ?>
