@@ -54,15 +54,9 @@ function nav_items(): array {
         $core = array_values($coreMap);
     }
 
-    // mc_leader/bic aren't admins, so they never see the admin-only Back Office
-    // section below — surface Agent Communications as its own collapsible group instead.
-    $leaderExtra = [];
-    if ((is_mc_leader() || is_bic()) && !is_admin()) {
-        $leaderExtra[] = ['key' => 'bo_announcements',  'label' => 'Announcements',  'href' => 'backoffice_announcements.php', 'group_label' => 'Agent Communications'];
-        $leaderExtra[] = ['key' => 'bo_company_email',  'label' => 'Company Email',  'href' => 'backoffice_email.php',         'group_label' => 'Agent Communications'];
-    }
-
-    return array_merge($core, $ext, $leaderExtra, [
+    // mc_leader/bic now see the Back Office section directly (department-filtered
+    // in render_sidebar()), so no separate Agent Communications shortcut is needed here.
+    return array_merge($core, $ext, [
         ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
     ]);
 }
@@ -197,8 +191,11 @@ function render_sidebar(string $current, array $agent): void {
         echo '</div>';
     }
 
-    // Back Office section — admin+ only. Collapsible with department sub-groups.
-    if ($admin) {
+    // Back Office section — admins see everything; mc_leader/bic see it too, but with
+    // Operations, Finance, Human Resources, and Technology departments hidden entirely.
+    $showBackOffice = $admin || is_mc_leader() || is_bic();
+    $leaderHiddenDepts = ['Operations', 'Finance', 'Human Resources', 'Technology'];
+    if ($showBackOffice) {
         static $boStylesEmitted = false;
         if (!$boStylesEmitted) {
             $boStylesEmitted = true;
@@ -240,6 +237,7 @@ function render_sidebar(string $current, array $agent): void {
                . htmlspecialchars($it['label']) . $arr . '</a>';
         }
         foreach ($deptOrder as $deptName) {
+            if (!$admin && in_array($deptName, $leaderHiddenDepts, true)) continue;
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'

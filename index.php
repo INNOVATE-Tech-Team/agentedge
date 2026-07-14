@@ -32,11 +32,14 @@ $agent = require_login();
     .ann-card-pin{font-size:10px;font-weight:700;color:#a06000;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
     .ann-card-title{font-size:14px;font-weight:700;color:#111;margin-bottom:4px}
     .ann-card-text{font-size:12px;color:#555;line-height:1.5;margin-bottom:5px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+    .ann-card-text.expanded{-webkit-line-clamp:unset;overflow:visible}
     .ann-card-text h2{font-size:14px;font-weight:800;margin:0 0 3px}
     .ann-card-text h3{font-size:13px;font-weight:700;margin:0 0 2px}
     .ann-card-text p{margin:0 0 3px}
     .ann-card-text ul,.ann-card-text ol{margin:0 0 3px;padding-left:14px}
     .ann-card-text a{color:#5b8e0d}
+    .ann-read-more{display:none;font-size:11px;font-weight:700;color:#5b8e0d;cursor:pointer;margin:0 0 6px}
+    .ann-read-more:hover{text-decoration:underline}
     .ann-card-meta{font-size:10px;color:#bbb}
     .ann-card-side{display:flex;align-items:stretch}
     .ann-card-side-img{object-fit:cover;display:block;flex-shrink:0}
@@ -126,10 +129,12 @@ $agent = require_login();
       const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       const sizeH={compact:'130px',standard:'220px',large:'370px'};
       const sideW={compact:'90px',standard:'130px',large:'170px'};
-      list.innerHTML=items.slice(0,5).map(a=>{
+      list.innerHTML=items.slice(0,5).map((a,i)=>{
         const hasImg=!!a.image_key;
         const dt=new Date(a.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
         const imgUrl=`api/announcements.php?action=image&key=${encodeURIComponent(a.image_key)}`;
+        const textBlock=`<div class="ann-card-text" data-idx="${i}">${a.body}</div>
+              <div class="ann-read-more" data-idx="${i}">Read more</div>`;
         if(hasImg && (a.image_position==='left'||a.image_position==='right')){
           const w=sideW[a.image_size]||'130px';
           const rL=a.image_position==='left'?'10px 0 0 10px':'0 10px 10px 0';
@@ -137,7 +142,7 @@ $agent = require_login();
           const txtEl=`<div class="ann-card-body" style="flex:1;min-width:0">
               ${a.pinned?'<div class="ann-card-pin">Pinned</div>':''}
               <div class="ann-card-title">${esc(a.title)}</div>
-              <div class="ann-card-text">${a.body}</div>
+              ${textBlock}
               <div class="ann-card-meta">${dt}</div>
             </div>`;
           return `<div class="ann-card ann-card-side${a.pinned?' pinned':''}">
@@ -155,7 +160,7 @@ $agent = require_login();
               </div>
             </div>
             <div class="ann-card-body">
-              <div class="ann-card-text">${a.body}</div>
+              ${textBlock}
               <div class="ann-card-meta">${dt}</div>
             </div>
           </div>`;
@@ -164,11 +169,26 @@ $agent = require_login();
           <div class="ann-card-body ann-card-no-img${a.pinned?' pinned':''}">
             ${a.pinned?'<div class="ann-card-pin">Pinned</div>':''}
             <div class="ann-card-title">${esc(a.title)}</div>
-            <div class="ann-card-text">${a.body}</div>
+            ${textBlock}
             <div class="ann-card-meta">${dt}</div>
           </div>
         </div>`;
       }).join('');
+      list.querySelectorAll('.ann-card-text').forEach(el=>{
+        if(el.scrollHeight>el.clientHeight+1){
+          const btn=list.querySelector(`.ann-read-more[data-idx="${el.getAttribute('data-idx')}"]`);
+          if(btn)btn.style.display='block';
+        }
+      });
+      list.addEventListener('click',e=>{
+        const btn=e.target.closest('.ann-read-more');
+        if(!btn)return;
+        const idx=btn.getAttribute('data-idx');
+        const txt=list.querySelector(`.ann-card-text[data-idx="${idx}"]`);
+        if(!txt)return;
+        const expanded=txt.classList.toggle('expanded');
+        btn.textContent=expanded?'Show less':'Read more';
+      });
     }).catch(()=>{});
     <?php if (can_post_announcements()): ?>
     document.getElementById('ann-manage-link').style.display='';

@@ -180,6 +180,21 @@ if ($action === 'change_password') {
     exit;
 }
 
+// ---- Deactivate agent (offboarding) ---------------------------------------
+if ($action === 'deactivate_agent') {
+    $email = trim((string)($in['email'] ?? ''));
+    if ($email === '') { echo json_encode(['ok'=>false,'error'=>'email required']); exit; }
+    $stmt = $db->prepare("UPDATE tblstaff SET active = 0 WHERE email = ?");
+    if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'error'=>'query','detail'=>$db->error]); exit; }
+    $stmt->bind_param('s', $email);
+    $ok = $stmt->execute();
+    $matched = $stmt->affected_rows > 0;
+    $stmt->close();
+    if (!$ok) { echo json_encode(['ok'=>false,'error'=>'Could not update (check DB user has UPDATE grant on tblstaff).']); exit; }
+    echo json_encode(['ok'=>true,'matched'=>$matched]);
+    exit;
+}
+
 // ---- Login (email + password) ---------------------------------------------
 $email    = trim((string)($in['email'] ?? ''));
 $password = (string)($in['password'] ?? '');
