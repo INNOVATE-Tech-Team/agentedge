@@ -53,7 +53,7 @@
   <p>We do not sell your personal information. We do not share it with third parties except as described in Section 4.</p>
 
   <h2 id="sms">4. SMS / Text Message Notifications</h2>
-  <p>AgentEdge offers an opt-in text messaging feature for company announcements. This section describes exactly how that opt-in works and what you'll receive if you turn it on.</p>
+  <p><strong>Program name:</strong> AgentEdge SMS Notifications, operated by INNOVATE Real Estate. This section describes exactly how that opt-in works and what you'll receive if you turn it on.</p>
   <p><strong>How you opt in.</strong> Log in to AgentEdge at <a href="https://agentedge.innovateonline.com/login.php">agentedge.innovateonline.com</a>, go to <strong>My Profile</strong>, and find the <strong>Notification Preferences</strong> card. There you can turn on <strong>"Text (SMS) notifications"</strong> and enter a US mobile number. Below is exactly what that control looks like inside the product:</p>
   <div class="contact-box" style="max-width:420px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -70,6 +70,7 @@
   <p style="margin-top:14px"><strong>Who this applies to.</strong> Only INNOVATE agents and staff with an active AgentEdge login who have affirmatively enabled this toggle. This is not used for cold outreach or marketing to the public.</p>
   <p><strong>What you'll receive.</strong> Short alerts when a new company announcement is posted, e.g.: <em>"INNOVATE: Office closed Friday for training — see AgentEdge for details."</em> Roughly a few messages per month, tied to real announcement volume.</p>
   <p><strong>Opting out.</strong> Reply <strong>STOP</strong> to any message to unsubscribe immediately, or uncheck the toggle in My Profile at any time. Reply <strong>HELP</strong> for assistance.</p>
+  <p><strong>Support.</strong> Reply <strong>HELP</strong> to any message, or contact <a href="mailto:info@innovateonline.com">info@innovateonline.com</a> with any questions about this program.</p>
 
   <h2>5. Third-Party Services</h2>
   <ul>
