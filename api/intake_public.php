@@ -58,7 +58,7 @@ try {
         'personal_email', 'commissions_email',
         'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
         'drivers_license', 'gender',
-        'website', 'additional_websites', 'facebook', 'linkedin', 'skype',
+        'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'instagram',
         'corporation_start', 'corporation_end', 'career_start',
         'prior_occupation', 'prior_affiliation', 'specialty',
         'full_time', 'show_on_internet',

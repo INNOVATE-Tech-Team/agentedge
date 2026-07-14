@@ -45,6 +45,7 @@ $profileData = $targetEmail !== '' ? load_agent_profile($targetEmail) : null;
 $extraLicenses = $targetEmail !== '' ? load_agent_additional_licenses($targetEmail) : [];
 $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) : 0;
 $headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
+$headshots     = $targetEmail !== '' ? load_agent_headshots($targetEmail) : [];
 $queueStatus   = $targetEmail !== '' ? load_agent_queue_status($targetEmail) : ['onboarding' => null, 'offboarding' => null];
 
 $notes = [];
@@ -309,6 +310,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Additional Websites</span><?= dv($a['additional_websites'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Facebook</span><?= dv($a['facebook'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">LinkedIn</span><?= dv($a['linkedin'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Instagram</span><?= dv($a['instagram'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Skype</span><?= dv($a['skype'] ?? '') ?></div>
 
           <div class="dg-section">Bio &amp; Marketing</div>
@@ -324,7 +326,13 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <?php if ($headshotCount > 0): ?>
           <div class="dg-section">Headshots</div>
           <div class="dg-field" style="grid-column:1/-1">
-            <span class="dg-value"><?= $headshotCount ?> headshot<?= $headshotCount !== 1 ? 's' : '' ?> on file — <a href="intake.php" target="_blank" style="color:var(--green-d)">view in intake form</a></span>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <?php foreach ($headshots as $hsFile): ?>
+                <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                  <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:90px;height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+                </a>
+              <?php endforeach; ?>
+            </div>
           </div>
           <?php endif; ?>
 

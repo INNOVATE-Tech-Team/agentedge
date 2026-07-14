@@ -70,6 +70,46 @@ function add_or_reactivate_roster_agent(
     return ['id' => $id, 'reactivated' => false];
 }
 
+// Soft-remove a roster row on offboarding — the reverse of
+// add_or_reactivate_roster_agent(). Matches the same way: canonical_agent_id
+// first, falling back to name + market_center for legacy rows.
+// Returns ['id' => int, 'found' => bool].
+function remove_roster_agent(
+    PDO $pdo,
+    string $name,
+    string $marketCenter,
+    ?string $canonicalAgentId,
+    string $removedBy
+): array {
+    $name = trim($name);
+    $mc   = trim($marketCenter);
+
+    $existing = null;
+    if ($canonicalAgentId) {
+        $st = $pdo->prepare("SELECT * FROM innovate_roster WHERE canonical_agent_id = ? LIMIT 1");
+        $st->execute([$canonicalAgentId]);
+        $existing = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+    if (!$existing) {
+        $st = $pdo->prepare(
+            "SELECT * FROM innovate_roster WHERE LOWER(agent_name) = LOWER(?) AND LOWER(market_center) = LOWER(?) LIMIT 1"
+        );
+        $st->execute([$name, $mc]);
+        $existing = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+    if (!$existing) return ['id' => 0, 'found' => false];
+
+    $id = (int)$existing['id'];
+    $pdo->prepare(
+        "UPDATE innovate_roster SET active = 0, removed_at = datetime('now'), removed_by = ? WHERE id = ?"
+    )->execute([$removedBy, $id]);
+
+    $pdo->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
+        ->execute([$existing['agent_name'], $existing['state_code'], $existing['market_center'], $existing['license_exp'], 'removed', $removedBy]);
+
+    return ['id' => $id, 'found' => true];
+}
+
 // Propagate identity fields (name/email/phone) from one edited innovate_roster row
 // to every other active row for the same agent in other states. state_code,
 // market_center, and license_exp are intentionally left alone — they're

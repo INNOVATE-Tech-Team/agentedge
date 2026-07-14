@@ -11,6 +11,7 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/crypto.php';
+require_once __DIR__ . '/../lib/notifications.php';
 
 function intake_json_out(array $d, int $code = 200): void {
     http_response_code($code);
@@ -190,7 +191,8 @@ $fields = [
     'personal_email', 'commissions_email',
     'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
     'drivers_license', 'gender',
-    'website', 'additional_websites', 'facebook', 'linkedin', 'skype',
+    'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'instagram',
+    'twitter', 'youtube', 'tiktok', 'blog',
     'corporation_start', 'corporation_end', 'career_start',
     'prior_occupation', 'prior_affiliation', 'specialty',
     'full_time', 'show_on_internet',
@@ -224,9 +226,9 @@ $required = [
 $complete = true;
 foreach ($required as $r) if ($fv($r) === '') { $complete = false; break; }
 
-$prev = $pdo->prepare("SELECT submitted FROM agent_intake WHERE email=?");
+$prev = $pdo->prepare("SELECT * FROM agent_intake WHERE email=?");
 $prev->execute([$email]);
-$pr          = $prev->fetch(PDO::FETCH_ASSOC);
+$pr          = $prev->fetch(PDO::FETCH_ASSOC) ?: [];
 $wasSubmitted = !empty($pr['submitted']);
 $isSubmitted  = $complete || $wasSubmitted;
 
@@ -240,6 +242,8 @@ $upds = implode(',', array_map(function (string $f) use ($preserveIfBlank): stri
     return "$f=excluded.$f";
 }, $fields));
 
+$newValues = array_map($resolveField, $fields);
+
 $pdo->prepare(
     "INSERT INTO agent_intake (email,$cols,submitted,submitted_at,updated_at)
      VALUES (?,$phs,?,?,?)
@@ -251,7 +255,7 @@ $pdo->prepare(
          updated_at   = excluded.updated_at"
 )->execute(array_merge(
     [$email],
-    array_map($resolveField, $fields),
+    $newValues,
     [$isSubmitted ? 1 : 0, ($isSubmitted && !$wasSubmitted) ? $now : null, $now]
 ));
 
@@ -267,6 +271,34 @@ foreach ($additionalLicenses as $lic) {
     $exp   = trim($lic['license_exp'] ?? '');
     if ($num === '' && $state === '' && $exp === '') continue;
     $insLicense->execute([$email, $num, $state, $exp]);
+}
+
+// Heads-up email to Whitney when the AGENT submits their own Intake Form —
+// never for a staff/admin edit made on someone else's behalf (back-office
+// Edit Profile modal, where $email !== $myEmail).
+if ($email === $myEmail) {
+    $boolFields  = ['full_time', 'show_on_internet'];
+    $boolLabel   = fn(string $v): string => ($v === '' ? '1' : $v) === '1' ? 'Yes' : 'No';
+    $changes     = [];
+
+    foreach ($fields as $i => $f) {
+        if (in_array($f, $preserveIfBlank, true)) {
+            $rawKey = $f === 'personal_tax_id_enc' ? 'personal_tax_id' : 'corporate_tax_id';
+            if ($fv($rawKey) !== '') {
+                $label = $f === 'personal_tax_id_enc' ? 'Personal Tax ID' : 'Corporate Tax ID (EIN)';
+                $changes[$label] = ['(on file)', '(updated)'];
+            }
+            continue;
+        }
+        $newVal = $newValues[$i];
+        $oldVal = (string)($pr[$f] ?? '');
+        if (in_array($f, $boolFields, true)) { $newVal = $boolLabel($newVal); $oldVal = $boolLabel($oldVal); }
+        if ($newVal !== $oldVal) {
+            $changes[ucwords(str_replace('_', ' ', $f))] = [$oldVal, $newVal];
+        }
+    }
+
+    notify_profile_changed($fv('full_name') ?: $myEmail, $myEmail, $changes);
 }
 
 intake_json_out(['ok' => true, 'submitted' => $isSubmitted]);

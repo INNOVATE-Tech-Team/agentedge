@@ -24,8 +24,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal FROM agent_extra WHERE email = ?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $birthday = $row['birthday'] ?? '';
+    // agent_extra.birthday (MM-DD) is an explicit override; fall back to
+    // deriving MM-DD from agent_intake's full DOB when nobody's set one here,
+    // so a birthday already captured on the Intake Form doesn't look blank.
+    if ($birthday === '') {
+        $intakeBday = local_db()->prepare("SELECT birthday FROM agent_intake WHERE email = ?");
+        $intakeBday->execute([$email]);
+        $full = $intakeBday->fetchColumn();
+        if ($full && preg_match('/^\d{4}-(\d{2}-\d{2})$/', $full, $m)) $birthday = $m[1];
+    }
+
     echo json_encode([
-        'birthday'        => $row['birthday']        ?? '',
+        'birthday'        => $birthday,
         'hire_date'       => $row['hire_date']        ?? '',
         'license_renewal' => $row['license_renewal']  ?? '',
     ]);

@@ -20,13 +20,29 @@ if (!is_leader()) {
 $month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
 [$year, $mon] = array_map('intval', explode('-', $month));
 
-$rows = local_db()
-    ->query("SELECT email, birthday, hire_date FROM agent_extra WHERE birthday != '' OR hire_date != ''")
-    ->fetchAll(PDO::FETCH_ASSOC);
+$extraRows = local_db()->query("SELECT email, birthday, hire_date FROM agent_extra")->fetchAll(PDO::FETCH_ASSOC);
+$rowsByEmail = [];
+foreach ($extraRows as $r) {
+    $rowsByEmail[strtolower(trim($r['email']))] = ['birthday' => $r['birthday'] ?: '', 'hire_date' => $r['hire_date'] ?: ''];
+}
+
+// agent_extra's birthday (MM-DD) is an explicit override; most agents only ever
+// gave their full DOB via the Intake Form (agent_intake.birthday), so fall back
+// to deriving MM-DD from that when agent_extra has nothing on file — otherwise
+// this calendar silently skips anyone who never separately re-entered it here.
+$intakeRows = local_db()->query("SELECT email, birthday FROM agent_intake WHERE birthday != ''")->fetchAll(PDO::FETCH_ASSOC);
+foreach ($intakeRows as $r) {
+    $email = strtolower(trim($r['email']));
+    if (!isset($rowsByEmail[$email])) $rowsByEmail[$email] = ['birthday' => '', 'hire_date' => ''];
+    if ($rowsByEmail[$email]['birthday'] === '' && preg_match('/^\d{4}-(\d{2}-\d{2})$/', $r['birthday'], $m)) {
+        $rowsByEmail[$email]['birthday'] = $m[1];
+    }
+}
 
 $events = [];
 
-foreach ($rows as $r) {
+foreach ($rowsByEmail as $email => $r) {
+    $r['email'] = $email;
     // Birthday — stored as MM-DD, recurs annually
     if (!empty($r['birthday']) && preg_match('/^(\d{2})-(\d{2})$/', $r['birthday'], $m)) {
         if ((int)$m[1] === $mon) {

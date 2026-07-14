@@ -26,7 +26,8 @@ $intakeAgents = local_db()->query(
             i.personal_email, i.commissions_email,
             i.address_line1, i.address_line2, i.city, i.state, i.zip, i.country,
             i.drivers_license, i.gender,
-            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype,
+            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype, i.instagram,
+            i.twitter, i.youtube, i.tiktok, i.blog,
             i.specialty, i.career_start, i.prior_occupation, i.prior_affiliation,
             i.full_time, i.show_on_internet,
             i.corporation_start, i.corporation_end,
@@ -123,6 +124,14 @@ foreach (local_db()->query(
      WHERE id IN (SELECT MAX(id) FROM agent_intake_files GROUP BY agent_email)"
 )->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $hsLatest[strtolower($r['agent_email'])] = $r['file_key'];
+}
+
+// Full headshot list per agent, used to render inline thumbnails in the detail card.
+$hsAll = [];
+foreach (local_db()->query(
+    "SELECT agent_email, file_key, orig_name FROM agent_intake_files ORDER BY uploaded_at"
+)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+    $hsAll[strtolower($r['agent_email'])][] = $r;
 }
 
 function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): string {
@@ -395,7 +404,12 @@ $missingCount = count($missingAgents);
                 <div class="dg-field"><span class="dg-label">Additional Websites</span><?= dv($a['additional_websites'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Facebook</span><?= dv($a['facebook'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">LinkedIn</span><?= dv($a['linkedin'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Instagram</span><?= dv($a['instagram'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Skype</span><?= dv($a['skype'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Twitter / X</span><?= dv($a['twitter'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">YouTube</span><?= dv($a['youtube'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">TikTok</span><?= dv($a['tiktok'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Blog</span><?= dv($a['blog'] ?? '') ?></div>
 
                 <div class="dg-section">Bio &amp; Marketing</div>
                 <div class="dg-field"><span class="dg-label">Referring Agent</span><?= dv($a['referring_agent']) ?></div>
@@ -411,7 +425,13 @@ $missingCount = count($missingAgents);
                 <div class="dg-field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:10px">
                   <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
                   <?php if ($hs > 0): ?>
-                    <span class="dg-value"><?= $hs ?> headshot<?= $hs !== 1 ? 's' : '' ?> on file — <a href="intake.php" target="_blank" style="color:var(--green-d)">view in intake form</a></span>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <?php foreach (($hsAll[$emailLower] ?? []) as $hsFile): ?>
+                        <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                          <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+                        </a>
+                      <?php endforeach; ?>
+                    </div>
                   <?php else: ?>
                     <span class="dg-value empty">No headshot uploaded yet</span>
                   <?php endif; ?>
@@ -709,7 +729,12 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Additional Websites</label><input id="em-additional_websites"></div>
         <div class="em-field"><label>Facebook</label><input id="em-facebook"></div>
         <div class="em-field"><label>LinkedIn</label><input id="em-linkedin"></div>
+        <div class="em-field"><label>Instagram</label><input id="em-instagram"></div>
         <div class="em-field"><label>Skype</label><input id="em-skype"></div>
+        <div class="em-field"><label>Twitter / X</label><input id="em-twitter"></div>
+        <div class="em-field"><label>YouTube</label><input id="em-youtube"></div>
+        <div class="em-field"><label>TikTok</label><input id="em-tiktok"></div>
+        <div class="em-field"><label>Blog</label><input id="em-blog"></div>
 
         <div class="em-section">Bio &amp; Marketing</div>
         <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
@@ -861,7 +886,8 @@ $missingCount = count($missingAgents);
     'birthday','spouse_name','gender','drivers_license','tshirt_size',
     'is_military','first_responder','is_teacher','languages',
     'emergency_name','emergency_phone',
-    'website','additional_websites','facebook','linkedin','skype',
+    'website','additional_websites','facebook','linkedin','skype','instagram',
+    'twitter','youtube','tiktok','blog',
     'referring_agent','bio'];
   var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
   var emCurrentEmail = null;
