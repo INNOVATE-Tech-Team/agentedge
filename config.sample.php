@@ -116,13 +116,19 @@ return [
     'anthropic_api_key' => '',
 
     // Onboarding / offboarding notifications — comma-separated list of email addresses
-    // that receive a copy of every new onboarding or offboarding email. The admin who
-    // creates the record always receives a copy; add your broker, marketing lead, etc.
+    // that receive a copy of every new onboarding or offboarding email (fires whenever
+    // an agent is moved into the onboarding queue, via notify_onboard_added() in
+    // lib/notifications.php). The admin who creates the record always receives a copy;
+    // add your broker, marketing lead, etc.
     // Example: 'broker@innovateonline.com,marketing@innovateonline.com'
     'onboard_notify_emails' => '',
 
     // Follow Up Boss — auto-provisions new agents. Get key at: FUB → Admin → API
     'fub_api_key' => '',
+    // FUB also requires system identification headers on every request —
+    // register at https://apps.followupboss.com/system-registration to get these.
+    'fub_system_name' => '',
+    'fub_system_key'  => '',
 
     // Constellation1 — agent website platform user provisioning (SOAP API).
     // Get from Constellation1 support.

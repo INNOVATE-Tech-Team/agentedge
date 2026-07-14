@@ -447,22 +447,41 @@ function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queue
     $pdo->prepare("UPDATE {$stepTable} SET notified_at=datetime('now') WHERE id=?")->execute([$step['id']]);
 }
 
+// ── Self-service profile change notifications ────────────────────────────────
+
+// Queues a heads-up email whenever an agent edits their OWN profile (My
+// Profile or the Intake Form) — not staff/back-office edits made on an
+// agent's behalf. $changes is [field label => [old, new]]; a no-op save
+// (nothing actually different) is silently skipped so this doesn't spam
+// Whitney every time someone opens and re-saves the form unchanged.
+function notify_profile_changed(string $agentName, string $agentEmail, array $changes): void {
+    if (!$changes) return;
+
+    $subject = ($agentName ?: $agentEmail) . " updated their AgentEdge profile";
+    $lines   = [];
+    foreach ($changes as $label => [$old, $new]) {
+        $lines[] = "- {$label}: " . ($old !== '' ? $old : '(blank)') . " -> " . ($new !== '' ? $new : '(blank)');
+    }
+    $body = implode("\n", array_merge(
+        ["{$agentName} ({$agentEmail}) updated their profile in AgentEdge.", "", "Changed:"],
+        $lines,
+        [
+            "",
+            "View their profile:",
+            "https://agents.innovateonline.com/agent_profile.php?email=" . urlencode($agentEmail),
+            "",
+            "— AgentEdge",
+        ]
+    ));
+    queue_email_to(['whitney@innovateonline.com'], $subject, $body);
+}
+
 // ── Support ticket notifications ─────────────────────────────────────────────
 
-// Email addresses of staff routed to a department. Falls back to every
-// super_admin/staff in agent_roles when the department has no one assigned,
-// so a new ticket is never silently unnoticed.
-function support_dept_staff_emails(string $deptSlug): array {
-    $db = local_db();
-    $emails = [];
-    if ($deptSlug !== '') {
-        $s = $db->prepare("SELECT email FROM support_department_staff WHERE dept_slug=?");
-        $s->execute([$deptSlug]);
-        $emails = $s->fetchAll(PDO::FETCH_COLUMN);
-    }
-    if (!$emails) {
-        $emails = $db->query("SELECT email FROM agent_roles WHERE role IN ('super_admin','staff')")->fetchAll(PDO::FETCH_COLUMN);
-    }
+// Email addresses of every super_admin. Ticket/suggestion notifications go
+// only to super admins, regardless of department staff routing.
+function super_admin_emails(): array {
+    $emails = local_db()->query("SELECT email FROM agent_roles WHERE role = 'super_admin'")->fetchAll(PDO::FETCH_COLUMN);
     return array_values(array_unique(array_filter(array_map('strtolower', array_map('trim', $emails)))));
 }
 
@@ -487,10 +506,9 @@ function queue_email_to(array $emails, string $subject, string $body): int {
     return $sent;
 }
 
-// A new ticket was created — notify the department's routed staff (or all
-// admin/staff if the department has no one assigned).
+// A new ticket was created — notify all super admins.
 function notify_ticket_created(int $ticketId, string $title, string $body, string $deptSlug, string $deptName, string $agentName, string $agentEmail): int {
-    $emails  = support_dept_staff_emails($deptSlug);
+    $emails  = super_admin_emails();
     $subject = "New Support Ticket #{$ticketId}: {$title}";
     $msg     = implode("\n", [
         "A new support ticket was submitted in AgentEdge.",
@@ -509,10 +527,10 @@ function notify_ticket_created(int $ticketId, string $title, string $body, strin
 }
 
 // A reply was posted — notify the other side of the conversation (the agent
-// when staff replies, or the department's staff when the agent replies) plus
+// when staff replies, or all super admins when the agent replies) plus
 // anyone CC'd on the ticket.
 function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bool $isStaffReply, string $deptSlug, string $agentEmail): int {
-    $recipients = $isStaffReply ? [$agentEmail] : support_dept_staff_emails($deptSlug);
+    $recipients = $isStaffReply ? [$agentEmail] : super_admin_emails();
     $recipients = array_merge($recipients, support_ticket_cc_emails($ticketId));
 
     $subject = "Re: Support Ticket #{$ticketId}: {$title}";
@@ -542,6 +560,27 @@ function notify_ticket_cc_added(int $ticketId, string $title, string $ccEmail): 
         "— AgentEdge",
     ]);
     queue_email_to([$ccEmail], $subject, $msg);
+}
+
+// ── Suggestion notifications ─────────────────────────────────────────────────
+
+// A new suggestion was submitted — notify all super admins.
+function notify_suggestion_created(int $suggestionId, string $title, string $body, string $category, string $submitterName, string $submitterEmail): int {
+    $subject = "New Suggestion: {$title}";
+    $msg     = implode("\n", [
+        "A new suggestion was submitted in AgentEdge.",
+        "",
+        "Category:  " . ($category ?: '—'),
+        "From:      {$submitterName} <{$submitterEmail}>",
+        "",
+        $body,
+        "",
+        "View it:",
+        "https://agentedge.innovateonline.com/suggestions.php",
+        "",
+        "— AgentEdge",
+    ]);
+    return queue_email_to(super_admin_emails(), $subject, $msg);
 }
 
 // ── SendGrid email ────────────────────────────────────────────────────────────

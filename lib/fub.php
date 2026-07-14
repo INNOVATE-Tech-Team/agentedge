@@ -1,7 +1,16 @@
 <?php
 // Follow Up Boss API — agent (team member) provisioning.
 // API key configured in config.php as 'fub_api_key'.
+// FUB requires every request to also identify the calling system via the
+// 'fub_system_name' / 'fub_system_key' config values (register at
+// https://apps.followupboss.com/system-registration).
 // Docs: https://docs.followupboss.com/reference/users-create
+
+function fub_system_headers(array $c): string {
+    $sys    = $c['fub_system_name'] ?? '';
+    $sysKey = $c['fub_system_key']  ?? '';
+    return ($sys !== '' && $sysKey !== '') ? "X-System: {$sys}\r\nX-System-Key: {$sysKey}\r\n" : '';
+}
 
 function fub_create_user(string $name, string $email): array {
     $c      = cfg();
@@ -13,7 +22,7 @@ function fub_create_user(string $name, string $email): array {
     $ctx = stream_context_create(['http'=>[
         'method'        => 'POST',
         'timeout'       => 15,
-        'header'        => "Authorization: Basic {$auth}\r\nContent-Type: application/json\r\nAccept: application/json\r\n",
+        'header'        => "Authorization: Basic {$auth}\r\nContent-Type: application/json\r\nAccept: application/json\r\n" . fub_system_headers($c),
         'content'       => $payload,
         'ignore_errors' => true,
     ]]);
@@ -39,7 +48,7 @@ function fub_deactivate_user(string $email): array {
     if ($apiKey === '') return ['ok'=>false,'error'=>'FUB API key not configured'];
 
     $auth    = base64_encode($apiKey . ':');
-    $headers = "Authorization: Basic {$auth}\r\nAccept: application/json\r\n";
+    $headers = "Authorization: Basic {$auth}\r\nAccept: application/json\r\n" . fub_system_headers($c);
 
     // Step 1: find user by email
     $ctx = stream_context_create(['http'=>[
