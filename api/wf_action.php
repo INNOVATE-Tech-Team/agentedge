@@ -6,11 +6,17 @@ require_once __DIR__ . '/../roles.php';
 header('Content-Type: application/json');
 
 $me = current_agent();
-if (!$me || !is_admin()) { http_response_code(403); echo json_encode(['error'=>'admin only']); exit; }
+if (!$me || !is_leader()) { http_response_code(403); echo json_encode(['error'=>'forbidden']); exit; }
 
 $db     = local_db();
 $in     = json_decode(file_get_contents('php://input'), true) ?: [];
 $action = $in['action'] ?? '';
+
+// mc_leader/bic can view boards but not create/edit/delete/move.
+$readOnlyActions = ['list_boards', 'get_board'];
+if (!in_array($action, $readOnlyActions, true) && !is_admin()) {
+    http_response_code(403); echo json_encode(['error'=>'admin only']); exit;
+}
 
 // ── Boards ────────────────────────────────────────────────────────────────────
 if ($action === 'list_boards') {

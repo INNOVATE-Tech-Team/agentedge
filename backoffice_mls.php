@@ -4,7 +4,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/roles.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
 $superAdmin = is_super_admin();
 ?>
 <!doctype html>
