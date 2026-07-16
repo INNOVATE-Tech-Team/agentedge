@@ -5,6 +5,9 @@ define('AGENTEDGE_AUTH_LOADED', true);
 // email + password (bcrypt), so there's no new account to manage.
 
 if (session_status() === PHP_SESSION_NONE) {
+    $twelve_hours = 12 * 60 * 60;
+    ini_set('session.gc_maxlifetime', $twelve_hours);
+    session_set_cookie_params($twelve_hours);
     session_start();
 }
 
