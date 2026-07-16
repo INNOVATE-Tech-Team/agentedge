@@ -131,7 +131,7 @@ function renderGrid(evs) {
       <div class="cal-cell-num">${d}</div>
       ${dayEvs.slice(0, 2).map(ev =>
         `<div class="cal-chip" style="background:${sc(ev).bg};color:${sc(ev).text}"
-          title="${calEsc(ev.title)}">${calEsc(ev.title)}</div>`
+          title="${calEsc(ev.title)}${calFmtTime(ev) ? ' · ' + calFmtTime(ev) : ''}">${calEsc(ev.title)}</div>`
       ).join('')}
       ${dayEvs.length > 2
         ? `<div class="cal-chip-more">+${dayEvs.length - 2} more</div>` : ''}
@@ -171,7 +171,7 @@ function renderList(evs) {
       <div class="cal-list-ev-inner">
         <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
         <div class="cal-list-ev-body">
-          <div class="cal-list-date">${calFmtDate(ev.date)}</div>
+          <div class="cal-list-date">${calFmtDate(ev.date)}${calFmtTime(ev) ? ` · ${calFmtTime(ev)}` : ''}</div>
           <div class="cal-list-ev-title">${calEsc(ev.title)}</div>
           ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calEsc(ev.location)}</div>` : ''}
           ${ev.description ? `<div class="cal-list-desc">${calEsc(ev.description)}</div>` : ''}
@@ -216,6 +216,16 @@ function calFmtDate(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined,
     { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function calFmtTime(ev) {
+  if (ev.is_all_day || !ev.start_dt || !ev.start_dt.includes('T')) return '';
+  const start = new Date(ev.start_dt).toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+  if (!ev.end_dt || !ev.end_dt.includes('T')) return start;
+  const end = new Date(ev.end_dt).toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+  return `${start} – ${end}`;
 }
 
 async function calDraw() {
