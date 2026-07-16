@@ -337,6 +337,12 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 <div class="save-toast" id="save-toast">Saved ✓</div>
 
+<!-- Background upload progress bar -->
+<div id="bg-upload" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;z-index:9999;min-width:320px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+  <div id="bg-upload-text">Uploading…</div>
+  <progress id="bg-upload-bar" max="100" value="0" style="width:100%;margin-top:8px;height:5px;accent-color:#82C112"></progress>
+</div>
+
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script>
 const COURSE_ID = <?= $courseId ?: 'null' ?>;
@@ -471,21 +477,46 @@ function saveLesson() {
   btn.disabled = true; btn.textContent = 'Saving…';
 
   const afterSave = (lessonId) => {
+    btn.disabled = false; btn.textContent = 'Save Lesson';
+    closeModal('lesson-modal');
+
     if (pendingLessonFile) {
+      const file = pendingLessonFile;
+      pendingLessonFile = null;
+
+      const indicator = document.getElementById('bg-upload');
+      const text      = document.getElementById('bg-upload-text');
+      const bar       = document.getElementById('bg-upload-bar');
+      const fmtMB     = (b) => (b / 1048576).toFixed(1) + ' MB';
+      indicator.style.display = 'block';
+      text.textContent = `Uploading ${file.name}…`;
+      bar.value = 0;
+
       const fd = new FormData();
-      fd.append('action','upload_lesson_file');
+      fd.append('action', 'upload_lesson_file');
       fd.append('lesson_id', lessonId);
-      fd.append('file', pendingLessonFile);
-      document.getElementById('l-upload-status').textContent = 'Uploading file…';
-      fetch('api/uni_action.php',{method:'POST',credentials:'same-origin',body:fd})
-        .then(r=>r.json()).then(d=>{
-          btn.disabled=false; btn.textContent='Save Lesson';
-          if(d.ok){closeModal('lesson-modal');location.reload();}
-          else document.getElementById('l-upload-status').textContent='Error: '+(d.error||'upload failed');
-        });
+      fd.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'api/uni_action.php', true);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          bar.value = Math.round(e.loaded / e.total * 100);
+          text.textContent = `Uploading ${file.name} — ${fmtMB(e.loaded)} / ${fmtMB(e.total)}`;
+        }
+      };
+      xhr.onload = () => {
+        indicator.style.display = 'none';
+        try {
+          const d = JSON.parse(xhr.responseText);
+          if (d.ok) { toast('File uploaded ✓'); location.reload(); }
+          else toast('Upload failed: ' + (d.error || 'unknown'));
+        } catch(e) { toast('Upload error'); }
+      };
+      xhr.onerror = () => { indicator.style.display = 'none'; toast('Upload failed — network error'); };
+      xhr.send(fd);
     } else {
-      btn.disabled=false; btn.textContent='Save Lesson';
-      closeModal('lesson-modal');
       location.reload();
     }
   };
