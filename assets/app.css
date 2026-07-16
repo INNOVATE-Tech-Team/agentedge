@@ -154,7 +154,8 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-today{background:#edf7dc;outline:2px solid var(--green)}
 .cal-cell-num{font-size:12px;font-weight:700;color:var(--faint);margin-bottom:5px}
 .cal-today .cal-cell-num{color:var(--green-d);font-size:13px}
-.cal-chip{border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;cursor:default;display:block}
+.cal-chip{border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;cursor:pointer;display:block}
+.cal-chip:hover{filter:brightness(0.92)}
 .cal-chip-more{font-size:10px;color:var(--faint);font-weight:700;padding:1px 4px}
 @media(max-width:640px){.cal-cell{min-height:64px}.cal-chip{display:none}.cal-chip-more{display:none}}
 .cal-list-header{margin-bottom:14px}
@@ -169,6 +170,8 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-list-meta{font-size:12px;color:var(--faint);margin-top:4px}
 .cal-list-desc{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.45}
 .cal-scope-badge{font-size:10px;font-weight:800;border-radius:12px;padding:3px 9px;white-space:nowrap;letter-spacing:.3px;flex:none}
+.cal-list-ev-flash{animation:calListFlash 1.4s ease}
+@keyframes calListFlash{0%{background:#fff6d6}100%{background:transparent}}
 
 /* Calendar — extra scopes */
 .cal-tab[data-filter="dotloop"] { /* Transactions tab always visible */ }

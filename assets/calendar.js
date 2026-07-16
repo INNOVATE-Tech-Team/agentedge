@@ -85,7 +85,9 @@ async function loadEvents(key) {
     }
   }
 
-  evCache[key] = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
+  const merged = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
+  merged.forEach((ev, i) => { ev._uid = i; });
+  evCache[key] = merged;
   return evCache[key];
 }
 
@@ -127,7 +129,7 @@ function renderGrid(evs) {
     html += `<div class="cal-cell${isToday ? ' cal-today' : ''}">
       <div class="cal-cell-num">${d}</div>
       ${dayEvs.slice(0, 2).map(ev =>
-        `<div class="cal-chip" style="background:${sc(ev).bg};color:${sc(ev).text}"
+        `<div class="cal-chip" data-uid="${ev._uid}" style="background:${sc(ev).bg};color:${sc(ev).text}"
           title="${calEsc(ev.title)}">${calEsc(ev.title)}</div>`
       ).join('')}
       ${dayEvs.length > 2
@@ -164,7 +166,7 @@ function renderList(evs) {
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
   body.innerHTML = vis.map(ev => `
-    <div class="cal-list-ev">
+    <div class="cal-list-ev" data-uid="${ev._uid}">
       <div class="cal-list-ev-inner">
         <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
         <div class="cal-list-ev-body">
@@ -281,6 +283,17 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     if (calFilter === 'mycal') loadCalFeedUrl();
     loadEvents(calKey()).then(evs => { renderGrid(evs); renderList(evs); });
   });
+});
+
+document.getElementById('cal-grid').addEventListener('click', e => {
+  const chip = e.target.closest('.cal-chip');
+  if (!chip) return;
+  const item = document.querySelector(`.cal-list-ev[data-uid="${chip.dataset.uid}"]`);
+  if (!item) return;
+  item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  item.classList.remove('cal-list-ev-flash');
+  void item.offsetWidth; // restart animation if clicked again
+  item.classList.add('cal-list-ev-flash');
 });
 
 document.getElementById('cal-prev').addEventListener('click', () => {
