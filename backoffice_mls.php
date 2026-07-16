@@ -4,7 +4,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/roles.php';
 $agent = require_login();
-if (!is_admin()) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
 $superAdmin = is_super_admin();
 ?>
 <!doctype html>
@@ -12,7 +12,7 @@ $superAdmin = is_super_admin();
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>MLS Integrations — AgentEdge</title>
+  <title>MLS — AgentEdge</title>
   <link rel="stylesheet" href="assets/app.css">
   <style>
     .btn-primary{padding:8px 16px;background:#82C112;color:#000;border:none;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer}
@@ -90,6 +90,21 @@ $superAdmin = is_super_admin();
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
     .fee-val{font-size:12px;font-weight:700;color:#555}
+
+    /* Tabs */
+    .mls-tabs{display:flex;gap:4px;border-bottom:2px solid #f0f0f0;margin-bottom:20px}
+    .mls-tab{padding:10px 4px;margin-bottom:-2px;background:none;border:none;border-bottom:2px solid transparent;font-size:13px;font-weight:700;color:#888;cursor:pointer}
+    .mls-tab+.mls-tab{margin-left:16px}
+    .mls-tab:hover{color:#333}
+    .mls-tab.active{color:#5b8e0d;border-bottom-color:#82C112}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+
+    /* Offices table extras */
+    .badge-exp-ok{background:#d1fae5;color:#065f46}
+    .badge-exp-soon{background:#fff7ed;color:#9a3412}
+    .badge-exp-over{background:#fee2e2;color:#991b1b}
+    .badge-exp-none{background:#f3f4f6;color:#9ca3af}
   </style>
 </head>
 <body>
@@ -97,10 +112,20 @@ $superAdmin = is_super_admin();
   <?php render_sidebar('bo_mls', $agent); ?>
   <div class="content">
     <header class="content-top">
-      <div class="content-title">MLS Integrations</div>
+      <div class="content-title">MLS</div>
     </header>
     <main class="wrap">
       <div class="card" style="padding:20px 24px">
+
+        <div class="mls-tabs">
+          <button class="mls-tab active" id="tab-btn-vendors" onclick="switchTab('vendors')">Vendor Integrations</button>
+          <button class="mls-tab" id="tab-btn-offices" onclick="switchTab('offices')">State Offices &amp; Licenses</button>
+          <button class="mls-tab" id="tab-btn-board" onclick="switchTab('board')">Board Memberships</button>
+          <button class="mls-tab" id="tab-btn-mls" onclick="switchTab('mls')">MLS Memberships</button>
+        </div>
+
+        <!-- ═══ Vendor Integrations tab ═══ -->
+        <div class="tab-panel active" id="tab-vendors">
 
         <!-- Summary tiles -->
         <div class="mls-tiles" id="mls-tiles">
@@ -134,6 +159,117 @@ $superAdmin = is_super_admin();
             <tbody id="mls-tbody"><tr><td colspan="9" class="empty-note">Loading…</td></tr></tbody>
           </table>
         </div>
+        </div>
+
+        <!-- ═══ State Offices & Licenses tab ═══ -->
+        <div class="tab-panel" id="tab-offices">
+
+        <!-- Summary tiles -->
+        <div class="mls-tiles" id="office-tiles">
+          <div class="mls-tile"><div class="mls-tile-val" id="o-total">—</div><div class="mls-tile-lbl">Total Offices</div></div>
+          <div class="mls-tile blue"><div class="mls-tile-val" id="o-states">—</div><div class="mls-tile-lbl">States Covered</div></div>
+          <div class="mls-tile amber"><div class="mls-tile-val" id="o-expsoon">—</div><div class="mls-tile-lbl">Expiring ≤60 Days</div></div>
+          <div class="mls-tile" style="border-color:#f5c6c6;background:#fef7f7"><div class="mls-tile-val" id="o-expired" style="color:#c00">—</div><div class="mls-tile-lbl">Expired</div></div>
+        </div>
+
+        <div class="toolbar">
+          <?php if ($superAdmin): ?>
+          <button class="btn-primary" onclick="openOfficeModal()">+ Add Office</button>
+          <?php endif; ?>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="mls-table">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Branch / Office</th>
+                <th>Entity / DBA</th>
+                <th>Office License #</th>
+                <th>Lic. Expiration</th>
+                <th>Designated Broker</th>
+                <th>Market Leader</th>
+                <th>Broker License #</th>
+                <th>Broker Exp.</th>
+                <th>Phone</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="office-tbody"><tr><td colspan="11" class="empty-note">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        </div>
+
+        <!-- ═══ Board Memberships tab ═══ -->
+        <div class="tab-panel" id="tab-board">
+
+        <!-- Summary tiles -->
+        <div class="mls-tiles" id="board-tiles">
+          <div class="mls-tile"><div class="mls-tile-val" id="bd-total">—</div><div class="mls-tile-lbl">Total Board Memberships</div></div>
+          <div class="mls-tile blue"><div class="mls-tile-val" id="bd-states">—</div><div class="mls-tile-lbl">States Covered</div></div>
+          <div class="mls-tile green"><div class="mls-tile-val" id="bd-primary">—</div><div class="mls-tile-lbl">Primary</div></div>
+          <div class="mls-tile amber"><div class="mls-tile-val" id="bd-secondary">—</div><div class="mls-tile-lbl">Secondary</div></div>
+        </div>
+
+        <div class="toolbar">
+          <?php if ($superAdmin): ?>
+          <button class="btn-primary" onclick="openMembershipModal(null,'Board')">+ Add Board Membership</button>
+          <?php endif; ?>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="mls-table">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Name</th>
+                <th>Membership Type</th>
+                <th>NRDS# / Office ID</th>
+                <th>Broker of Record</th>
+                <th>Fees</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="board-tbody"><tr><td colspan="7" class="empty-note">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        </div>
+
+        <!-- ═══ MLS Memberships tab ═══ -->
+        <div class="tab-panel" id="tab-mls">
+
+        <!-- Summary tiles -->
+        <div class="mls-tiles" id="mls-membership-tiles">
+          <div class="mls-tile"><div class="mls-tile-val" id="ml-total">—</div><div class="mls-tile-lbl">Total MLS Accounts</div></div>
+          <div class="mls-tile blue"><div class="mls-tile-val" id="ml-states">—</div><div class="mls-tile-lbl">States Covered</div></div>
+          <div class="mls-tile green"><div class="mls-tile-val" id="ml-loginset">—</div><div class="mls-tile-lbl">With Login Saved</div></div>
+          <div class="mls-tile amber"><div class="mls-tile-val" id="ml-feeset">—</div><div class="mls-tile-lbl">With Fees On File</div></div>
+        </div>
+
+        <div class="toolbar">
+          <?php if ($superAdmin): ?>
+          <button class="btn-primary" onclick="openMembershipModal(null,'MLS')">+ Add MLS Membership</button>
+          <?php endif; ?>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="mls-table">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Name</th>
+                <th>Membership Type</th>
+                <th>Office ID</th>
+                <th>Broker of Record</th>
+                <th>Fees</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="mls-membership-tbody"><tr><td colspan="7" class="empty-note">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        </div>
+
       </div>
     </main>
   </div>
@@ -258,6 +394,169 @@ $superAdmin = is_super_admin();
       <button class="btn-ghost" onclick="editFromView()">Edit</button>
       <?php endif; ?>
       <button class="btn-primary" onclick="closeViewModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Office Add / Edit Modal -->
+<div class="modal-overlay" id="office-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="office-modal-title">Add Office</h3>
+      <button class="modal-close" onclick="closeOfficeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="o-id">
+
+      <div class="form-section">
+        <div class="form-section-title">Office</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>State</label><input type="text" id="o-state" maxlength="2" placeholder="e.g. SC" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"></div>
+          <div class="field field-full" style="grid-column:span 2"><label>Branch / Office Name</label><input type="text" id="o-branch" placeholder="e.g. Hilton Head"></div>
+          <div class="field field-full"><label>Entity Name</label><input type="text" id="o-entity" placeholder="e.g. INNOVATE Real Estate SC, LLC"></div>
+          <div class="field field-full"><label>DBA</label><input type="text" id="o-dba" placeholder="e.g. INNOVATE Real Estate"></div>
+          <div class="field"><label>Office Type</label><input type="text" id="o-office-type" placeholder="e.g. Corp Owned/State HQ"></div>
+          <div class="field"><label>Firm Type</label>
+            <select id="o-firm-type">
+              <option value="Residential">Residential</option>
+              <option value="Referral">Referral</option>
+            </select>
+          </div>
+          <div class="field"><label>FUB Phone #</label><input type="text" id="o-phone"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Office License</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>Office License Number</label><input type="text" id="o-office-license"></div>
+          <div class="field"><label>Expiration Date</label><input type="date" id="o-license-exp"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Broker</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>Designated Broker</label><input type="text" id="o-broker"></div>
+          <div class="field"><label>Market Leader</label><input type="text" id="o-ml"></div>
+          <div class="field"><label>Broker License Number</label><input type="text" id="o-broker-license"></div>
+          <div class="field"><label>Broker Expiration Date</label><input type="date" id="o-broker-exp"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Address &amp; Lease</div>
+        <div class="field-grid">
+          <div class="field field-full"><label>Address</label><input type="text" id="o-address"></div>
+          <div class="field field-full"><label>Lease Management / Payee</label><input type="text" id="o-lease" placeholder="e.g. Privately Held, Regus, Spaces"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Linked MLS Integration</div>
+        <div class="field">
+          <select id="o-mls-integration"><option value="">— None —</option></select>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Notes</div>
+        <div class="field"><textarea id="o-notes" rows="3" placeholder="Anything unusual about this office…"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <?php if ($superAdmin): ?>
+      <button class="btn-danger btn-sm" id="office-modal-delete-btn" onclick="deleteOffice()" style="margin-right:auto;display:none">Delete</button>
+      <?php endif; ?>
+      <button class="btn-ghost" onclick="closeOfficeModal()">Cancel</button>
+      <?php if ($superAdmin): ?>
+      <button class="btn-primary" id="office-modal-save-btn" onclick="saveOffice()">Save</button>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- Membership Add / Edit Modal -->
+<div class="modal-overlay" id="membership-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="membership-modal-title">Add Membership</h3>
+      <button class="modal-close" onclick="closeMembershipModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="m-id">
+
+      <div class="form-section">
+        <div class="form-section-title">Board / MLS</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>State</label><input type="text" id="m-state" placeholder="e.g. SC or SC | HH"></div>
+          <div class="field"><label>Board / MLS</label>
+            <select id="m-board-or-mls">
+              <option value="Board">Board</option>
+              <option value="MLS">MLS</option>
+              <option value="Board & MLS">Board &amp; MLS</option>
+            </select>
+          </div>
+          <div class="field"><label>Membership Type</label><input type="text" id="m-membership-type" placeholder="e.g. Primary (Board)"></div>
+          <div class="field field-full" style="grid-column:1/-1"><label>Name</label><input type="text" id="m-name" placeholder="e.g. Coastal Carolina Association of Realtors"></div>
+          <div class="field field-full" style="grid-column:1/-1"><label>Address</label><input type="text" id="m-address"></div>
+          <div class="field"><label>Phone</label><input type="text" id="m-phone"></div>
+          <div class="field"><label>Office ID (MLS) / NRDS# (Board)</label><input type="text" id="m-office-id"></div>
+          <div class="field"><label>Broker of Record</label><input type="text" id="m-broker"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Login Credentials</div>
+        <div class="field-grid">
+          <div class="field"><label>Username</label><input type="text" id="m-username" autocomplete="off"></div>
+          <div class="field"><label>Password</label>
+            <div class="field-row">
+              <input type="password" id="m-password" autocomplete="new-password">
+              <button type="button" class="btn-sm" onclick="togglePwd('m-password', this)">Show</button>
+            </div>
+          </div>
+          <div class="field field-full"><label>Log In Link</label><input type="text" id="m-login-link" placeholder="URL or portal name"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Billing</div>
+        <div class="field-grid">
+          <div class="field field-full"><label>Billing Site</label><input type="text" id="m-billing-site" placeholder="URL"></div>
+          <div class="field"><label>Billing Frequency</label><input type="text" id="m-billing-frequency" placeholder="e.g. quarterly"></div>
+          <div class="field"><label>Billing Username</label><input type="text" id="m-billing-username" autocomplete="off"></div>
+          <div class="field"><label>Billing Password</label>
+            <div class="field-row">
+              <input type="password" id="m-billing-password" autocomplete="new-password">
+              <button type="button" class="btn-sm" onclick="togglePwd('m-billing-password', this)">Show</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Fees</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>Office Fees</label><input type="text" id="m-office-fees" placeholder="e.g. $45/quarterly"></div>
+          <div class="field"><label>Broker Fees</label><input type="text" id="m-broker-fees"></div>
+          <div class="field"><label>Admin Fees</label><input type="text" id="m-admin-fees"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Notes</div>
+        <div class="field"><textarea id="m-notes" rows="3"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <?php if ($superAdmin): ?>
+      <button class="btn-danger btn-sm" id="membership-modal-delete-btn" onclick="deleteMembership()" style="margin-right:auto;display:none">Delete</button>
+      <?php endif; ?>
+      <button class="btn-ghost" onclick="closeMembershipModal()">Cancel</button>
+      <?php if ($superAdmin): ?>
+      <button class="btn-primary" id="membership-modal-save-btn" onclick="saveMembership()">Save</button>
+      <?php endif; ?>
     </div>
   </div>
 </div>
@@ -499,6 +798,345 @@ function deleteMls(){
   if(!confirm('Delete "'+((r&&r.mls_name)||'this MLS')+'"? This cannot be undone.'))return;
   fetch('api/mls_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
     .then(r=>r.json()).then(d=>{if(d.ok){closeModal();load();}else alert(d.error||'Delete failed.');});
+}
+
+/* ══════════════ Tabs ══════════════ */
+let officesLoaded = false;
+let membershipsLoaded = false;
+function switchTab(name){
+  ['vendors','offices','board','mls'].forEach(n=>{
+    document.getElementById('tab-'+n).classList.toggle('active', n===name);
+    document.getElementById('tab-btn-'+n).classList.toggle('active', n===name);
+  });
+  if(name==='offices' && !officesLoaded){ officesLoaded = true; loadOffices(); }
+  if((name==='board'||name==='mls') && !membershipsLoaded){ membershipsLoaded = true; loadMemberships(); }
+}
+
+function togglePwd(id, btn){
+  const el = document.getElementById(id);
+  if(el.type === 'password'){ el.type = 'text'; btn.textContent = 'Hide'; }
+  else { el.type = 'password'; btn.textContent = 'Show'; }
+}
+
+/* ══════════════ State Offices & Licenses ══════════════ */
+let officeRows = [];
+let viewOfficeId = null;
+
+function daysUntil(d){
+  if(!d) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(d+'T00:00:00');
+  return Math.round((target-today)/86400000);
+}
+function expBadge(d){
+  const days = daysUntil(d);
+  if(days===null) return `<span class="badge badge-exp-none">—</span>`;
+  if(days<0) return `<span class="badge badge-exp-over">${fmt(d)}</span>`;
+  if(days<=60) return `<span class="badge badge-exp-soon">${fmt(d)}</span>`;
+  return `<span class="badge badge-exp-ok">${fmt(d)}</span>`;
+}
+
+function loadOffices(){
+  fetch('api/mls_offices_action.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+    officeRows = d.rows || [];
+    renderOfficeTiles(officeRows);
+    renderOfficeTable(officeRows);
+    populateIntegrationSelect();
+  });
+}
+
+function renderOfficeTiles(rows){
+  const states = new Set(rows.map(r=>r.state).filter(Boolean));
+  const expSoon = rows.filter(r=>{
+    const dl = daysUntil(r.license_expiration), db = daysUntil(r.broker_expiration);
+    return (dl!==null && dl>=0 && dl<=60) || (db!==null && db>=0 && db<=60);
+  }).length;
+  const expired = rows.filter(r=>{
+    const dl = daysUntil(r.license_expiration), db = daysUntil(r.broker_expiration);
+    return (dl!==null && dl<0) || (db!==null && db<0);
+  }).length;
+  document.getElementById('o-total').textContent = rows.length;
+  document.getElementById('o-states').textContent = states.size;
+  document.getElementById('o-expsoon').textContent = expSoon;
+  document.getElementById('o-expired').textContent = expired;
+}
+
+function renderOfficeTable(rows){
+  const tbody=document.getElementById('office-tbody');
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="11" class="empty-note">No offices on file yet. Click "+ Add Office" to get started.</td></tr>';return;}
+  const sorted=[...rows].sort((a,b)=>(a.state||'').localeCompare(b.state||'')||(a.branch_office||'').localeCompare(b.branch_office||''));
+  tbody.innerHTML=sorted.map(r=>{
+    const entityDba=[r.entity_name,r.dba].filter(Boolean).join(' — ')||'—';
+    return `<tr onclick="viewOffice(${r.id})" style="cursor:pointer">
+      <td><strong>${esc(r.state||'—')}</strong></td>
+      <td style="color:#555">${esc(r.branch_office||'—')}</td>
+      <td style="font-size:12px;color:#555">${esc(entityDba)}</td>
+      <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.office_license_number||'—')}</code></td>
+      <td>${expBadge(r.license_expiration)}</td>
+      <td style="color:#555">${esc(r.designated_broker||'—')}</td>
+      <td style="color:#555">${esc(r.market_leader||'—')}</td>
+      <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.broker_license_number||'—')}</code></td>
+      <td>${expBadge(r.broker_expiration)}</td>
+      <td style="color:#555;font-size:12px">${esc(r.fub_phone||'—')}</td>
+      <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openOfficeModal(${r.id})">Edit</button>`:''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function populateIntegrationSelect(){
+  const sel = document.getElementById('o-mls-integration');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— None —</option>' +
+    allRows.map(r=>`<option value="${r.id}">${esc(r.mls_name)}</option>`).join('');
+  sel.value = current;
+}
+
+function viewOffice(id){
+  openOfficeModal(id);
+}
+
+function officeFieldIds(){
+  return ['o-id','o-state','o-branch','o-entity','o-dba','o-office-type','o-phone',
+    'o-office-license','o-license-exp','o-broker','o-ml','o-broker-license','o-broker-exp',
+    'o-address','o-lease','o-notes'];
+}
+
+function openOfficeModal(id){
+  const editing = id != null;
+  document.getElementById('office-modal-title').textContent = editing ? 'Edit Office' : 'Add Office';
+  const del = document.getElementById('office-modal-delete-btn');
+  if(del) del.style.display = editing ? '' : 'none';
+
+  officeFieldIds().forEach(k=>{ const el=document.getElementById(k); if(el) el.value=''; });
+  document.getElementById('o-firm-type').value='Residential';
+  document.getElementById('o-mls-integration').value='';
+
+  if(editing){
+    const r=officeRows.find(x=>x.id===id);
+    if(!r)return;
+    document.getElementById('o-id').value=r.id;
+    document.getElementById('o-state').value=r.state||'';
+    document.getElementById('o-branch').value=r.branch_office||'';
+    document.getElementById('o-entity').value=r.entity_name||'';
+    document.getElementById('o-dba').value=r.dba||'';
+    document.getElementById('o-office-type').value=r.office_type||'';
+    document.getElementById('o-firm-type').value=r.firm_type||'Residential';
+    document.getElementById('o-phone').value=r.fub_phone||'';
+    document.getElementById('o-office-license').value=r.office_license_number||'';
+    document.getElementById('o-license-exp').value=r.license_expiration||'';
+    document.getElementById('o-broker').value=r.designated_broker||'';
+    document.getElementById('o-ml').value=r.market_leader||'';
+    document.getElementById('o-broker-license').value=r.broker_license_number||'';
+    document.getElementById('o-broker-exp').value=r.broker_expiration||'';
+    document.getElementById('o-address').value=r.address||'';
+    document.getElementById('o-lease').value=r.lease_payee||'';
+    document.getElementById('o-notes').value=r.notes||'';
+    document.getElementById('o-mls-integration').value=r.mls_integration_id||'';
+  }
+  document.getElementById('office-modal').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=!SUPER);
+  document.getElementById('office-modal').classList.add('open');
+}
+
+function closeOfficeModal(){document.getElementById('office-modal').classList.remove('open');}
+
+function saveOffice(){
+  const id = document.getElementById('o-id').value;
+  const payload={
+    action: id ? 'update' : 'add',
+    id: id ? parseInt(id) : undefined,
+    state: document.getElementById('o-state').value.trim(),
+    branch_office: document.getElementById('o-branch').value.trim(),
+    entity_name: document.getElementById('o-entity').value.trim(),
+    dba: document.getElementById('o-dba').value.trim(),
+    office_type: document.getElementById('o-office-type').value.trim(),
+    firm_type: document.getElementById('o-firm-type').value,
+    office_license_number: document.getElementById('o-office-license').value.trim(),
+    license_expiration: document.getElementById('o-license-exp').value||null,
+    designated_broker: document.getElementById('o-broker').value.trim(),
+    market_leader: document.getElementById('o-ml').value.trim(),
+    broker_license_number: document.getElementById('o-broker-license').value.trim(),
+    broker_expiration: document.getElementById('o-broker-exp').value||null,
+    fub_phone: document.getElementById('o-phone').value.trim(),
+    address: document.getElementById('o-address').value.trim(),
+    lease_payee: document.getElementById('o-lease').value.trim(),
+    notes: document.getElementById('o-notes').value.trim(),
+    mls_integration_id: document.getElementById('o-mls-integration').value||null,
+  };
+  if(!payload.state){alert('State is required.');return;}
+  const btn=document.getElementById('office-modal-save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
+  fetch('api/mls_offices_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='Save';
+      if(d.ok){closeOfficeModal();loadOffices();}else alert(d.error||'Save failed.');
+    }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
+}
+
+function deleteOffice(){
+  const id=parseInt(document.getElementById('o-id').value);
+  if(!id)return;
+  const r=officeRows.find(x=>x.id===id);
+  if(!confirm('Delete the '+((r&&r.state)||'')+' '+((r&&r.branch_office)||'office')+' record? This cannot be undone.'))return;
+  fetch('api/mls_offices_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
+    .then(r=>r.json()).then(d=>{if(d.ok){closeOfficeModal();loadOffices();}else alert(d.error||'Delete failed.');});
+}
+
+/* ══════════════ Board & MLS Memberships ══════════════ */
+let membershipRows = [];
+
+function loadMemberships(){
+  fetch('api/mls_memberships_action.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+    membershipRows = d.rows || [];
+    renderMembershipTiles(membershipRows);
+    renderMembershipTable(membershipRows);
+  });
+}
+
+function renderMembershipTiles(rows){
+  const boardRows = rows.filter(r=>(r.board_or_mls||'').includes('Board'));
+  const mlsRows = rows.filter(r=>(r.board_or_mls||'').includes('MLS'));
+  const boardStates = new Set(boardRows.map(r=>(r.state||'').split('|')[0].trim()).filter(Boolean));
+  const mlsStates = new Set(mlsRows.map(r=>(r.state||'').split('|')[0].trim()).filter(Boolean));
+
+  document.getElementById('bd-total').textContent = boardRows.length;
+  document.getElementById('bd-states').textContent = boardStates.size;
+  document.getElementById('bd-primary').textContent = boardRows.filter(r=>(r.membership_type||'').toLowerCase().includes('primary')).length;
+  document.getElementById('bd-secondary').textContent = boardRows.filter(r=>(r.membership_type||'').toLowerCase().includes('secondary')).length;
+
+  document.getElementById('ml-total').textContent = mlsRows.length;
+  document.getElementById('ml-states').textContent = mlsStates.size;
+  document.getElementById('ml-loginset').textContent = mlsRows.filter(r=>r.username).length;
+  document.getElementById('ml-feeset').textContent = mlsRows.filter(r=>r.office_fees||r.broker_fees||r.admin_fees).length;
+}
+
+function feesSummary(r){
+  const parts = [];
+  if(r.office_fees) parts.push('Office: '+r.office_fees);
+  if(r.broker_fees) parts.push('Broker: '+r.broker_fees);
+  if(r.admin_fees) parts.push('Admin: '+r.admin_fees);
+  return parts.join(' · ') || '—';
+}
+
+function renderMembershipRow(r){
+  return `<tr onclick="openMembershipModal(${r.id})" style="cursor:pointer">
+    <td><strong>${esc(r.state||'—')}</strong></td>
+    <td style="font-size:12px;color:#555">${esc(r.name||'—')}</td>
+    <td style="color:#555;font-size:12px">${esc(r.membership_type||'—')}</td>
+    <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.office_id||'—')}</code></td>
+    <td style="color:#555">${esc(r.broker_of_record||'—')}</td>
+    <td style="font-size:11px;color:#777">${esc(feesSummary(r))}</td>
+    <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openMembershipModal(${r.id})">Edit</button>`:''}</td>
+  </tr>`;
+}
+
+function renderMembershipTable(rows){
+  const sortFn=(a,b)=>(a.state||'').localeCompare(b.state||'')||(a.name||'').localeCompare(b.name||'');
+
+  const boardRows=[...rows.filter(r=>(r.board_or_mls||'').includes('Board'))].sort(sortFn);
+  const boardTbody=document.getElementById('board-tbody');
+  boardTbody.innerHTML = boardRows.length
+    ? boardRows.map(renderMembershipRow).join('')
+    : '<tr><td colspan="7" class="empty-note">No board memberships on file yet. Click "+ Add Board Membership" to get started.</td></tr>';
+
+  const mlsRows=[...rows.filter(r=>(r.board_or_mls||'').includes('MLS'))].sort(sortFn);
+  const mlsTbody=document.getElementById('mls-membership-tbody');
+  mlsTbody.innerHTML = mlsRows.length
+    ? mlsRows.map(renderMembershipRow).join('')
+    : '<tr><td colspan="7" class="empty-note">No MLS memberships on file yet. Click "+ Add MLS Membership" to get started.</td></tr>';
+}
+
+function membershipFieldIds(){
+  return ['m-id','m-state','m-membership-type','m-name','m-address','m-phone','m-office-id','m-broker',
+    'm-username','m-password','m-login-link','m-billing-site','m-billing-frequency','m-billing-username',
+    'm-billing-password','m-office-fees','m-broker-fees','m-admin-fees','m-notes'];
+}
+
+function openMembershipModal(id, defaultType){
+  const editing = id != null;
+  document.getElementById('membership-modal-title').textContent = editing ? 'Edit Membership' : ('Add ' + (defaultType||'Board') + ' Membership');
+  const del = document.getElementById('membership-modal-delete-btn');
+  if(del) del.style.display = editing ? '' : 'none';
+
+  membershipFieldIds().forEach(k=>{ const el=document.getElementById(k); if(el) el.value=''; });
+  document.getElementById('m-board-or-mls').value = defaultType || 'Board';
+  ['m-password','m-billing-password'].forEach(id=>{
+    document.getElementById(id).type='password';
+  });
+  document.querySelectorAll('#membership-modal button.btn-sm[onclick^="togglePwd"]').forEach(b=>b.textContent='Show');
+
+  if(editing){
+    const r=membershipRows.find(x=>x.id===id);
+    if(!r)return;
+    document.getElementById('m-id').value=r.id;
+    document.getElementById('m-state').value=r.state||'';
+    document.getElementById('m-board-or-mls').value=r.board_or_mls||'Board';
+    document.getElementById('m-membership-type').value=r.membership_type||'';
+    document.getElementById('m-name').value=r.name||'';
+    document.getElementById('m-address').value=r.address||'';
+    document.getElementById('m-phone').value=r.phone||'';
+    document.getElementById('m-office-id').value=r.office_id||'';
+    document.getElementById('m-broker').value=r.broker_of_record||'';
+    document.getElementById('m-username').value=r.username||'';
+    document.getElementById('m-password').value=r.password||'';
+    document.getElementById('m-login-link').value=r.login_link||'';
+    document.getElementById('m-billing-site').value=r.billing_site||'';
+    document.getElementById('m-billing-frequency').value=r.billing_frequency||'';
+    document.getElementById('m-billing-username').value=r.billing_username||'';
+    document.getElementById('m-billing-password').value=r.billing_password||'';
+    document.getElementById('m-office-fees').value=r.office_fees||'';
+    document.getElementById('m-broker-fees').value=r.broker_fees||'';
+    document.getElementById('m-admin-fees').value=r.admin_fees||'';
+    document.getElementById('m-notes').value=r.notes||'';
+  }
+  document.getElementById('membership-modal').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=!SUPER);
+  document.getElementById('membership-modal').querySelectorAll('button.btn-sm[onclick^="togglePwd"]').forEach(b=>b.disabled=!SUPER);
+  document.getElementById('membership-modal').classList.add('open');
+}
+
+function closeMembershipModal(){document.getElementById('membership-modal').classList.remove('open');}
+
+function saveMembership(){
+  const id = document.getElementById('m-id').value;
+  const payload={
+    action: id ? 'update' : 'add',
+    id: id ? parseInt(id) : undefined,
+    state: document.getElementById('m-state').value.trim(),
+    board_or_mls: document.getElementById('m-board-or-mls').value,
+    membership_type: document.getElementById('m-membership-type').value.trim(),
+    name: document.getElementById('m-name').value.trim(),
+    address: document.getElementById('m-address').value.trim(),
+    phone: document.getElementById('m-phone').value.trim(),
+    office_id: document.getElementById('m-office-id').value.trim(),
+    broker_of_record: document.getElementById('m-broker').value.trim(),
+    username: document.getElementById('m-username').value.trim(),
+    password: document.getElementById('m-password').value,
+    login_link: document.getElementById('m-login-link').value.trim(),
+    billing_site: document.getElementById('m-billing-site').value.trim(),
+    billing_frequency: document.getElementById('m-billing-frequency').value.trim(),
+    billing_username: document.getElementById('m-billing-username').value.trim(),
+    billing_password: document.getElementById('m-billing-password').value,
+    office_fees: document.getElementById('m-office-fees').value.trim(),
+    broker_fees: document.getElementById('m-broker-fees').value.trim(),
+    admin_fees: document.getElementById('m-admin-fees').value.trim(),
+    notes: document.getElementById('m-notes').value.trim(),
+  };
+  if(!payload.state || !payload.name){alert('State and Name are required.');return;}
+  const btn=document.getElementById('membership-modal-save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
+  fetch('api/mls_memberships_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='Save';
+      if(d.ok){closeMembershipModal();loadMemberships();}else alert(d.error||'Save failed.');
+    }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
+}
+
+function deleteMembership(){
+  const id=parseInt(document.getElementById('m-id').value);
+  if(!id)return;
+  const r=membershipRows.find(x=>x.id===id);
+  if(!confirm('Delete the membership "'+((r&&r.name)||'')+'"? This cannot be undone.'))return;
+  fetch('api/mls_memberships_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
+    .then(r=>r.json()).then(d=>{if(d.ok){closeMembershipModal();loadMemberships();}else alert(d.error||'Delete failed.');});
 }
 
 load();
