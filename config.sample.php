@@ -29,6 +29,13 @@ return [
     'auth_bridge_url'   => '',   // e.g. https://innovateonline.com/agentedge-auth/verify.php
     'auth_bridge_token' => '',   // must match $BRIDGE_TOKEN in verify.php
 
+    // Default password given to new agents pushed over from Advantage CRM
+    // (api/onboard_push.php) so they have a working login on day one instead
+    // of waiting on a reset link. Only applied if the agent has no password
+    // yet — never overwrites one they've already set. Leave blank to disable
+    // and require the admin "Agent Login Access" tool / a reset link instead.
+    'default_agent_password' => '',   // e.g. Innovate!!
+
     // Show sample dashboard tiles/cap instead of querying a local DB. Keep true
     // on bold360.vip (no local Perfex DB) until the Darwin / tx feed is wired.
     'sample_dashboard' => false,

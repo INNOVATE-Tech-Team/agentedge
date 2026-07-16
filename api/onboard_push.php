@@ -57,6 +57,17 @@ $result   = queue_onboarding_agent($pdo, $email, $name, $mc, $stateCode, $canoni
 $queueId  = $result['id'];
 $queueUrl = $base . '/onboarding.php?open=' . $queueId;
 
+// Give the agent a working AgentEdge login on day one instead of leaving them
+// to wait on a reset link. INSERT OR IGNORE so this never overwrites a
+// password the agent (or an admin) already set — e.g. on a re-push/reactivation.
+$defaultPw = trim($c['default_agent_password'] ?? '');
+if ($defaultPw !== '') {
+    $pdo->prepare(
+        "INSERT OR IGNORE INTO agent_passwords (email, password_hash, updated_at)
+         VALUES (?, ?, datetime('now'))"
+    )->execute([strtolower($email), password_hash($defaultPw, PASSWORD_BCRYPT)]);
+}
+
 // Auto-add to innovate_roster if state_code was provided at intake time —
 // otherwise this happens later, when onboarding is marked complete
 // (onboard_action.php's complete_onboarding), which requires a state by then.

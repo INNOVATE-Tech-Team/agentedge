@@ -70,6 +70,47 @@ function db_one(string $sql, array $params = []): ?array {
     return $rows[0] ?? null;
 }
 
+// Same connection target as db(), but returns null/[] instead of exit()ing
+// when the Perfex database is unreachable. db()'s failure mode is a hard
+// exit() (not a catchable exception), so callers on a path that must degrade
+// gracefully — login, forgot-password — need this instead of db()/db_query().
+function db_safe(): ?mysqli {
+    static $m = null;
+    static $failed = false;
+    if ($failed) return null;
+    if ($m === null) {
+        $c = cfg();
+        $m = @new mysqli($c['db_host'], $c['db_user'], $c['db_pass'], $c['db_name']);
+        if ($m->connect_errno) {
+            $failed = true;
+            $m = null;
+            return null;
+        }
+        $m->set_charset('utf8mb4');
+    }
+    return $m;
+}
+
+function db_query_safe(string $sql, array $params = []): array {
+    $conn = db_safe();
+    if (!$conn) return [];
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return [];
+    if ($params) {
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+    $stmt->close();
+    return $rows;
+}
+
+function db_one_safe(string $sql, array $params = []): ?array {
+    $rows = db_query_safe($sql, $params);
+    return $rows[0] ?? null;
+}
+
 // --- Dotloop write DB (PDO to innovate_dotloop on dotloopapi-db) -----------
 // Used only by dotloop API files (token storage). Separate from Perfex read DB.
 function db_rw(): PDO {

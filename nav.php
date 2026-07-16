@@ -111,6 +111,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
+        ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
