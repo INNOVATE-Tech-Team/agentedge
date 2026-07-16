@@ -226,11 +226,14 @@ $superAdmin = is_super_admin();
                 <th>Membership Type</th>
                 <th>NRDS# / Office ID</th>
                 <th>Broker of Record</th>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Log In</th>
                 <th>Fees</th>
                 <th></th>
               </tr>
             </thead>
-            <tbody id="board-tbody"><tr><td colspan="7" class="empty-note">Loading…</td></tr></tbody>
+            <tbody id="board-tbody"><tr><td colspan="10" class="empty-note">Loading…</td></tr></tbody>
           </table>
         </div>
         </div>
@@ -261,11 +264,14 @@ $superAdmin = is_super_admin();
                 <th>Membership Type</th>
                 <th>Office ID</th>
                 <th>Broker of Record</th>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Log In</th>
                 <th>Fees</th>
                 <th></th>
               </tr>
             </thead>
-            <tbody id="mls-membership-tbody"><tr><td colspan="7" class="empty-note">Loading…</td></tr></tbody>
+            <tbody id="mls-membership-tbody"><tr><td colspan="10" class="empty-note">Loading…</td></tr></tbody>
           </table>
         </div>
         </div>
@@ -1017,6 +1023,21 @@ function feesSummary(r){
   return parts.join(' · ') || '—';
 }
 
+function loginLinkCell(r){
+  const v = r.login_link || '';
+  if(!v) return '—';
+  if(/^https?:\/\//i.test(v)) return `<a href="${esc(v)}" target="_blank" onclick="event.stopPropagation()" style="color:#5b8e0d;font-size:11px">Open ↗</a>`;
+  return `<span style="font-size:11px;color:#777">${esc(v)}</span>`;
+}
+
+function passwordCell(r){
+  if(!r.password) return '—';
+  const elId = 'mm-pwd-'+r.id;
+  const safeVal = esc(r.password).replace(/'/g,"\\'");
+  return `<span class="cred-val" id="${elId}" style="display:inline-block;padding:2px 6px;min-width:0">••••••••</span>` +
+    (SUPER ? ` <button class="cred-reveal" onclick="event.stopPropagation();toggleCred('${elId}','${safeVal}')">Reveal</button>` : '');
+}
+
 function renderMembershipRow(r){
   return `<tr onclick="openMembershipModal(${r.id})" style="cursor:pointer">
     <td><strong>${esc(r.state||'—')}</strong></td>
@@ -1024,6 +1045,9 @@ function renderMembershipRow(r){
     <td style="color:#555;font-size:12px">${esc(r.membership_type||'—')}</td>
     <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.office_id||'—')}</code></td>
     <td style="color:#555">${esc(r.broker_of_record||'—')}</td>
+    <td style="font-size:12px;color:#555">${esc(r.username||'—')}</td>
+    <td onclick="event.stopPropagation()">${passwordCell(r)}</td>
+    <td onclick="event.stopPropagation()">${loginLinkCell(r)}</td>
     <td style="font-size:11px;color:#777">${esc(feesSummary(r))}</td>
     <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openMembershipModal(${r.id})">Edit</button>`:''}</td>
   </tr>`;
@@ -1036,13 +1060,13 @@ function renderMembershipTable(rows){
   const boardTbody=document.getElementById('board-tbody');
   boardTbody.innerHTML = boardRows.length
     ? boardRows.map(renderMembershipRow).join('')
-    : '<tr><td colspan="7" class="empty-note">No board memberships on file yet. Click "+ Add Board Membership" to get started.</td></tr>';
+    : '<tr><td colspan="10" class="empty-note">No board memberships on file yet. Click "+ Add Board Membership" to get started.</td></tr>';
 
   const mlsRows=[...rows.filter(r=>(r.board_or_mls||'').includes('MLS'))].sort(sortFn);
   const mlsTbody=document.getElementById('mls-membership-tbody');
   mlsTbody.innerHTML = mlsRows.length
     ? mlsRows.map(renderMembershipRow).join('')
-    : '<tr><td colspan="7" class="empty-note">No MLS memberships on file yet. Click "+ Add MLS Membership" to get started.</td></tr>';
+    : '<tr><td colspan="10" class="empty-note">No MLS memberships on file yet. Click "+ Add MLS Membership" to get started.</td></tr>';
 }
 
 function membershipFieldIds(){
