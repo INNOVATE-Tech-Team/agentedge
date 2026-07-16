@@ -199,9 +199,14 @@ function local_db(): PDO {
     )");
 
     // The onboarding/offboarding checklist itself — editable via
-    // admin_step_notify.php. is_auto=1 steps are wired to real provisioning
-    // code in api/onboard_action.php|offboard_action.php (currently 'fub' and
-    // 'constellation1' only) — adding a new step here is always a manual step.
+    // admin_step_notify.php. is_auto=1 steps show a "Provision Now" button
+    // wired to real provisioning code in api/onboard_action.php|offboard_action.php
+    // ('fub' and 'constellation1' have handlers, but are set is_auto=0 by
+    // default on the onboard side — FUB requires being under its seat limit,
+    // and Constellation1's handler is an unfinished stub — so they render as
+    // plain manual checklist items unless re-enabled; on the offboard side
+    // 'agentedge' also has a real handler — deactivate_agentedge_account() in
+    // lib/agentedge_account.php). Adding a new step here is always a manual step.
     $pdo->exec("CREATE TABLE IF NOT EXISTS step_defs (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
         process   TEXT    NOT NULL,   -- 'onboard' | 'offboard'
@@ -217,19 +222,18 @@ function local_db(): PDO {
     // this on an already-seeded install (or one with admin-added rows) is a no-op.
     $seedSteps = [
         ['onboard','agentedge',      'AgentEdge Account',   'Created when added to queue',              0, 10],
-        ['onboard','intranet',       'Company Intranet',    'Add user in everythinginnovate.com',       0, 20],
         ['onboard','doc_signing',    'Document Signing',    'Sent via PandaDoc — auto-completes once signed', 1, 25],
-        ['onboard','fub',            'Follow Up Boss',      'Auto-provision via API',                   1, 30],
-        ['onboard','constellation1', 'Constellation1',      'Auto-provision via API',                   1, 40],
+        ['onboard','fub',            'Follow Up Boss',      'Manual — add via Follow Up Boss admin',    0, 30],
+        ['onboard','constellation1', 'Constellation1',      'Manual — add via Constellation1',          0, 40],
         ['onboard','dotloop',        'DotLoop',              'Add manually in DotLoop admin',           0, 50],
         ['onboard','listingstoleads','ListingsToLeads',      'Add manually',                            0, 60],
         ['onboard','maxa',           'MAXA Presents',        'Add manually',                            0, 70],
-        ['onboard','mls',            'MLS Access',            'Submit MLS new member form',             0, 80],
         ['onboard','email_setup',    'Email & Signature',     'Set up company email + signature',       0, 90],
         ['onboard','training',       'New Agent Training',    'Enroll in onboarding training program',  0, 100],
 
         ['offboard','exit_interview',    'Exit Interview',           'Capture departure reason, last day, and book of business transfer', 0, 10],
         ['offboard','final_commissions', 'Final Commission Review',  'Confirm all pending deals are closed and final check issued',       0, 20],
+        ['offboard','agentedge',         'AgentEdge Account',        'Auto-deactivate — removes login + roster listing',                   1, 25],
         ['offboard','fub',               'Follow Up Boss',           'Auto-deactivate via API',                                            1, 30],
         ['offboard','constellation1',    'Constellation1',           'Auto-deactivate via API',                                            1, 40],
         ['offboard','dotloop',           'DotLoop',                  'Remove seat in DotLoop admin',                                       0, 50],
@@ -238,12 +242,20 @@ function local_db(): PDO {
         ['offboard','maxa',              'MAXA Presents',            'Remove from account',                                                0, 80],
         ['offboard','email_decom',       'Company Email',            'Decommission company email and signature',                           0, 90],
         ['offboard','intranet',          'Company Intranet',         'Remove from everythinginnovate.com',                                 0, 100],
-        ['offboard','agentedge',         'AgentEdge Account',        'Archive agent in AgentEdge (last step)',                             0, 110],
     ];
     $seedStepIns = $pdo->prepare(
         "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord) VALUES (?,?,?,?,?,?)"
     );
     foreach ($seedSteps as $s) { $seedStepIns->execute($s); }
+    // Migration: 'agentedge' offboard step moved from last (sort_ord 110, manual)
+    // to right after Final Commission Review (sort_ord 25, real auto-deactivate
+    // handler) — only touches installs still on the original default, so any
+    // admin customization via admin_step_notify.php is left alone.
+    $pdo->exec(
+        "UPDATE step_defs SET sort_ord=25, is_auto=1,
+            note='Auto-deactivate — removes login + roster listing'
+         WHERE process='offboard' AND step_key='agentedge' AND sort_ord=110 AND is_auto=0"
+    );
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
     // Other apps (intranet, CRM) call /api/permissions.php to read this.
@@ -259,6 +271,7 @@ function local_db(): PDO {
     // Migrations for existing installs
     try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN own_mc_slug TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN extra_roles_json TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
 
     // Per-agent extra fields: birthday, hire date, license renewal.
     // birthday and license_renewal are stored as MM-DD so they recur every year.
@@ -362,6 +375,41 @@ function local_db(): PDO {
         submitted_at        TEXT,
         updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     )");
+    // Migration: personal/contact details + online presence fields
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_email      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN commissions_email   TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line1       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN address_line2       TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN city                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN state               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN zip                 TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN country             TEXT NOT NULL DEFAULT 'United States'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN drivers_license     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN gender              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN website             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN additional_websites TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN facebook            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN linkedin            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN skype               TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN instagram           TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN email_signature     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Migration: professional background + entity/tax fields (self-reported by the agent)
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN personal_tax_id_enc  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporate_tax_id_enc TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_start    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN corporation_end      TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN career_start         TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_occupation     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN prior_affiliation    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN specialty            TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN full_time            INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN show_on_internet     INTEGER NOT NULL DEFAULT 1"); } catch (\Exception $e) {}
+    // Migration: remaining social platforms, so agent_intake can be the single
+    // source of truth for social links (previously split across agent_extra.social_json).
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN twitter             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN youtube             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN tiktok              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN blog                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
@@ -502,6 +550,22 @@ function local_db(): PDO {
         sent_at    TEXT
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
+
+    // General-purpose "do Y at future time X" scheduling engine, drained by
+    // cron/process_scheduled_tasks.php. task_type is dispatched in a switch
+    // there — first consumer is 'onboard_followup_text' (the 10-day
+    // post-onboarding check-in text), more task types can be added later
+    // without a new table.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type    TEXT    NOT NULL,
+        payload_json TEXT    NOT NULL DEFAULT '{}',
+        fire_at      TEXT    NOT NULL,
+        status       TEXT    NOT NULL DEFAULT 'pending',  -- pending | sent | failed
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        executed_at  TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sched_tasks_due ON scheduled_tasks(status, fire_at)");
 
     // ── Document Library (legacy simple Resources page) ───────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS doc_folders (
@@ -760,12 +824,21 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_invites_course ON uni_course_invites(course_id)");
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_folders (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id  INTEGER NOT NULL,
+        title      TEXT    NOT NULL,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_folders_crs ON uni_folders(course_id)");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lessons (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         course_id    INTEGER NOT NULL,
         title        TEXT    NOT NULL,
         sort_ord     INTEGER NOT NULL DEFAULT 0,
-        type         TEXT    NOT NULL DEFAULT 'video',  -- video | doc | quiz
+        type         TEXT    NOT NULL DEFAULT 'video',  -- video | doc | quiz | placeholder | upload
         file_key     TEXT    NOT NULL DEFAULT '',
         content_html TEXT    NOT NULL DEFAULT '',
         duration_sec INTEGER NOT NULL DEFAULT 0,
@@ -773,6 +846,18 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_crs ON uni_lessons(course_id)");
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN embed_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN folder_id INTEGER"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_folder ON uni_lessons(folder_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lesson_files (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        file_key      TEXT    NOT NULL,
+        original_name TEXT    NOT NULL DEFAULT '',
+        sort_ord      INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lfiles_lesson ON uni_lesson_files(lesson_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_questions (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -783,6 +868,30 @@ function local_db(): PDO {
         sort_ord      INTEGER NOT NULL DEFAULT 0
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_q_lesson ON uni_questions(lesson_id)");
+    try { $pdo->exec("ALTER TABLE uni_questions ADD COLUMN qtype TEXT NOT NULL DEFAULT 'single'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_questions ADD COLUMN correct_indexes TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_quiz_answers (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id        INTEGER NOT NULL,
+        agent_email      TEXT    NOT NULL,
+        question_id      INTEGER NOT NULL,
+        answer_text      TEXT    NOT NULL DEFAULT '',
+        selected_indexes TEXT    NOT NULL DEFAULT '[]',
+        submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_qa_lesson ON uni_quiz_answers(lesson_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_learner_uploads (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        agent_email   TEXT    NOT NULL,
+        file_key      TEXT    NOT NULL,
+        original_name TEXT    NOT NULL DEFAULT '',
+        submitted_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(lesson_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lupload_lesson ON uni_learner_uploads(lesson_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_progress (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -837,6 +946,17 @@ function local_db(): PDO {
     foreach (['FL','VA','DE','RI','NH','OH','NC','GA','PA','SC','MD','TN','NJ','MA'] as $sc) {
         $seedSt->execute([$sc]);
     }
+
+    // ── Per-state PandaDoc onboarding-agreement templates. Not pre-seeded —
+    // rows are added as each state's template is built out (up to 50).
+    // Falls back to the global 'pandadoc_template_id' config value for any
+    // state without a row here (see pandadoc_template_for_state()).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS pandadoc_state_templates (
+        state_code  TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL DEFAULT '',
+        updated_by  TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
 
     // INNOVATE agent roster — organized by state + market center, with license expiry where known.
     // agent_name, state_code, market_center, license_exp (YYYY-MM-DD or empty)
@@ -975,7 +1095,6 @@ function local_db(): PDO {
         $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
         $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
     }
-
 
     // ── MLS / State Offices & Licenses (from annual license report) ──────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_offices (
@@ -1154,6 +1273,7 @@ function local_db(): PDO {
         ];
         foreach ($memberships as $m) { $mm->execute($m); }
     }
+
     // ── Listing Intelligence ──────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS listing_farms (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1440,6 +1560,151 @@ function local_db(): PDO {
         created_at TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
+
+    // Exchange Readiness — IPO milestone tracker (Finance dept, super_admin
+    // only). Moved here from the old Advantage/coastline-server admin page
+    // 2026-07-14 so AgentEdge owns this natively instead of round-tripping
+    // to a separate app. Target listing pushed from NASDAQ 2029 to 2031 —
+    // only phase 3's dates shifted; phases 1-2 (audit/governance buildout,
+    // OTCQB listing) are unchanged.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS exchange_milestones (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        phase          INTEGER NOT NULL,
+        category       TEXT    NOT NULL,
+        title          TEXT    NOT NULL,
+        description    TEXT    NOT NULL DEFAULT '',
+        status         TEXT    NOT NULL DEFAULT 'pending',
+        target_date    TEXT,
+        completed_date TEXT,
+        notes          TEXT,
+        sort_order     INTEGER NOT NULL DEFAULT 0
+    )");
+    if ($pdo->query("SELECT COUNT(*) FROM exchange_milestones")->fetchColumn() == 0) {
+        $ins = $pdo->prepare("INSERT INTO exchange_milestones (phase,category,title,description,target_date,sort_order) VALUES (?,?,?,?,?,?)");
+        foreach ([
+            // ── Phase 1 — Year 1: Foundation (Jul 2026 – Jun 2027) ──
+            [1,'Advisors','Engage securities attorney','Hire a firm specializing in OTCQB / going-public work (not a generalist). They will clean up the cap table, structure equity grants, and eventually file the SEC registration.','2026-09-30',10],
+            [1,'Advisors','Sign PCAOB audit engagement letter for FY2026','CRITICAL PATH — do this before year-end 2026. Must be a PCAOB-registered firm (not your current CPA). Firms to consider: Marcum LLP, Friedman LLP. Audit delay is the #1 reason listings slip.','2026-10-31',20],
+            [1,'Advisors','Hire fractional CFO with public-company experience','Fractional CFO ($5K–$15K/month) who has taken a company public before. They own financial systems, internal controls, and the monthly close process.','2026-11-30',30],
+            [1,'Corporate','Clean up cap table','Document exactly who owns what percentage of INNOVATE Holdings C-Corp. Formalize or extinguish any informal equity promises to agents/employees. Get a 409A valuation.','2026-12-31',40],
+            [1,'Corporate','Document all IP under INNOVATE Holdings C-Corp','Have attorney confirm Coastline CRM, AgentEdge, agent sites, and all code is owned by INNOVATE Holdings C-Corp — not Darren personally.','2026-12-31',50],
+            [1,'Corporate','Document entity relationships legally','Clearly separate INNOVATE Holdings (C-Corp parent) from SeaShore Realty Group (S-Corp) and Carolina Property Insurance. Public companies cannot have ambiguous related-party transactions.','2026-12-31',60],
+            [1,'Governance','Seat Board of Directors (3+ members, 1 financial expert)','At least one member must qualify as an "audit committee financial expert" (public company accounting background). One real estate industry; one capital markets. Budget $15K–$30K/year per member.','2027-03-31',70],
+            [1,'Governance','Establish formal audit committee with written charter','Required for OTCQB and NASDAQ listing. Committee members must be independent directors. Charter documents the scope, authority, and meeting cadence.','2027-03-31',80],
+            [1,'Finance','Establish monthly financial close process','Books closed by the 15th of each month. Public companies file 10-Qs within 45 days of quarter end — this discipline starts now.','2027-01-31',90],
+            [1,'Finance','409A valuation complete','Required before issuing stock options to employees or agents. Sets the fair market value of common stock for tax purposes.','2027-03-31',100],
+            [1,'Growth','Reach 400–500 agents','Company dollar at 300 agents ≈ $2.25M; need $5M–$8M to be taken seriously by investors. Growing to 400–500 agents is the most direct lever. Use Coastline CRM, join.growwithinnovate.com, and social recruiting automation.','2027-06-30',110],
+            // ── Phase 2 — Year 2: Build (Jul 2027 – Jun 2028) ──
+            [2,'Compliance','Year 2 PCAOB audit complete','Must have 2 full years of audited financials to file Form 10 (OTCQB registration). If Year 1 audit started by Oct 2026, Year 2 should be complete by mid-2028.','2028-04-30',10],
+            [2,'Governance','Seat Compensation Committee (written charter)','Sets executive pay, manages stock option plan. Must include independent directors.','2027-12-31',20],
+            [2,'Governance','Seat Nominating/Governance Committee (written charter)','Oversees board composition and corporate governance standards.','2027-12-31',30],
+            [2,'Compliance','Document internal controls framework','Pre-SOX readiness: financial reporting review process, expense approval thresholds, revenue recognition policy, segregation of duties in accounting. CFO owns this.','2028-01-31',40],
+            [2,'Legal','File Form 10 with the SEC','The registration statement that makes INNOVATE a "reporting company." Required for OTCQB listing. Requires 2 years of audited financials. Securities attorney files it — budget 3–6 months.','2028-04-30',50],
+            [2,'Listing','OTCQB listing live','Requirements: 50+ beneficial shareholders (100+ shares each), 10% public float, PCAOB-audited financials, current SEC disclosure on EDGAR. Trading begins under INNOVATE ticker.','2028-06-30',60],
+            [2,'Capital','Complete Reg D raise ($1M–$5M)','A small Rule 506(b) private offering to accredited investors — agents, friends, family, real estate industry angels — to create the initial public float required for OTCQB.','2028-06-30',70],
+            [2,'Technology','Darwin (AccountTECH) integration live in AgentEdge','Per-agent cap amount, paid, remaining, pending/sold count/volume, and sponsor/upline tree live in AgentEdge. Integration meeting was scheduled week of 2026-06-14.','2027-12-31',80],
+            [2,'Technology','License Coastline CRM to at least 1 outside brokerage','Transforms the investor story from "brokerage" to "proptech company" — dramatically different valuation multiple. Even 1 paying customer proves SaaS viability.','2028-03-31',90],
+            [2,'Marketing','Launch investor relations page on innovateonline.com','Company fact sheet, investor presentation, one-pager. Story: "Technology-powered brokerage for the independent agent." Position CRM and AgentEdge as the IP moat.','2027-12-31',100],
+            [2,'Growth','Reach 600–750 agents, $10M+ company dollar revenue','At 85/15 split, 700 agents averaging $1.5M production each = ~$2M in company dollar per agent per year at 15% company cut. Target: $10M–$12M annual company revenue.','2028-06-30',110],
+            // ── Phase 3 — Year 3: Uplift (Jul 2030 – Jun 2031) — dates pushed
+            // +2 years from the original 2028/2029 plan (target listing now 2031).
+            [3,'Compliance','Year 3 PCAOB audit complete','Three full years of audited financials strengthens the NASDAQ application and gives institutional investors the historical view they need.','2031-04-30',10],
+            [3,'Capital','File Regulation A+ Tier 2 Form 1-A with SEC','The "mini-IPO" — raise up to $75M from the general public (not just accredited investors). 4–6 month SEC review. Creates broad shareholder base, PR, brand awareness, and the float needed for NASDAQ.','2030-10-31',20],
+            [3,'Capital','Reg A+ offering qualified — raise complete','Use proceeds: expand to 1,000+ agents, build out CRM SaaS revenue, potentially acquire a competing small brokerage. Reg A+ proceeds more than cover Year 3 compliance costs.','2031-03-31',30],
+            [3,'Listing','Apply to NASDAQ Capital Market','Must meet one of three financial standards: (1) $5M stockholders\' equity, OR (2) $35M+ market cap, OR (3) $750K+ net income. Plus 300+ round-lot shareholders, 1M+ public shares, $4+ bid price, 3 market makers.','2031-03-31',40],
+            [3,'Governance','Majority independent board confirmed','NASDAQ requires majority of board to be independent directors. Recruit any remaining independent members before filing.','2031-01-31',50],
+            [3,'Governance','Code of business conduct and ethics published','Written, posted publicly. Required for NASDAQ listing. Covers conflicts of interest, insider trading, whistleblower policy.','2031-01-31',60],
+            [3,'Listing','NASDAQ Capital Market listing live','Trading begins on NASDAQ. Full SOX Section 302 compliance kicks in: CEO/CFO certifications on quarterly and annual filings.','2031-06-30',70],
+            [3,'Marketing','Hire full-time investor relations firm','Budget $100K–$250K/year. Begin institutional investor outreach. Analyst coverage target: 2–3 small-cap real estate analysts in Year 1 as a public company.','2031-06-30',80],
+            [3,'Growth','Reach 750–1,000 agents, $15M+ company dollar revenue','At $35M+ market cap threshold for NASDAQ, you need investors to believe a 2–3x revenue multiple is justified. $15M revenue × 2.5x = $37.5M market cap. Tech story is key to achieving that multiple.','2031-06-30',90],
+        ] as $r) {
+            $ins->execute($r);
+        }
+    }
+
+    // ── Darwin Cloud custom API sync (lib/darwin.php) ───────────────────────────
+    // Mutable auth state — access/refresh token pair, seeded from config.php on
+    // first use, then rotated in place as refreshes happen (every refresh returns
+    // a new refresh token per AccountTECH's guide, so this must not go stale).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_auth (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT    NOT NULL,
+        access_token  TEXT    NOT NULL,
+        refresh_token TEXT    NOT NULL,
+        expires_at    TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Cap progress — one row per agent, feeds the Agent Edge cap wheel.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_cap_progress (
+        agent_person_id        INTEGER PRIMARY KEY,
+        agent_first_name       TEXT    NOT NULL DEFAULT '',
+        agent_last_name        TEXT    NOT NULL DEFAULT '',
+        agent_name             TEXT    NOT NULL DEFAULT '',
+        agent_email            TEXT    NOT NULL DEFAULT '',
+        commission_plan_id     TEXT    NOT NULL DEFAULT '',
+        commission_plan_name   TEXT    NOT NULL DEFAULT '',
+        cap_amount              REAL   NOT NULL DEFAULT 0,
+        cap_earned              REAL   NOT NULL DEFAULT 0,
+        amount_left_to_cap      REAL   NOT NULL DEFAULT 0,
+        anniversary_date        TEXT    NOT NULL DEFAULT '',
+        anniversary_end_date    TEXT    NOT NULL DEFAULT '',
+        agent_start_date        TEXT    NOT NULL DEFAULT '',
+        terminated_date         TEXT    NOT NULL DEFAULT '',
+        recruited_by_person_id  TEXT    NOT NULL DEFAULT '',
+        recruited_by_name       TEXT    NOT NULL DEFAULT '',
+        office_id                TEXT   NOT NULL DEFAULT '',
+        office_name              TEXT   NOT NULL DEFAULT '',
+        company_id               TEXT   NOT NULL DEFAULT '',
+        company_name             TEXT   NOT NULL DEFAULT '',
+        is_active_agent          INTEGER NOT NULL DEFAULT 1,
+        cap_status_modify_date   TEXT    NOT NULL DEFAULT '',
+        synced_at                TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_active     ON darwin_cap_progress(is_active_agent)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_recruiter  ON darwin_cap_progress(recruited_by_person_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_email      ON darwin_cap_progress(agent_email)");
+
+    // Revenue share — one row per (recruiter, downline agent, override role) pair,
+    // filtered to overrideRole='Revenue Share' at sync time; feeds the growth network.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_revenue_share (
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        recruiter_person_id         INTEGER NOT NULL,
+        recruiter_name              TEXT    NOT NULL DEFAULT '',
+        agent_person_id             INTEGER NOT NULL,
+        agent_name                  TEXT    NOT NULL DEFAULT '',
+        override_role               TEXT    NOT NULL DEFAULT '',
+        ytd_amount                  REAL    NOT NULL DEFAULT 0,
+        ytd_amount_closed_basis     REAL    NOT NULL DEFAULT 0,
+        ytd_amount_posted_basis     REAL    NOT NULL DEFAULT 0,
+        all_time_amount             REAL    NOT NULL DEFAULT 0,
+        all_time_paid_amount        REAL    NOT NULL DEFAULT 0,
+        voucher_count               INTEGER NOT NULL DEFAULT 0,
+        last_override_date          TEXT    NOT NULL DEFAULT '',
+        has_current_override_setup INTEGER  NOT NULL DEFAULT 1,
+        is_non_producing            INTEGER NOT NULL DEFAULT 0,
+        rev_share_modify_date       TEXT    NOT NULL DEFAULT '',
+        company_id                  TEXT    NOT NULL DEFAULT '',
+        synced_at                   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(recruiter_person_id, agent_person_id, override_role)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_drs_recruiter ON darwin_revenue_share(recruiter_person_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_drs_agent     ON darwin_revenue_share(agent_person_id)");
+
+    // Sales volume — one row per agent, YTD closed-transaction volume.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_sales_volume (
+        agent_person_id                   INTEGER PRIMARY KEY,
+        agent_name                        TEXT    NOT NULL DEFAULT '',
+        ytd_sales_volume                  REAL    NOT NULL DEFAULT 0,
+        ytd_sales_volume_processed_basis  REAL    NOT NULL DEFAULT 0,
+        ytd_list_volume                   REAL    NOT NULL DEFAULT 0,
+        ytd_sell_volume                   REAL    NOT NULL DEFAULT 0,
+        ytd_transaction_count             REAL    NOT NULL DEFAULT 0,
+        volume_modify_date                TEXT    NOT NULL DEFAULT '',
+        company_id                        TEXT    NOT NULL DEFAULT '',
+        synced_at                         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
     return $pdo;
 }
 
@@ -1499,6 +1764,23 @@ function state_roster_status(string $code): array {
 // All 14 state roster statuses keyed by state code.
 function state_roster_statuses_all(): array {
     $rows = local_db()->query("SELECT * FROM state_roster_status")->fetchAll(PDO::FETCH_ASSOC);
+    $map = [];
+    foreach ($rows as $r) $map[$r['state_code']] = $r;
+    return $map;
+}
+
+// PandaDoc template id for a given state, or null if no state-specific
+// template has been set up yet (caller falls back to the global default).
+function pandadoc_template_for_state(string $code): ?string {
+    $s = local_db()->prepare("SELECT template_id FROM pandadoc_state_templates WHERE state_code=?");
+    $s->execute([$code]);
+    $id = $s->fetchColumn();
+    return ($id !== false && $id !== '') ? $id : null;
+}
+
+// All configured per-state PandaDoc templates keyed by state code.
+function pandadoc_state_templates_all(): array {
+    $rows = local_db()->query("SELECT * FROM pandadoc_state_templates ORDER BY state_code")->fetchAll(PDO::FETCH_ASSOC);
     $map = [];
     foreach ($rows as $r) $map[$r['state_code']] = $r;
     return $map;

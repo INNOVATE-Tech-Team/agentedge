@@ -101,18 +101,14 @@ if ($action === 'save_signature') {
     exit;
 }
 
-// Roster for the single-person picker's datalist. Non-admins only see people
-// in their own Market Center(s) — same scoping ce_validate_audience enforces.
+// Roster for the single-person picker's datalist. Company-wide for everyone
+// with Company Email access — 'person' has no Market Center scoping.
 if ($action === 'roster_list') {
-    $mine = my_mc_slugs();
-    $out  = [];
+    $out = [];
     foreach (ce_fetch_crm_roster() as $a) {
         $email = strtolower(trim($a['email'] ?? ''));
         if (!$email) continue;
-        $mc   = $a['marketCenter'] ?? '';
-        $slug = $mc ? slugify_mc($mc) : '';
-        if (!is_admin() && (!$slug || !in_array($slug, $mine, true))) continue;
-        $out[] = ['name' => $a['fullName'] ?? '', 'email' => $email, 'marketCenter' => $mc];
+        $out[] = ['name' => $a['fullName'] ?? '', 'email' => $email, 'marketCenter' => $a['marketCenter'] ?? ''];
     }
     echo json_encode(['ok'=>true, 'agents'=>$out]);
     exit;

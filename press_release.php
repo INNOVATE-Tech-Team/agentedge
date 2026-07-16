@@ -5,7 +5,8 @@ require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $perms = current_perms();
-if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
+if (!is_leader()) { header('Location: index.php'); exit; }
+$canEdit = is_admin();
 
 $agentName  = htmlspecialchars($agent['name']  ?? '');
 $agentEmail = htmlspecialchars($agent['email'] ?? '');
@@ -17,6 +18,7 @@ $csrf = $_SESSION['csrf'];
 
 // ── Handle contact CRUD ──────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canEdit) { header('Location: press_release.php?tab=contacts'); exit; }
     if (($_POST['csrf'] ?? '') !== $csrf) die('Invalid CSRF token.');
 
     $db     = local_db();
@@ -283,6 +285,7 @@ $activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
             <div class="ct-e" id="ct-view-<?= $cid ?>" data-state="<?= h($c['state']) ?>">
               <div class="ct-out">
                 <span><?= h($c['outlet']) ?></span>
+                <?php if ($canEdit): ?>
                 <div class="ct-actions">
                   <a onclick="ctToggle(<?= $cid ?>)">Edit</a>
                   <form method="post" style="display:inline" onsubmit="return confirm('Delete this contact?');">
@@ -292,6 +295,7 @@ $activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
                     <button type="submit" class="ct-del">Delete</button>
                   </form>
                 </div>
+                <?php endif; ?>
               </div>
 <?php if ($c['beat'] !== ''): ?>              <div class="ct-beat"><?= h($c['beat']) ?></div>
 <?php endif; ?>
@@ -300,6 +304,7 @@ $activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
 <?php if ($c['note'] !== ''): ?>              <div class="ct-note2"><?= h($c['note']) ?></div>
 <?php endif; ?>
             </div>
+            <?php if ($canEdit): ?>
             <form class="ct-edit-form" id="ct-edit-<?= $cid ?>" method="post" style="display:none" data-state="<?= h($c['state']) ?>">
               <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
               <input type="hidden" name="action" value="update_contact">
@@ -315,11 +320,13 @@ $activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
                 <button type="button" class="btn-pr-sec" onclick="ctToggle(<?= $cid ?>)">Cancel</button>
               </div>
             </form>
+            <?php endif; ?>
 <?php endforeach; ?>
           </div>
 <?php endforeach; ?>
         </div><!-- /ct-grid -->
 
+        <?php if ($canEdit): ?>
         <div class="ct-add">
           <div class="ct-add-h">Add a Contact</div>
           <form class="ct-add-form" method="post">
@@ -342,6 +349,7 @@ $activeTab = ($_GET['tab'] ?? '') === 'contacts' ? 'contacts' : 'builder';
             <button type="submit" class="btn-pr-primary">Add Contact</button>
           </form>
         </div>
+        <?php endif; ?>
       </div><!-- /contacts -->
 
     </main>

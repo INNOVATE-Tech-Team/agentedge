@@ -83,6 +83,24 @@ if ($action === 'save') {
                ->execute([$bicEmail, $slug]);
         }
 
+        // Push to Advantage (coastline-server) so market centers created or
+        // edited here flow the other direction too, not just CRM->AgentEdge
+        // via the 'import' action above. Upserts by agentedge_slug on that
+        // side — best-effort, never blocks the save itself if unreachable.
+        try {
+            $c       = cfg();
+            $pushUrl = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/')
+                . '/public/agentedge/market-center?token=' . urlencode($c['crm_token'] ?? '');
+            $ctx = stream_context_create(['http' => [
+                'method'        => 'POST',
+                'timeout'       => 8,
+                'header'        => "Content-Type: application/json\r\n",
+                'content'       => json_encode(['slug' => $slug, 'name' => $name, 'state_code' => $state]),
+                'ignore_errors' => true,
+            ]]);
+            @file_get_contents($pushUrl, false, $ctx);
+        } catch (\Throwable $e) {}
+
         echo json_encode([
             'ok' => true, 'slug' => $slug, 'name' => $name,
             'state_code' => $state, 'sort_ord' => $ord,
@@ -133,12 +151,22 @@ if ($action === 'import') {
         $mc = $a['marketCenter'] ?? '';
         if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
         if (!$mc) continue;
-        $slug = slugify_mc($mc);
+
+        // CRM market center names are often state-prefixed ("SC - Conway"),
+        // while AgentEdge's own are plain city names ("Conway") — strip the
+        // prefix before slugifying so this matches the existing MC instead
+        // of creating a same-office duplicate under a different slug.
+        $state  = '';
+        $mcName = $mc;
+        if (preg_match('/^([A-Z]{2})\s*[-–]\s*(.+)$/', $mc, $m)) {
+            $state  = $m[1];
+            $mcName = trim($m[2]);
+        }
+
+        $slug = slugify_mc($mcName);
         if (isset($seen[$slug])) continue;
         $seen[$slug] = true;
-        $state = '';
-        if (preg_match('/^([A-Z]{2})\s*[-–]/', $mc, $m)) $state = $m[1];
-        $ins->execute([$slug, $mc, $state]);
+        $ins->execute([$slug, $mcName, $state]);
         if ($ins->rowCount() > 0) $added++;
     }
     echo json_encode(['ok'=>true, 'added'=>$added]);

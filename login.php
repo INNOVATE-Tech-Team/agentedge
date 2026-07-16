@@ -54,8 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body class="login-body">
   <div class="login-card">
-    <div class="brand">INNOVATE</div>
-    <div class="brand-sub">AgentEdge</div>
+    <a href="index.php" class="login-logo"><img src="assets/logo.png" alt="INNOVATE Real Estate"></a>
+    <div class="login-heading">Please login</div>
 
     <?php if ($err): ?>
       <div class="login-err"><?= htmlspecialchars($err) ?></div>
@@ -81,9 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <label>Password
         <input type="password" name="password" required>
       </label>
+      <label class="login-remember">
+        <!-- Cosmetic only for now — no remember-token/session-extension backend exists yet. -->
+        <input type="checkbox" id="remember"> Remember me
+      </label>
       <button type="submit">Sign in</button>
       <a class="login-forgot" href="forgot_password.php">Forgot password?</a>
     </form>
+  </div>
+  <div class="login-footer">
+    &copy; <?= date('Y') ?> Copyright INNOVATE Real Estate &middot; <a href="privacy.php">Privacy Policy</a>
   </div>
 </body>
 </html>

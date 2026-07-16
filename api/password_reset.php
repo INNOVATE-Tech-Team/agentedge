@@ -101,7 +101,6 @@ if ($action === 'confirm') {
 
     session_regenerate_id(true);
     $_SESSION['agent'] = $agent;
-    unset($_SESSION['perms']);
     log_login_event($agent['email'], $agent['name'] ?? '', 'password_reset');
 
     echo json_encode(['ok' => true]);

@@ -10,6 +10,52 @@ if (!$me) { http_response_code(401); exit; }
 
 $db = local_db();
 
+// Large video streams over slow connections can exceed the default 30s
+// max_execution_time; raise it immediately (upload_max_filesize/post_max_size/
+// max_input_time are separately raised in api/.user.ini for the upload side).
+set_time_limit(0);
+ini_set('max_execution_time', '0');
+
+// Streams $path with HTTP Range support so large downloads can seek/resume
+// instead of requiring one unbroken connection for the whole file.
+function stream_with_range(string $path, string $mime, string $dispositionHeader) {
+    $size  = filesize($path);
+    $start = 0;
+    $end   = $size - 1;
+
+    if (isset($_SERVER['HTTP_RANGE'])) {
+        if (preg_match('/bytes=(\d+)-(\d*)/', $_SERVER['HTTP_RANGE'], $m)) {
+            $start = (int)$m[1];
+            $end   = $m[2] !== '' ? min((int)$m[2], $size - 1) : $size - 1;
+        }
+        if ($start > $end || $start >= $size) {
+            http_response_code(416);
+            header("Content-Range: bytes */$size");
+            exit;
+        }
+        http_response_code(206);
+        header("Content-Range: bytes $start-$end/$size");
+    }
+
+    header("Content-Type: $mime");
+    header("Content-Length: " . ($end - $start + 1));
+    header("Accept-Ranges: bytes");
+    header($dispositionHeader);
+    header("Cache-Control: private");
+
+    $fp = fopen($path, 'rb');
+    fseek($fp, $start);
+    $remaining = $end - $start + 1;
+    while ($remaining > 0 && !feof($fp)) {
+        $chunk = min(65536, $remaining);
+        echo fread($fp, $chunk);
+        $remaining -= $chunk;
+        if (connection_aborted()) break;
+    }
+    fclose($fp);
+    exit;
+}
+
 // Thumbnail mode: ?thumb=1&course_id=X
 if (!empty($_GET['thumb'])) {
     $courseId = (int)($_GET['course_id'] ?? 0);
@@ -26,6 +72,55 @@ if (!empty($_GET['thumb'])) {
     header("Content-Length: " . filesize($path));
     readfile($path);
     exit;
+}
+
+// Content image mode: ?img=KEY (images embedded in lesson notes via the Quill editor)
+if (!empty($_GET['img'])) {
+    $key  = basename($_GET['img']);
+    $path = __DIR__ . '/../data/uni/' . $key;
+    if (!file_exists($path)) { http_response_code(404); echo 'Not found'; exit; }
+    $mime = mime_content_type($path) ?: 'image/jpeg';
+    header("Content-Type: $mime");
+    header("Cache-Control: private, max-age=86400");
+    header("Content-Length: " . filesize($path));
+    readfile($path);
+    exit;
+}
+
+// Attachment mode: ?attachment=ID (extra downloadable files on a lesson, in addition to its primary file/video)
+if (!empty($_GET['attachment'])) {
+    $attId = (int)$_GET['attachment'];
+    $s = $db->prepare(
+        "SELECT af.file_key, af.original_name, c.published
+         FROM uni_lesson_files af
+         JOIN uni_lessons l ON l.id=af.lesson_id
+         JOIN uni_courses c ON c.id=l.course_id
+         WHERE af.id=?"
+    );
+    $s->execute([$attId]);
+    $att = $s->fetch(PDO::FETCH_ASSOC);
+    if (!$att) { http_response_code(404); echo 'Not found'; exit; }
+    if (!$att['published'] && !is_admin()) { http_response_code(403); echo 'Forbidden'; exit; }
+    $path = __DIR__ . '/../data/uni/' . $att['file_key'];
+    if (!file_exists($path)) { http_response_code(404); echo 'File not found'; exit; }
+    $mime = mime_content_type($path) ?: 'application/octet-stream';
+    $name = addslashes($att['original_name'] ?: basename($path));
+    stream_with_range($path, $mime, 'Content-Disposition: attachment; filename="' . $name . '"');
+}
+
+// Learner-upload submission mode (admin review): ?submission=ID
+if (!empty($_GET['submission'])) {
+    if (!is_admin()) { http_response_code(403); echo 'Forbidden'; exit; }
+    $subId = (int)$_GET['submission'];
+    $s = $db->prepare("SELECT file_key, original_name FROM uni_learner_uploads WHERE id=?");
+    $s->execute([$subId]);
+    $sub = $s->fetch(PDO::FETCH_ASSOC);
+    if (!$sub) { http_response_code(404); echo 'Not found'; exit; }
+    $path = __DIR__ . '/../data/uni/' . $sub['file_key'];
+    if (!file_exists($path)) { http_response_code(404); echo 'File not found'; exit; }
+    $mime = mime_content_type($path) ?: 'application/octet-stream';
+    $name = addslashes($sub['original_name'] ?: basename($path));
+    stream_with_range($path, $mime, 'Content-Disposition: attachment; filename="' . $name . '"');
 }
 
 $id = (int)($_GET['id'] ?? 0);

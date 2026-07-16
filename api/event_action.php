@@ -118,6 +118,7 @@ if ($action === 'create') {
         $wait->execute();
         foreach ($wait->fetchAll(PDO::FETCH_ASSOC) as $promoted) {
             $db->prepare("UPDATE events_rsvps SET status='registered' WHERE id=?")->execute([$promoted['id']]);
+            try { gcal_add_attendee($cal_id, $token, $event_id, $promoted['agent_email']); } catch (\Throwable $e) {}
             queue_email_to([$promoted['agent_email']], "You're in: {$title}", implode("\n", [
                 "A seat opened up — you've been moved from the waitlist to registered for:",
                 "",

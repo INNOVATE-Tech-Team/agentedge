@@ -25,7 +25,7 @@
 <body>
 <div class="wrap">
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: June 16, 2026</p>
+  <p class="updated">Last updated: July 13, 2026</p>
 
   <p>INNOVATE Real Estate ("INNOVATE," "we," "our," or "us") operates internal agent tools and platforms including AgentEdge, INNOVATE Advantage (bold360.vip), agent websites, and related services. This Privacy Policy explains how we collect, use, and protect information in connection with these platforms.</p>
 
@@ -52,7 +52,27 @@
   </ul>
   <p>We do not sell your personal information. We do not share it with third parties except as described in Section 4.</p>
 
-  <h2>4. Third-Party Services</h2>
+  <h2 id="sms">4. SMS / Text Message Notifications</h2>
+  <p><strong>Program name:</strong> AgentEdge SMS Notifications, operated by INNOVATE Real Estate. This section describes exactly how that opt-in works and what you'll receive if you turn it on.</p>
+  <p><strong>How you opt in.</strong> Log in to AgentEdge at <a href="https://agents.innovateonline.com/login.php">agents.innovateonline.com</a>, go to <strong>My Profile</strong>, and find the <strong>Notification Preferences</strong> card. There you can turn on <strong>"Text (SMS) notifications"</strong> and enter a US mobile number. Below is exactly what that control looks like inside the product:</p>
+  <div class="contact-box" style="max-width:420px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#222">Text (SMS) notifications</div>
+        <div style="font-size:12px;color:#888">Short announcement alerts to your mobile</div>
+      </div>
+      <div aria-hidden="true" style="width:36px;height:20px;border-radius:10px;background:#82C112;position:relative;flex-shrink:0">
+        <div style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;right:2px"></div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#888;margin-top:10px">US numbers only. Msg &amp; data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help.</div>
+  </div>
+  <p style="margin-top:14px"><strong>Who this applies to.</strong> Only INNOVATE agents and staff with an active AgentEdge login who have affirmatively enabled this toggle. This is not used for cold outreach or marketing to the public.</p>
+  <p><strong>What you'll receive.</strong> Short alerts when a new company announcement is posted, e.g.: <em>"INNOVATE: Office closed Friday for training — see AgentEdge for details."</em> Roughly a few messages per month, tied to real announcement volume.</p>
+  <p><strong>Opting out.</strong> Reply <strong>STOP</strong> to any message to unsubscribe immediately, or uncheck the toggle in My Profile at any time. Reply <strong>HELP</strong> for assistance.</p>
+  <p><strong>Support.</strong> Reply <strong>HELP</strong> to any message, or contact <a href="mailto:info@innovateonline.com">info@innovateonline.com</a> with any questions about this program.</p>
+
+  <h2>5. Third-Party Services</h2>
   <ul>
     <li><strong>DotLoop (Zillow Group)</strong> — when you connect your DotLoop account, you authorize us to access your transaction data through DotLoop's API on your behalf. DotLoop's own privacy policy governs their handling of your data.</li>
     <li><strong>SendGrid (Twilio)</strong> — we use SendGrid to send transactional emails (notifications, password resets). Your email address is transmitted to SendGrid for delivery purposes only.</li>
@@ -60,22 +80,22 @@
     <li><strong>Amazon Web Services</strong> — our servers and databases are hosted on AWS infrastructure in the United States.</li>
   </ul>
 
-  <h2>5. Data Security</h2>
+  <h2>6. Data Security</h2>
   <p>We use industry-standard measures to protect your data, including encrypted HTTPS connections, hashed password storage, and access controls that limit data visibility to authorized users only. OAuth tokens are stored encrypted at rest.</p>
 
-  <h2>6. Data Retention</h2>
+  <h2>7. Data Retention</h2>
   <p>We retain your account information for as long as you are affiliated with INNOVATE. When an agent or staff member's account is deactivated, personal data is retained for up to 12 months for auditing purposes, then deleted or anonymized. DotLoop OAuth tokens are deleted immediately upon disconnecting your account.</p>
 
-  <h2>7. Your Rights</h2>
+  <h2>8. Your Rights</h2>
   <p>You may request access to, correction of, or deletion of your personal information at any time by contacting us using the information below. To disconnect your DotLoop account and remove stored tokens, you can do so directly within AgentEdge at any time.</p>
 
-  <h2>8. Children's Privacy</h2>
+  <h2>9. Children's Privacy</h2>
   <p>Our platforms are intended solely for real estate professionals and are not directed at individuals under 18 years of age.</p>
 
-  <h2>9. Changes to This Policy</h2>
+  <h2>10. Changes to This Policy</h2>
   <p>We may update this policy from time to time. The "Last updated" date at the top of this page will reflect any changes. Continued use of our platforms after changes are posted constitutes acceptance of the updated policy.</p>
 
-  <h2>10. Contact Us</h2>
+  <h2>11. Contact Us</h2>
   <p>If you have questions or requests regarding this Privacy Policy, please contact:</p>
   <div class="contact-box">
     <strong>INNOVATE Real Estate</strong><br>

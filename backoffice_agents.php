@@ -26,7 +26,8 @@ $intakeAgents = local_db()->query(
             i.personal_email, i.commissions_email,
             i.address_line1, i.address_line2, i.city, i.state, i.zip, i.country,
             i.drivers_license, i.gender,
-            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype,
+            i.website, i.additional_websites, i.facebook, i.linkedin, i.skype, i.instagram,
+            i.twitter, i.youtube, i.tiktok, i.blog,
             i.specialty, i.career_start, i.prior_occupation, i.prior_affiliation,
             i.full_time, i.show_on_internet,
             i.corporation_start, i.corporation_end,
@@ -41,6 +42,14 @@ $intakeAgents = local_db()->query(
      LEFT JOIN agent_roles ar ON ar.email = i.email
      LEFT JOIN agent_admin aa ON aa.email = i.email
      ORDER BY i.submitted DESC, i.updated_at DESC"
+)->fetchAll(PDO::FETCH_ASSOC);
+
+$launchCoaches = local_db()->query(
+    "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
+     FROM agent_roles ar
+     LEFT JOIN agent_intake i ON i.email = ar.email
+     WHERE ar.role = 'launch_coach'
+     ORDER BY full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
 
 $additionalLicensesByEmail = [];
@@ -59,6 +68,50 @@ $pendingAgents = local_db()->query(
      ORDER BY q.added_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
 
+// Active roster agents with no agent_intake row at all — never started a
+// profile (as opposed to $pendingAgents, which is mid-onboarding). Matched
+// by email when the roster row has one, falling back to an exact name match
+// since many older/manually-added roster rows have no email on file.
+$missingAgents = [];
+
+$rosterRows = local_db()->query(
+    "SELECT agent_name, email, state_code, market_center FROM innovate_roster WHERE active=1"
+)->fetchAll(PDO::FETCH_ASSOC);
+
+$byRosterName = [];
+foreach ($rosterRows as $r) {
+    $key = strtolower(trim($r['agent_name']));
+    if ($key === '') continue;
+    if (!isset($byRosterName[$key])) {
+        $byRosterName[$key] = ['agent_name' => $r['agent_name'], 'email' => $r['email'], 'states' => [], 'mcs' => []];
+    }
+    if ($r['email'] && !$byRosterName[$key]['email']) $byRosterName[$key]['email'] = $r['email'];
+    if ($r['state_code'])    $byRosterName[$key]['states'][] = $r['state_code'];
+    if ($r['market_center']) $byRosterName[$key]['mcs'][]    = $r['market_center'];
+}
+
+$intakeEmails = [];
+$intakeNames  = [];
+foreach ($intakeAgents as $ia) {
+    if ($ia['email'])     $intakeEmails[strtolower(trim($ia['email']))]     = true;
+    if ($ia['full_name']) $intakeNames[strtolower(trim($ia['full_name']))]  = true;
+}
+
+foreach ($byRosterName as $key => $r) {
+    $email = strtolower(trim($r['email'] ?? ''));
+    $hasByEmail = $email !== '' && isset($intakeEmails[$email]);
+    $hasByName  = isset($intakeNames[$key]);
+    if (!$hasByEmail && !$hasByName) {
+        $missingAgents[] = [
+            'full_name'       => $r['agent_name'],
+            'email'           => $r['email'] ?: '',
+            'office_location' => implode(', ', array_unique($r['mcs'])),
+            'state_code'      => implode(', ', array_unique($r['states'])),
+        ];
+    }
+}
+usort($missingAgents, fn($x, $y) => strcasecmp($x['full_name'], $y['full_name']));
+
 $hsCount = [];
 foreach (local_db()->query("SELECT agent_email, COUNT(*) as cnt FROM agent_intake_files GROUP BY agent_email")->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $hsCount[strtolower($r['agent_email'])] = (int)$r['cnt'];
@@ -71,6 +124,14 @@ foreach (local_db()->query(
      WHERE id IN (SELECT MAX(id) FROM agent_intake_files GROUP BY agent_email)"
 )->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $hsLatest[strtolower($r['agent_email'])] = $r['file_key'];
+}
+
+// Full headshot list per agent, used to render inline thumbnails in the detail card.
+$hsAll = [];
+foreach (local_db()->query(
+    "SELECT agent_email, file_key, orig_name FROM agent_intake_files ORDER BY uploaded_at"
+)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+    $hsAll[strtolower($r['agent_email'])][] = $r;
 }
 
 function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): string {
@@ -86,6 +147,7 @@ $submittedCount = count(array_filter($intakeAgents, fn($a) => !empty($a['submitt
 $draftCount = count($intakeAgents) - $submittedCount;
 $totalWithForms = count($intakeAgents);
 $pendingCount = count($pendingAgents);
+$missingCount = count($missingAgents);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -189,6 +251,10 @@ $pendingCount = count($pendingAgents);
         <div class="rs-num"><?= $pendingCount ?></div>
         <div class="rs-lbl">Pending</div>
       </div>
+      <div class="rs-tile amber">
+        <div class="rs-num"><?= $missingCount ?></div>
+        <div class="rs-lbl">No Profile</div>
+      </div>
     </div>
 
     <div class="ag-toolbar">
@@ -200,6 +266,7 @@ $pendingCount = count($pendingAgents);
       <button class="ag-tab" data-tab="submitted">Submitted</button>
       <button class="ag-tab" data-tab="draft">Draft</button>
       <button class="ag-tab" data-tab="pending">Pending</button>
+      <button class="ag-tab" data-tab="missing">No Profile</button>
     </div>
 
     <div class="table-wrap">
@@ -337,7 +404,12 @@ $pendingCount = count($pendingAgents);
                 <div class="dg-field"><span class="dg-label">Additional Websites</span><?= dv($a['additional_websites'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Facebook</span><?= dv($a['facebook'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">LinkedIn</span><?= dv($a['linkedin'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Instagram</span><?= dv($a['instagram'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Skype</span><?= dv($a['skype'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Twitter / X</span><?= dv($a['twitter'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">YouTube</span><?= dv($a['youtube'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">TikTok</span><?= dv($a['tiktok'] ?? '') ?></div>
+                <div class="dg-field"><span class="dg-label">Blog</span><?= dv($a['blog'] ?? '') ?></div>
 
                 <div class="dg-section">Bio &amp; Marketing</div>
                 <div class="dg-field"><span class="dg-label">Referring Agent</span><?= dv($a['referring_agent']) ?></div>
@@ -353,7 +425,13 @@ $pendingCount = count($pendingAgents);
                 <div class="dg-field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:10px">
                   <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
                   <?php if ($hs > 0): ?>
-                    <span class="dg-value"><?= $hs ?> headshot<?= $hs !== 1 ? 's' : '' ?> on file — <a href="intake.php" target="_blank" style="color:var(--green-d)">view in intake form</a></span>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <?php foreach (($hsAll[$emailLower] ?? []) as $hsFile): ?>
+                        <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                          <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+                        </a>
+                      <?php endforeach; ?>
+                    </div>
                   <?php else: ?>
                     <span class="dg-value empty">No headshot uploaded yet</span>
                   <?php endif; ?>
@@ -383,7 +461,58 @@ $pendingCount = count($pendingAgents);
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Coached By</span>
-                  <input type="text" id="admin-coached-<?= $idx ?>" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                    <?php foreach ($launchCoaches as $lc): ?>
+                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Managed By</span>
+                  <input type="text" id="admin-managed-<?= $idx ?>" value="<?= h($a['managed_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Recruit Source</span>
+                  <select id="admin-recruitsrc-<?= $idx ?>" class="rs-select" data-current="<?= h($a['recruit_source_email'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                  </select>
+                </div>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
+                  <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
+                </div>
+
+                <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
+                <div class="dg-field">
+                  <span class="dg-label">1099 Type</span>
+                  <select id="admin-1099type-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                    <?php foreach (['1099-NEC', '1099-MISC', 'W-2', 'N/A'] as $opt): ?>
+                      <option value="<?= h($opt) ?>" <?= ($a['tax_1099_type'] ?? '') === $opt ? 'selected' : '' ?>><?= h($opt) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Gets 1099?</span>
+                  <label style="font-size:12px"><input type="checkbox" id="admin-gets1099-<?= $idx ?>" style="width:auto;vertical-align:middle;margin-right:6px" <?= !empty($a['gets_1099']) || $a['gets_1099'] === null ? 'checked' : '' ?>> Yes</label>
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Terminated Date</span>
+                  <input type="date" id="admin-terminated-<?= $idx ?>" value="<?= h($a['terminated_date'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Agent Team</span>
+                  <input type="text" id="admin-team-<?= $idx ?>" value="<?= h($a['agent_team'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                </div>
+                <div class="dg-field">
+                  <span class="dg-label">Coached By</span>
+                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+                    <option value="">— none —</option>
+                    <?php foreach ($launchCoaches as $lc): ?>
+                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
                 </div>
                 <div class="dg-field">
                   <span class="dg-label">Managed By</span>
@@ -491,6 +620,40 @@ $pendingCount = count($pendingAgents);
                 </div>
                 <div class="detail-actions">
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
+                </div>
+              </div>
+            </td>
+          </tr>
+<?php endforeach; ?>
+
+<?php foreach ($missingAgents as $idx => $m):
+  $rowId = 'mrow-' . $idx;
+  $detailId = 'mdetail-' . $idx;
+?>
+          <tr class="data-row" id="<?= $rowId ?>" data-tab="missing"
+              data-search="<?= h(strtolower($m['full_name'] . ' ' . $m['email'] . ' ' . $m['office_location'])) ?>">
+            <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this)">&#9658;</button></td>
+            <td><strong><?= h($m['full_name'] ?: '—') ?></strong></td>
+            <td><?= h($m['email'] ?: '—') ?></td>
+            <td><?= h($m['office_location'] ?: '—') ?></td>
+            <td><span class="dg-value empty" style="font-size:12px">—</span></td>
+            <td><span class="st-badge" style="background:#fff3e0;color:#c87800">No Profile</span></td>
+            <td><span class="dg-value empty" style="font-size:12px">—</span></td>
+          </tr>
+          <tr class="detail-row" id="<?= $detailId ?>" style="display:none" data-tab="missing">
+            <td colspan="7">
+              <div class="detail-grid">
+                <div class="dg-section">Roster Info</div>
+                <div class="dg-field"><span class="dg-label">Name</span><?= dv($m['full_name']) ?></div>
+                <div class="dg-field"><span class="dg-label">Email on File</span><?= dv($m['email']) ?></div>
+                <div class="dg-field"><span class="dg-label">Market Center(s)</span><?= dv($m['office_location']) ?></div>
+                <div class="dg-field"><span class="dg-label">State(s)</span><?= dv($m['state_code']) ?></div>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">Intake Form</span>
+                  <span class="dg-value empty">No profile started — never submitted an intake form</span>
+                </div>
+                <div class="detail-actions">
+                  <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>', '<?= h($m['office_location']) ?>')">Create Profile →</button>
                 </div>
               </div>
             </td>
@@ -607,7 +770,12 @@ $pendingCount = count($pendingAgents);
         <div class="em-field"><label>Additional Websites</label><input id="em-additional_websites"></div>
         <div class="em-field"><label>Facebook</label><input id="em-facebook"></div>
         <div class="em-field"><label>LinkedIn</label><input id="em-linkedin"></div>
+        <div class="em-field"><label>Instagram</label><input id="em-instagram"></div>
         <div class="em-field"><label>Skype</label><input id="em-skype"></div>
+        <div class="em-field"><label>Twitter / X</label><input id="em-twitter"></div>
+        <div class="em-field"><label>YouTube</label><input id="em-youtube"></div>
+        <div class="em-field"><label>TikTok</label><input id="em-tiktok"></div>
+        <div class="em-field"><label>Blog</label><input id="em-blog"></div>
 
         <div class="em-section">Bio &amp; Marketing</div>
         <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
@@ -759,7 +927,8 @@ $pendingCount = count($pendingAgents);
     'birthday','spouse_name','gender','drivers_license','tshirt_size',
     'is_military','first_responder','is_teacher','languages',
     'emergency_name','emergency_phone',
-    'website','additional_websites','facebook','linkedin','skype',
+    'website','additional_websites','facebook','linkedin','skype','instagram',
+    'twitter','youtube','tiktok','blog',
     'referring_agent','bio'];
   var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
   var emCurrentEmail = null;
@@ -768,7 +937,43 @@ $pendingCount = count($pendingAgents);
   // untouched so saving the modal never blanks it out.
   var emExtraBirthday = '';
 
-  window.openEditModal = function (email, name) {
+  // Roster agents with no agent_intake row yet often have no email on file
+  // either (older/manually-added rows). Rather than asking the admin to
+  // retype everything, try a CRM lookup by name first (same search_crm
+  // action already used by the onboarding/offboarding add-agent forms) to
+  // pull email/phone/market center — only fall back to a manual prompt if
+  // the CRM has no match.
+  function askForEmail(name, marketCenter) {
+    var entered = (prompt('No CRM match found. Enter ' + name + '’s email to create their profile:') || '').trim();
+    if (!entered) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entered)) {
+      alert('That doesn’t look like a valid email address.');
+      return;
+    }
+    openEditModal(entered, name, { office_location: marketCenter || '' });
+  }
+
+  window.createMissingProfile = function (email, name, marketCenter) {
+    if (email) {
+      openEditModal(email, name, { office_location: marketCenter || '' });
+      return;
+    }
+
+    fetch('api/onboard_action.php?action=search_crm&q=' + encodeURIComponent(name), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var results = (d.ok && d.results) ? d.results : [];
+        var match = results.find(function (r) { return (r.name || '').toLowerCase() === name.toLowerCase(); }) || results[0];
+        if (match && match.email) {
+          openEditModal(match.email, name, { phone: match.phone || '', office_location: match.marketCenter || marketCenter || '' });
+        } else {
+          askForEmail(name, marketCenter);
+        }
+      })
+      .catch(function () { askForEmail(name, marketCenter); });
+  };
+
+  window.openEditModal = function (email, name, prefill) {
     emCurrentEmail = email;
     document.getElementById('em-agent-name').textContent = name;
     document.getElementById('em-save-msg').textContent = 'Loading…';
@@ -784,7 +989,7 @@ $pendingCount = count($pendingAgents);
 
       EM_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);
-        if (node) node.value = intake[key] || '';
+        if (node) node.value = intake[key] || (prefill && prefill[key]) || '';
       });
       EM_CHECK_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);

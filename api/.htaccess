@@ -1,0 +1,20 @@
+# Scoped to api/ only: University lesson videos/attachments can be large and
+# uploaded/downloaded over slow connections.
+#
+# NOTE: the container already has a live, non-git-tracked global override at
+# /usr/local/etc/php/conf.d/uploads.ini (upload_max_filesize/post_max_size=2048M,
+# max_execution_time/max_input_time=300s) plus Apache's own Timeout=300 in
+# apache2.conf. 300s still isn't enough for a large video over a slow
+# connection, so this removes the execution/input time cap entirely for api/
+# specifically, and matches (doesn't shrink) the existing global upload size.
+#
+# This runs as mod_php (apache2handler SAPI), which does NOT read .user.ini
+# (that mechanism is CGI/FastCGI/FPM-only) -- php_value/php_admin_value in
+# .htaccess is the correct per-directory override here, and works because
+# /etc/apache2/conf-available/docker-php.conf sets "AllowOverride All" on
+# /var/www/.
+php_value upload_max_filesize 2048M
+php_value post_max_size 2048M
+php_value max_execution_time 0
+php_value max_input_time -1
+php_value memory_limit 512M

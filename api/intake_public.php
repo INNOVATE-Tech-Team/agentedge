@@ -3,6 +3,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/notifications.php';
 require_once __DIR__ . '/../lib/crypto.php';
+require_once __DIR__ . '/../lib/onboarding.php';
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -57,7 +58,7 @@ try {
         'personal_email', 'commissions_email',
         'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
         'drivers_license', 'gender',
-        'website', 'additional_websites', 'facebook', 'linkedin', 'skype',
+        'website', 'additional_websites', 'facebook', 'linkedin', 'skype', 'instagram',
         'corporation_start', 'corporation_end', 'career_start',
         'prior_occupation', 'prior_affiliation', 'specialty',
         'full_time', 'show_on_internet',
@@ -109,22 +110,23 @@ try {
         $insLicense->execute([$email, $num, $state, $exp]);
     }
 
-    // ── Add to onboard_queue if not already present ───────────────────────────
-    $exists = local_db()->prepare("SELECT id FROM onboard_queue WHERE LOWER(agent_email)=?");
-    $exists->execute([strtolower($email)]);
-    if (!$exists->fetch()) {
-        local_db()->prepare(
-            "INSERT INTO onboard_queue (agent_email,agent_name,market_center,role,added_by,added_at,status,notes)
-             VALUES (?,?,?,'agent','intake_form',?,?,?)"
-        )->execute([
-            $email,
-            $fv('full_name'),
-            $fv('office_location'),
-            $now,
-            'active',
-            'Submitted via public onboarding intake form',
-        ]);
-    }
+    // ── Add to onboard_queue (also seeds onboard_steps + notifications) ──────
+    // Must go through the shared helper, not a raw INSERT — it's the only
+    // place that seeds onboard_steps from onboard_tools(), so the checklist
+    // isn't left empty for agents who come in via this public form.
+    queue_onboarding_agent(
+        local_db(),
+        $email,
+        $fv('full_name'),
+        $fv('office_location'),
+        '',
+        null,
+        'intake_form',
+        '',
+        '',
+        'agent',
+        'Submitted via public onboarding intake form'
+    );
 
     // ── Email notification ────────────────────────────────────────────────────
     $submitterName  = $fv('full_name');

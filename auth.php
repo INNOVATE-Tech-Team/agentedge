@@ -31,14 +31,12 @@ function original_admin(): ?array {
 function start_masquerade(array $target): void {
     $_SESSION['original_admin'] = $_SESSION['agent'];
     $_SESSION['agent']  = $target;
-    unset($_SESSION['perms']); // force permission re-fetch for new identity
 }
 
 function stop_masquerade(): void {
     if (isset($_SESSION['original_admin'])) {
         $_SESSION['agent'] = $_SESSION['original_admin'];
         unset($_SESSION['original_admin']);
-        unset($_SESSION['perms']); // restore admin permissions
     }
 }
 

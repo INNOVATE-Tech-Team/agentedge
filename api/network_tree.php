@@ -32,14 +32,42 @@ $rows = db_query(
      LEFT JOIN tblstaff s ON s.staffid = t.agent_id"
 );
 
+// Darwin volume/deals overlay — darwin_sales_volume has no email column, only
+// agentPersonId, so join through darwin_cap_progress (full roster, has email) to
+// get an email -> {volume, deals} map. Where a match exists this takes precedence
+// over the Perfex figures below; the tree STRUCTURE (who's under whom) still comes
+// from Perfex/agent_admin — this only overlays the per-node numbers. The "volume"
+// figure shown per node is the override revenue share EARNED FROM this person (sum
+// of darwin_revenue_share.ytd_amount where they're the downline agent) — i.e. what
+// their upline collects on their production — not their own sales volume.
+$darwinByEmail = [];
+try {
+    $dRows = local_db()->query(
+        "SELECT cp.agent_email, sv.ytd_transaction_count, COALESCE(rs.total, 0) AS override_earned
+         FROM darwin_cap_progress cp
+         JOIN darwin_sales_volume sv ON sv.agent_person_id = cp.agent_person_id
+         LEFT JOIN (SELECT agent_person_id, SUM(ytd_amount) AS total FROM darwin_revenue_share GROUP BY agent_person_id) rs
+           ON rs.agent_person_id = cp.agent_person_id
+         WHERE cp.agent_email <> ''"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($dRows as $d) {
+        $darwinByEmail[strtolower(trim($d['agent_email']))] = [
+            'volume' => (float)$d['override_earned'],
+            'deals'  => (int)$d['ytd_transaction_count'],
+        ];
+    }
+} catch (\Throwable $e) {}
+
 $nodes = []; $children = []; $parents = [];
 foreach ($rows as $row) {
-    $id = (string)$row['agent_id'];
+    $id    = (string)$row['agent_id'];
+    $email = $row['agent_email'] ?? '';
+    $dw    = $darwinByEmail[strtolower(trim($email))] ?? null;
     $nodes[$id] = [
         'name'     => trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')) ?: 'Agent',
-        'email'    => $row['agent_email'] ?? '',
-        'volume'   => (float)$row['agent_total_sales_volume'],
-        'deals'    => (int)$row['agent_total_closed_deals'],
+        'email'    => $email,
+        'volume'   => $dw ? $dw['volume'] : (float)$row['agent_total_sales_volume'],
+        'deals'    => $dw ? $dw['deals']  : (int)$row['agent_total_closed_deals'],
         'residual' => (float)$row['agent_residual_income_earned'],
     ];
     $parent = (string)($row['recruit_source_agent_id'] ?? '');
@@ -127,6 +155,24 @@ function countTree(array $node): int {
 
 $tree = buildTree($rootId, $nodes, $children, $terminated, 0);
 if ($tree) $tree = pruneVacant($tree, true);
+
+// The root card shows a different figure than every recruit card below it: TOTAL
+// override earned (as the recruiter collecting from their whole downline), not
+// override earned FROM them by someone above — there usually isn't anyone shown
+// above the root in this view besides the sponsor card. Sum across all
+// darwin_revenue_share rows where this person is the recruiter.
+if ($tree) {
+    try {
+        $ridStmt = local_db()->prepare("SELECT agent_person_id FROM darwin_cap_progress WHERE lower(agent_email)=lower(?) LIMIT 1");
+        $ridStmt->execute([$tree['email'] ?? '']);
+        $rootDarwinId = $ridStmt->fetchColumn();
+        if ($rootDarwinId) {
+            $totStmt = local_db()->prepare("SELECT COALESCE(SUM(ytd_amount),0) FROM darwin_revenue_share WHERE recruiter_person_id=?");
+            $totStmt->execute([$rootDarwinId]);
+            $tree['volume'] = (float)$totStmt->fetchColumn();
+        }
+    } catch (\Throwable $e) {}
+}
 
 $rootCounts = ($tree && !empty($tree['vacant'])) ? 0 : 1;
 $total      = $tree ? countTree($tree) - $rootCounts : 0;

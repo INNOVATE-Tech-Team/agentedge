@@ -54,15 +54,9 @@ function nav_items(): array {
         $core = array_values($coreMap);
     }
 
-    // mc_leader/bic aren't admins, so they never see the admin-only Back Office
-    // section below — surface Agent Communications as its own collapsible group instead.
-    $leaderExtra = [];
-    if ((is_mc_leader() || is_bic()) && !is_admin()) {
-        $leaderExtra[] = ['key' => 'bo_announcements',  'label' => 'Announcements',  'href' => 'backoffice_announcements.php', 'group_label' => 'Agent Communications'];
-        $leaderExtra[] = ['key' => 'bo_company_email',  'label' => 'Company Email',  'href' => 'backoffice_email.php',         'group_label' => 'Agent Communications'];
-    }
-
-    return array_merge($core, $ext, $leaderExtra, [
+    // mc_leader/bic now see the Back Office section directly (department-filtered
+    // in render_sidebar()), so no separate Agent Communications shortcut is needed here.
+    return array_merge($core, $ext, [
         ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
     ]);
 }
@@ -94,7 +88,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
-        ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
+        ['key'=>'bo_mls',                    'label'=>'MLS',                 'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
@@ -110,6 +104,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'finance_budget',            'label'=>'Department Budget',   'href'=>'finance_budget.php',            'dept'=>'Finance'],
         ['key'=>'finance_statements',        'label'=>'Statement Scanner',   'href'=>'finance_statements.php',        'dept'=>'Finance'],
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
+        ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
@@ -119,6 +114,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_links',               'label'=>'Link Settings',       'href'=>'admin_links.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_backoffice',          'label'=>'Menu Builder',        'href'=>'admin_backoffice.php',          'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_dotloop_tokens',      'label'=>'DotLoop Tokens',      'href'=>'admin_dotloop_tokens.php',      'dept'=>'Technology', 'superOnly'=>true],
+        ['key'=>'admin_pandadoc_templates',  'label'=>'PandaDoc Templates',  'href'=>'admin_pandadoc_templates.php',  'dept'=>'Technology', 'superOnly'=>true],
     ];
     foreach (backoffice_items_all() as $r) {
         $item = ['key'=>'bo_'.$r['id'], 'label'=>$r['label'], 'href'=>$r['url'], 'dept'=>($r['department'] ?? 'Operations')];
@@ -199,8 +195,11 @@ function render_sidebar(string $current, array $agent): void {
         echo '</div>';
     }
 
-    // Back Office section — admin+ only. Collapsible with department sub-groups.
-    if ($admin) {
+    // Back Office section — admins see everything; mc_leader/bic see it too, but with
+    // Operations, Finance, Human Resources, and Technology departments hidden entirely.
+    $showBackOffice = $admin || is_mc_leader() || is_bic();
+    $leaderHiddenDepts = ['Operations', 'Finance', 'Human Resources', 'Technology'];
+    if ($showBackOffice) {
         static $boStylesEmitted = false;
         if (!$boStylesEmitted) {
             $boStylesEmitted = true;
@@ -242,6 +241,7 @@ function render_sidebar(string $current, array $agent): void {
                . htmlspecialchars($it['label']) . $arr . '</a>';
         }
         foreach ($deptOrder as $deptName) {
+            if (!$admin && in_array($deptName, $leaderHiddenDepts, true)) continue;
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'
@@ -264,6 +264,8 @@ function render_sidebar(string $current, array $agent): void {
 
     // MC-specific links injected here by mc-links.js
     echo '<div id="mc-resources" hidden></div>';
+    // Agent's own favorite links injected here by mc-links.js
+    echo '<div id="my-links" hidden></div>';
     $who = htmlspecialchars($agent['name'] ?: $agent['email']);
     $role = role_label($perms['role'] ?? 'agent');
     echo '</nav><div class="sb-foot"><div class="sb-who">' . $who . '<span class="sb-role">' . htmlspecialchars($role) . '</span></div>';

@@ -1,7 +1,9 @@
 <?php
 // Google OAuth callback for AgentEdge.
-// This is the redirect URI registered in Google Cloud Console:
-// https://agentedge.innovateonline.com/auth_google.php
+// google_redirect_uri is blank in config.php, so the redirect URI is computed
+// per-host below (matching login.php) — each domain AgentEdge serves from
+// (agentedge.innovateonline.com, agents.innovateonline.com, etc.) must be
+// added as its own Authorized redirect URI in Google Cloud Console.
 // login.php builds the "Sign in with Google" link and stores the CSRF token
 // in $_SESSION['google_oauth_state']; Google redirects back here with a code.
 require_once __DIR__ . '/db.php';
@@ -128,7 +130,6 @@ if ($u) {
 
 session_regenerate_id(true);
 $_SESSION['agent'] = $agent;
-unset($_SESSION['perms']); // force fresh permissions lookup
 log_login_event($agent['email'], $agent['name'], 'google');
 
 header('Location: index.php');

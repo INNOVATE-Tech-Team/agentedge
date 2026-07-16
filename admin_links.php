@@ -95,7 +95,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $navLinks  = local_db()->query("SELECT * FROM nav_ext_links ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
 $mcRows    = local_db()->query("SELECT * FROM mc_resource_links ORDER BY mc_slug,sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
 $coreOrder = local_db()->query("SELECT * FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_ASSOC);
-$bySlug    = [];
+
+// Master market center list — the real source of truth for which slugs agents
+// actually resolve to (see roles.php: slugify_mc()). Every enabled market center
+// gets a group here, even before any resource links have been added for it, so
+// none get silently missed the way "Murrells Inlet" was.
+$marketCenters = local_db()->query(
+    "SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name"
+)->fetchAll(PDO::FETCH_ASSOC);
+$mcName = [];
+$bySlug = [];
+foreach ($marketCenters as $mc) {
+    $slug = trim($mc['slug']);
+    if ($slug === '') continue;
+    $mcName[$slug] = trim($mc['state_code']) ? $mc['state_code'] . ' — ' . $mc['name'] : $mc['name'];
+    $bySlug[$slug] = [];
+}
 foreach ($mcRows as $r) $bySlug[$r['mc_slug']][] = $r;
 ksort($bySlug);
 
@@ -272,7 +287,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <?php foreach ($bySlug as $slug => $links): ?>
           <div class="mc-group">
             <div class="mc-group-head">
-              <span><?= h($slug) ?></span>
+              <span><?= h($mcName[$slug] ?? $slug) ?>
+                <span style="font-size:11px;color:#aaa;font-weight:400"> (<?= h($slug) ?><?= isset($mcName[$slug]) ? '' : ' — not in market center list' ?>)</span>
+              </span>
               <span style="font-size:11px;color:#888;font-weight:400"><?= count($links) ?> link<?= count($links)!==1?'s':'' ?></span>
             </div>
             <div class="mc-group-body">
@@ -315,9 +332,14 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           </div>
           <?php endforeach; ?>
 
-          <!-- Add a new MC slug -->
+          <!-- Add a resource group for a slug not in the market center master list -->
           <div class="add-mc-form">
-            <h4>Add a new Market Center</h4>
+            <h4>Add links for a market center not listed above</h4>
+            <p style="margin:0 0 8px;font-size:12px;color:#888">
+              Every enabled market center from the <a href="backoffice_roster.php">Market Center roster</a> already has a group above —
+              add the market center there first if it's missing, then its group will appear here automatically.
+              Only use this if you need a resource group for a slug that isn't in that master list yet.
+            </p>
             <form method="post" action="admin_links.php" class="inline-form">
               <input type="hidden" name="csrf"   value="<?= h($csrf) ?>">
               <input type="hidden" name="action" value="add_mc">
@@ -325,10 +347,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
               <input class="ifield ifield-key"   name="mc_slug" placeholder="mc-slug (e.g. myrtle-beach)" required>
               <input class="ifield ifield-label" name="label"   placeholder="First link label"            required>
               <input class="ifield ifield-url"   name="url"     placeholder="https://...">
-              <button class="btn-save" type="submit">Create MC + Add link</button>
+              <button class="btn-save" type="submit">Create group + Add link</button>
             </form>
             <p style="margin:8px 0 0;font-size:11px;color:#888">
-              Slug must match the agent's <code>marketCenter</code> from the CRM, slugified (lowercase, spaces → hyphens).
+              Slug must match the agent's <code>marketCenter</code>, slugified (lowercase, spaces → hyphens) — e.g. "Murrells Inlet" → <code>murrells-inlet</code>.
             </p>
           </div>
         </div>

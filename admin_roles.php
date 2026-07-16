@@ -150,7 +150,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ];
             }
             $saved = $email;
-            if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
         } catch (\Throwable $e) { $saveError = $e->getMessage(); }
     }
 }

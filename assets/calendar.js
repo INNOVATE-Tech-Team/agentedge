@@ -24,13 +24,6 @@ function calEsc(s) {
     c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 }
 
-function calLocationHtml(location) {
-  const isUrl = /^https?:\/\//i.test(location.trim());
-  return isUrl
-    ? `<a href="${calEsc(location)}" target="_blank" rel="noopener">${calEsc(location)}</a>`
-    : calEsc(location);
-}
-
 function slugify(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -92,9 +85,7 @@ async function loadEvents(key) {
     }
   }
 
-  const merged = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
-  merged.forEach((ev, i) => { ev._uid = i; });
-  evCache[key] = merged;
+  evCache[key] = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 
@@ -136,8 +127,8 @@ function renderGrid(evs) {
     html += `<div class="cal-cell${isToday ? ' cal-today' : ''}">
       <div class="cal-cell-num">${d}</div>
       ${dayEvs.slice(0, 2).map(ev =>
-        `<div class="cal-chip" data-uid="${ev._uid}" style="background:${sc(ev).bg};color:${sc(ev).text}"
-          title="${calEsc(ev.title)}">${calEsc(ev.title)}</div>`
+        `<div class="cal-chip" style="background:${sc(ev).bg};color:${sc(ev).text}"
+          title="${calEsc(ev.title)}${calFmtTime(ev) ? ' · ' + calFmtTime(ev) : ''}">${calEsc(ev.title)}</div>`
       ).join('')}
       ${dayEvs.length > 2
         ? `<div class="cal-chip-more">+${dayEvs.length - 2} more</div>` : ''}
@@ -173,13 +164,13 @@ function renderList(evs) {
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
   body.innerHTML = vis.map(ev => `
-    <div class="cal-list-ev" data-uid="${ev._uid}">
+    <div class="cal-list-ev">
       <div class="cal-list-ev-inner">
         <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
         <div class="cal-list-ev-body">
-          <div class="cal-list-date">${calFmtDate(ev.date)}</div>
+          <div class="cal-list-date">${calFmtDate(ev.date)}${calFmtTime(ev) ? ` · ${calFmtTime(ev)}` : ''}</div>
           <div class="cal-list-ev-title">${calEsc(ev.title)}</div>
-          ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calLocationHtml(ev.location)}</div>` : ''}
+          ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calEsc(ev.location)}</div>` : ''}
           ${ev.description ? `<div class="cal-list-desc">${calEsc(ev.description)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none">
@@ -224,6 +215,16 @@ function calFmtDate(iso) {
     { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
+function calFmtTime(ev) {
+  if (ev.is_all_day || !ev.start_dt || !ev.start_dt.includes('T')) return '';
+  const start = new Date(ev.start_dt).toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+  if (!ev.end_dt || !ev.end_dt.includes('T')) return start;
+  const end = new Date(ev.end_dt).toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+  return `${start} – ${end}`;
+}
+
 async function calDraw() {
   document.getElementById('cal-grid').innerHTML =
     '<div style="padding:2.5rem;text-align:center;color:#999">Loading…</div>';
@@ -235,27 +236,6 @@ async function calDraw() {
   renderGrid(evs);
   renderList(evs);
   updateTabCounts(evs);
-}
-
-function gcalAddUrl(ev) {
-  let dates;
-  if (ev.is_all_day) {
-    const s = (ev.start_dt || ev.date).replace(/-/g, '');
-    const endBase = ev.end_dt || ev.date;
-    const endObj  = new Date(endBase + 'T00:00:00');
-    endObj.setDate(endObj.getDate() + 1);
-    const e = endObj.toISOString().slice(0, 10).replace(/-/g, '');
-    dates = s + '/' + e;
-  } else {
-    const s = new Date(ev.start_dt).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    const e = new Date(ev.end_dt  ).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    dates = s + '/' + e;
-  }
-  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
-    + '&text='     + encodeURIComponent(ev.title       || '')
-    + '&dates='    + dates
-    + '&details='  + encodeURIComponent(ev.description || '')
-    + '&location=' + encodeURIComponent(ev.location    || '');
 }
 
 function updateTrainingBar() {
@@ -290,17 +270,6 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     if (calFilter === 'mycal') loadCalFeedUrl();
     loadEvents(calKey()).then(evs => { renderGrid(evs); renderList(evs); });
   });
-});
-
-document.getElementById('cal-grid').addEventListener('click', e => {
-  const chip = e.target.closest('.cal-chip');
-  if (!chip) return;
-  const item = document.querySelector(`.cal-list-ev[data-uid="${chip.dataset.uid}"]`);
-  if (!item) return;
-  item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  item.classList.remove('cal-list-ev-flash');
-  void item.offsetWidth; // restart animation if clicked again
-  item.classList.add('cal-list-ev-flash');
 });
 
 document.getElementById('cal-prev').addEventListener('click', () => {
@@ -697,9 +666,6 @@ document.getElementById('cal-event-list-body').addEventListener('click', e => {
 
     const badge = btn.parentElement?.querySelector('.cal-reg-badge');
     if (badge && ev) badge.textContent = `${ev.registered_count}/${ev.capacity} registered`;
-
-    // On confirmed registration (not waitlisted), open Google Calendar to add the event
-    if (d.rsvped && ev) window.open(gcalAddUrl(ev), '_blank', 'noopener');
   })
   .catch(() => {})
   .finally(() => { btn.disabled = false; });
