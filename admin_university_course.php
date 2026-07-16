@@ -25,6 +25,21 @@ if ($courseId) {
 
 $categories = $db->query("SELECT * FROM uni_categories ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
 $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
+
+$allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
+$stateNames = ['FL'=>'Florida','GA'=>'Georgia','MD'=>'Maryland','MA'=>'Massachusetts','NC'=>'North Carolina','NJ'=>'New Jersey','NH'=>'New Hampshire','OH'=>'Ohio','PA'=>'Pennsylvania','RI'=>'Rhode Island','SC'=>'South Carolina','TN'=>'Tennessee','VA'=>'Virginia','DE'=>'Delaware'];
+$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','staff'=>'Staff','super_admin'=>'Super Admin'];
+
+$courseInviteOnly  = (int)($course['invite_only']  ?? 0);
+$courseStateFilter = json_decode($course['state_filter'] ?? '[]', true) ?: [];
+$courseRoleFilter  = json_decode($course['role_filter']  ?? '[]', true) ?: [];
+
+$currentInvites = [];
+if ($courseId) {
+    $invStmt = $db->prepare("SELECT agent_email, invited_by, invited_at FROM uni_course_invites WHERE course_id=? ORDER BY invited_at DESC");
+    $invStmt->execute([$courseId]);
+    $currentInvites = $invStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -123,6 +138,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       <div class="tabs">
         <button class="tab active" onclick="switchTab('info',this)">Course Info</button>
         <button class="tab" onclick="switchTab('lessons',this)">Lessons (<?= count($lessons) ?>)</button>
+        <button class="tab" onclick="switchTab('access',this)">Access <?= ($courseInviteOnly || !empty($courseStateFilter) || !empty($courseRoleFilter)) ? '🔒' : '' ?></button>
       </div>
       <?php endif; ?>
 
@@ -242,6 +258,76 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
           </div>
           <div style="font-size:11px;color:#bbb;text-align:center">Drag lessons to reorder them.</div>
           <?php endif; ?>
+        </div>
+      </div>
+      <?php endif; ?>
+
+      <!-- Tab: Access -->
+      <?php if (!$isNew && $courseId): ?>
+      <div class="tab-panel" id="tab-access">
+        <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:24px">
+
+          <!-- Invite Only -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:8px">Invite Only</div>
+            <label class="toggle-label">
+              <input type="checkbox" id="a-invite-only" <?= $courseInviteOnly ? 'checked' : '' ?> onchange="toggleInvitePanel()">
+              Hide this course from everyone — only invited agents can see it
+            </label>
+            <div id="invite-panel" style="margin-top:16px;<?= $courseInviteOnly ? '' : 'display:none' ?>">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">Add agents by name or email</div>
+              <div style="display:flex;gap:8px;margin-bottom:12px">
+                <input type="text" id="invite-search" placeholder="Search agents…" style="flex:1;padding:9px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px" oninput="searchAgents(this.value)">
+              </div>
+              <div id="invite-results" style="background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:180px;overflow-y:auto;display:none"></div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin:14px 0 8px">Currently invited</div>
+              <div id="invite-list">
+                <?php if (!$currentInvites): ?>
+                <div style="color:#bbb;font-size:13px;padding:8px 0">No invites yet — search for agents above to add them.</div>
+                <?php else: ?>
+                <?php foreach ($currentInvites as $inv): ?>
+                <div class="invite-chip" data-email="<?= htmlspecialchars($inv['agent_email']) ?>" style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f5f5f5;border-radius:6px;margin-bottom:6px;font-size:13px">
+                  <span style="flex:1"><?= htmlspecialchars($inv['agent_email']) ?></span>
+                  <span style="font-size:10px;color:#aaa"><?= substr($inv['invited_at'],0,10) ?></span>
+                  <button class="btn-sm btn-danger" onclick="removeInvite('<?= htmlspecialchars($inv['agent_email']) ?>', this.closest('.invite-chip'))" style="padding:3px 8px">✕</button>
+                </div>
+                <?php endforeach; ?>
+                <?php endif; ?>
+              </div>
+            </div>
+          </div>
+
+          <!-- State Filter -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">State Filter</div>
+            <div style="font-size:12px;color:#888;margin-bottom:12px">Only agents whose office is in a selected state can see this course. Leave all unchecked = visible in all states.</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
+              <?php foreach ($allStates as $sc): ?>
+              <label class="toggle-label" style="font-size:13px;background:#f9f9f9;border:1px solid #e5e5e5;border-radius:6px;padding:7px 10px">
+                <input type="checkbox" class="a-state" value="<?= $sc ?>" <?= in_array($sc, $courseStateFilter) ? 'checked' : '' ?>>
+                <?= $sc ?> — <?= $stateNames[$sc] ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          </div>
+
+          <!-- Role Filter -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">Role Filter</div>
+            <div style="font-size:12px;color:#888;margin-bottom:12px">Only agents with a selected role can see this course. Leave all unchecked = visible to all roles.</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
+              <?php foreach ($allRoles as $roleKey => $roleLabel): ?>
+              <label class="toggle-label" style="font-size:13px;background:#f9f9f9;border:1px solid #e5e5e5;border-radius:6px;padding:7px 10px">
+                <input type="checkbox" class="a-role" value="<?= $roleKey ?>" <?= in_array($roleKey, $courseRoleFilter) ? 'checked' : '' ?>>
+                <?= htmlspecialchars($roleLabel) ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          </div>
+
+          <div>
+            <button class="btn-primary" onclick="saveAccess()">Save Access Settings</button>
+          </div>
         </div>
       </div>
       <?php endif; ?>
@@ -643,6 +729,69 @@ function deleteQuestion(id) {
 }
 
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ── Access Tab ────────────────────────────────────────────────────────────
+function toggleInvitePanel() {
+  const on = document.getElementById('a-invite-only').checked;
+  document.getElementById('invite-panel').style.display = on ? '' : 'none';
+}
+
+function saveAccess() {
+  const inviteOnly  = document.getElementById('a-invite-only').checked ? 1 : 0;
+  const stateFilter = [...document.querySelectorAll('.a-state:checked')].map(el => el.value);
+  const roleFilter  = [...document.querySelectorAll('.a-role:checked')].map(el => el.value);
+  api({action:'update_course', id:COURSE_ID, invite_only:inviteOnly, state_filter:stateFilter, role_filter:roleFilter,
+       title:document.getElementById('c-title').value.trim(),
+       description:document.getElementById('c-desc').value.trim(),
+       is_required:document.getElementById('c-required').checked?1:0,
+       sort_ord:parseInt(document.getElementById('c-sort').value)||0,
+       published:document.getElementById('c-published')?.checked?1:0
+  }).then(d => { if (d.ok) toast('Access settings saved ✓'); else alert(d.error); });
+}
+
+let searchTimer = null;
+function searchAgents(q) {
+  clearTimeout(searchTimer);
+  const res = document.getElementById('invite-results');
+  if (q.length < 2) { res.style.display='none'; return; }
+  searchTimer = setTimeout(() => {
+    api({action:'search_agents', q}).then(d => {
+      if (!d.ok || !d.agents.length) { res.style.display='none'; return; }
+      res.innerHTML = d.agents.map(a =>
+        `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''" onclick="addInvite('${esc(a.email)}','${esc(a.name)}',this.parentElement)">${esc(a.name)} <span style="color:#aaa;font-size:11px">${esc(a.email)}</span></div>`
+      ).join('');
+      res.style.display = '';
+    });
+  }, 300);
+}
+
+function addInvite(email, name, resultsEl) {
+  api({action:'add_invite', course_id:COURSE_ID, agent_email:email}).then(d => {
+    if (!d.ok) { alert(d.error); return; }
+    resultsEl.style.display = 'none';
+    document.getElementById('invite-search').value = '';
+    const list = document.getElementById('invite-list');
+    if (list.querySelector('[style*="color:#bbb"]')) list.innerHTML = '';
+    const chip = document.createElement('div');
+    chip.className = 'invite-chip';
+    chip.dataset.email = email;
+    chip.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f5f5f5;border-radius:6px;margin-bottom:6px;font-size:13px';
+    chip.innerHTML = `<span style="flex:1">${esc(email)}</span><span style="font-size:10px;color:#aaa">today</span><button class="btn-sm btn-danger" style="padding:3px 8px" onclick="removeInvite('${esc(email)}',this.closest('.invite-chip'))">✕</button>`;
+    list.prepend(chip);
+    toast(`${name || email} invited ✓`);
+  });
+}
+
+function removeInvite(email, chipEl) {
+  api({action:'remove_invite', course_id:COURSE_ID, agent_email:email}).then(d => {
+    if (!d.ok) { alert(d.error); return; }
+    chipEl.remove();
+    if (!document.querySelectorAll('.invite-chip').length) {
+      document.getElementById('invite-list').innerHTML = '<div style="color:#bbb;font-size:13px;padding:8px 0">No invites yet — search for agents above to add them.</div>';
+    }
+    toast('Invite removed');
+  });
+}
 </script>
 </body>
 </html>

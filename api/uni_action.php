@@ -104,16 +104,19 @@ if ($action === 'create_course') {
     $title = trim($in['title'] ?? '');
     if (!$title) { http_response_code(400); echo json_encode(['error'=>'title required']); exit; }
     $catId = !empty($in['category_id']) ? (int)$in['category_id'] : null;
-    $db->prepare("INSERT INTO uni_courses (category_id,title,description,is_required,sort_ord,published,created_by) VALUES (?,?,?,?,?,0,?)")
-       ->execute([$catId, $title, trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), $me['email']]);
+    $db->prepare("INSERT INTO uni_courses (category_id,title,description,is_required,sort_ord,published,created_by,invite_only,state_filter,role_filter) VALUES (?,?,?,?,?,0,?,?,?,?)")
+       ->execute([$catId, $title, trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), $me['email'], 0, '[]', '[]']);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_course') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
-    $catId = !empty($in['category_id']) ? (int)$in['category_id'] : null;
-    $db->prepare("UPDATE uni_courses SET category_id=?,title=?,description=?,is_required=?,sort_ord=?,published=? WHERE id=?")
-       ->execute([$catId, trim($in['title'] ?? ''), trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), (int)($in['published'] ?? 0), $id]);
+    $catId       = !empty($in['category_id']) ? (int)$in['category_id'] : null;
+    $inviteOnly  = (int)($in['invite_only'] ?? 0);
+    $stateFilter = json_encode(array_values(array_filter((array)($in['state_filter'] ?? []), 'strlen')));
+    $roleFilter  = json_encode(array_values(array_filter((array)($in['role_filter']  ?? []), 'strlen')));
+    $db->prepare("UPDATE uni_courses SET category_id=?,title=?,description=?,is_required=?,sort_ord=?,published=?,invite_only=?,state_filter=?,role_filter=? WHERE id=?")
+       ->execute([$catId, trim($in['title'] ?? ''), trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), (int)($in['published'] ?? 0), $inviteOnly, $stateFilter, $roleFilter, $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_course') {
@@ -135,7 +138,40 @@ if ($action === 'delete_course') {
     $db->prepare("DELETE FROM uni_lessons WHERE course_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_certs WHERE course_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_courses WHERE id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_course_invites WHERE course_id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
+}
+
+// ── Course Invites ────────────────────────────────────────────────────────
+if ($action === 'list_invites') {
+    $cid = (int)($in['course_id'] ?? 0);
+    if (!$cid) { echo json_encode(['ok'=>false,'error'=>'course_id required']); exit; }
+    $s = $db->prepare("SELECT * FROM uni_course_invites WHERE course_id=? ORDER BY invited_at DESC");
+    $s->execute([$cid]);
+    echo json_encode(['ok'=>true,'invites'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
+}
+if ($action === 'add_invite') {
+    $cid        = (int)($in['course_id'] ?? 0);
+    $agentEmail = strtolower(trim($in['agent_email'] ?? ''));
+    if (!$cid || !$agentEmail) { echo json_encode(['ok'=>false,'error'=>'missing fields']); exit; }
+    $db->prepare("INSERT OR IGNORE INTO uni_course_invites (course_id,agent_email,invited_by) VALUES (?,?,?)")
+       ->execute([$cid, $agentEmail, $me['email']]);
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'remove_invite') {
+    $cid        = (int)($in['course_id'] ?? 0);
+    $agentEmail = strtolower(trim($in['agent_email'] ?? ''));
+    if (!$cid || !$agentEmail) { echo json_encode(['ok'=>false,'error'=>'missing fields']); exit; }
+    $db->prepare("DELETE FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?")->execute([$cid, $agentEmail]);
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'search_agents') {
+    $q = trim($in['q'] ?? '');
+    if (strlen($q) < 2) { echo json_encode(['ok'=>true,'agents'=>[]]); exit; }
+    $like = '%' . $q . '%';
+    $rows = db_query("SELECT email, firstname, lastname FROM tblstaff WHERE (CONCAT(firstname,' ',lastname) LIKE ? OR email LIKE ?) AND active=1 LIMIT 15", [$like, $like]);
+    $agents = array_map(fn($r) => ['email'=>strtolower($r['email']), 'name'=>trim($r['firstname'].' '.$r['lastname'])], $rows);
+    echo json_encode(['ok'=>true,'agents'=>$agents]); exit;
 }
 
 // ── Lessons ───────────────────────────────────────────────────────────────

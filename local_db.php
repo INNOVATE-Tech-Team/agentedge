@@ -746,6 +746,19 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_courses_cat ON uni_courses(category_id)");
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN invite_only INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN state_filter TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN role_filter TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_course_invites (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id   INTEGER NOT NULL,
+        agent_email TEXT    NOT NULL,
+        invited_by  TEXT    NOT NULL DEFAULT '',
+        invited_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(course_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_invites_course ON uni_course_invites(course_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lessons (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
