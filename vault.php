@@ -290,33 +290,79 @@ function handleDrop(e) {
 
 function handleFiles(files) {
     if (!files.length || !currentFolderId) return;
-    const zone = document.getElementById('upload-zone');
     const bar  = document.getElementById('upload-bar');
     const lbl  = document.getElementById('upload-label');
     const prog = document.getElementById('upload-progress');
     prog.style.display = 'block';
-    let done = 0;
     const total = files.length;
+
+    const fmtMB = (bytes) => (bytes / 1048576).toFixed(1) + ' MB';
+
     const uploadNext = (i) => {
         if (i >= total) {
             vaultToast('Upload complete');
             prog.style.display = 'none';
+            bar.value = 0;
             loadFolder(null, currentFolderId, breadcrumb[breadcrumb.length-1]?.name ?? '', breadcrumb.slice(0,-1));
             return;
         }
         const file = files[i];
-        const fd = new FormData();
-        fd.append('folder_id', currentFolderId);
-        fd.append('file', file);
-        lbl.textContent = `Uploading ${file.name} (${i+1}/${total})…`;
+        lbl.textContent = `Preparing ${file.name} (${i+1}/${total})…`;
         bar.value = Math.round((i / total) * 100);
-        fetch('api/vault_upload.php', {method:'POST', body: fd})
-            .then(r => r.json())
-            .then(d => {
-                if (!d.ok) vaultToast('Upload failed: ' + file.name);
-                uploadNext(i + 1);
-            })
-            .catch(() => { vaultToast('Upload error: ' + file.name); uploadNext(i+1); });
+
+        // Step 1: get a presigned S3 PUT URL from the server
+        fetch('api/vault_presign.php', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({folder_id: currentFolderId, name: file.name})
+        })
+        .then(r => r.json())
+        .then(presign => {
+            if (!presign.ok) throw new Error(presign.error || 'presign failed');
+
+            // Step 2: PUT directly to S3 with real byte-level progress
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('PUT', presign.upload_url, true);
+                xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const filePct = e.loaded / e.total;
+                        bar.value = Math.round((i + filePct) / total * 100);
+                        lbl.textContent = `Uploading ${file.name} — ${fmtMB(e.loaded)} / ${fmtMB(e.total)}`;
+                    }
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) resolve(presign);
+                    else reject(new Error('S3 upload failed (' + xhr.status + ')'));
+                };
+                xhr.onerror = () => reject(new Error('Network error during upload'));
+                xhr.send(file);
+            });
+        })
+        .then(presign => {
+            // Step 3: tell the server to record the file in the DB
+            return fetch('api/vault_upload_confirm.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    file_id:     presign.file_id,
+                    folder_id:   currentFolderId,
+                    name:        file.name,
+                    mime_type:   file.type || 'application/octet-stream',
+                    size:        file.size,
+                    storage_key: presign.storage_key,
+                })
+            }).then(r => r.json());
+        })
+        .then(d => {
+            if (!d.ok) vaultToast('Save failed: ' + file.name);
+            uploadNext(i + 1);
+        })
+        .catch(err => {
+            vaultToast('Upload error: ' + file.name + ' — ' + err.message);
+            uploadNext(i + 1);
+        });
     };
     uploadNext(0);
 }

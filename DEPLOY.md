@@ -23,6 +23,29 @@ folder; never touches the existing app or its tables.
 2. Copy `config.sample.php` to `config.php` and fill in the read-only DB
    user/password you created. (`config.php` is git-ignored — never commit it.)
 
+## S3 CORS (required for fast video uploads)
+
+The Vault upload now sends files **directly from the browser to S3** using a
+presigned URL, which is 2× faster than routing through PHP. For this to work,
+the S3 bucket needs a CORS rule that allows PUT requests from the site origin.
+
+In the AWS Console → S3 → your bucket → Permissions → CORS, paste:
+
+```json
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedOrigins": ["https://agents.innovateonline.com"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+Save. No redeploy needed — the PHP code just generates a signed URL; the bucket
+policy is what allows the browser PUT to succeed.
+
 ## Verify
 
 - Visit `https://agentedge.innovateonline.com/login.php`
