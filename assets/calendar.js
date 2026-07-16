@@ -24,6 +24,13 @@ function calEsc(s) {
     c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 }
 
+function calLocationHtml(location) {
+  const isUrl = /^https?:\/\//i.test(location.trim());
+  return isUrl
+    ? `<a href="${calEsc(location)}" target="_blank" rel="noopener">${calEsc(location)}</a>`
+    : calEsc(location);
+}
+
 function slugify(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -172,7 +179,7 @@ function renderList(evs) {
         <div class="cal-list-ev-body">
           <div class="cal-list-date">${calFmtDate(ev.date)}</div>
           <div class="cal-list-ev-title">${calEsc(ev.title)}</div>
-          ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calEsc(ev.location)}</div>` : ''}
+          ${ev.location    ? `<div class="cal-list-meta">&#128205; ${calLocationHtml(ev.location)}</div>` : ''}
           ${ev.description ? `<div class="cal-list-desc">${calEsc(ev.description)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none">
