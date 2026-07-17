@@ -23,7 +23,8 @@ $due = $db->query(
 foreach ($due as $row) {
     try {
         // Re-resolve recipients now, not at compose time — the roster may have changed.
-        $recipients = ce_resolve_recipients($row['audience'], $row['target_mc_slug'], $row['target_email']);
+        $leaderTypes = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
+        $recipients  = ce_resolve_recipients($row['audience'], $row['target_mc_slug'], $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic']);
 
         // agent_roles has no display name column — fall back to the email itself,
         // matching what the immediate-send path does when $agent['name'] is empty.
@@ -35,9 +36,9 @@ foreach ($due as $row) {
         }
 
         $db->prepare(
-            "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count)
-             VALUES (?,?,?,?,?,?,?)"
-        )->execute([$row['sender_email'], $row['sender_role'], $row['audience'], $row['target_mc_slug'], $row['subject'], $row['body'], count($recipients)]);
+            "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count, leader_types)
+             VALUES (?,?,?,?,?,?,?,?)"
+        )->execute([$row['sender_email'], $row['sender_role'], $row['audience'], $row['target_mc_slug'], $row['subject'], $row['body'], count($recipients), $row['leader_types'] ?? 'mc_leader,bic']);
 
         $db->prepare("UPDATE scheduled_emails SET status='sent', recipient_count=? WHERE id=?")
            ->execute([count($recipients), $row['id']]);

@@ -553,6 +553,48 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
 
+    // ── Company Email (Back Office) ───────────────────────────────────────────
+    // These three tables existed live on Lightsail long before this migration
+    // was written (created by an untracked one-off script) — schema below
+    // matches production exactly, backfilled here so fresh installs get them too.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS scheduled_emails (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_email    TEXT    NOT NULL,
+        sender_role     TEXT    NOT NULL DEFAULT '',
+        audience        TEXT    NOT NULL,             -- all | admin | mc | person | leaders
+        target_mc_slug  TEXT    NOT NULL DEFAULT '',
+        target_email    TEXT    NOT NULL DEFAULT '',
+        subject         TEXT    NOT NULL,
+        body            TEXT    NOT NULL,
+        send_at         TEXT    NOT NULL,
+        status          TEXT    NOT NULL DEFAULT 'pending',  -- pending | sent | failed | canceled
+        recipient_count INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS company_emails (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_email    TEXT    NOT NULL,
+        sender_role     TEXT    NOT NULL DEFAULT '',
+        audience        TEXT    NOT NULL,             -- all | admin | mc | leaders
+        target_mc_slug  TEXT    NOT NULL DEFAULT '',
+        subject         TEXT    NOT NULL,
+        body            TEXT    NOT NULL,
+        recipient_count INTEGER NOT NULL DEFAULT 0,
+        sent_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_signatures (
+        email        TEXT PRIMARY KEY,
+        title        TEXT NOT NULL DEFAULT '',
+        phone        TEXT NOT NULL DEFAULT '',
+        calendar_url TEXT NOT NULL DEFAULT '',
+        website_url  TEXT NOT NULL DEFAULT '',
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    // leader_types: comma-separated subset of mc_leader,bic — only meaningful
+    // when audience='leaders'; lets a sender pick MC Leaders, BICs, or both.
+    try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN leader_types TEXT NOT NULL DEFAULT 'mc_leader,bic'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE company_emails   ADD COLUMN leader_types TEXT NOT NULL DEFAULT 'mc_leader,bic'"); } catch (\Exception $e) {}
+
     // General-purpose "do Y at future time X" scheduling engine, drained by
     // cron/process_scheduled_tasks.php. task_type is dispatched in a switch
     // there — first consumer is 'onboard_followup_text' (the 10-day

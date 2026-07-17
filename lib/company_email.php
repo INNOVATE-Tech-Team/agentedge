@@ -25,7 +25,7 @@ function ce_fetch_crm_roster(): array {
 // rows only exist for agents who've visited notification settings (nobody, in
 // practice). 'all'/'mc'/'person' pull from the CRM roster so reach/names are
 // accurate, then honor any local email opt-out from notification_prefs.
-function ce_resolve_recipients(string $audience, string $mcSlug, string $targetEmail = ''): array {
+function ce_resolve_recipients(string $audience, string $mcSlug, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic']): array {
     $db = local_db();
 
     if ($audience === 'admin') {
@@ -42,15 +42,16 @@ function ce_resolve_recipients(string $audience, string $mcSlug, string $targetE
         return $out;
     }
 
-    // MC Leaders & BICs — pulled from market_centers (bic_email/mc_leader_email
+    // MC Leaders and/or BICs — pulled from market_centers (bic_email/mc_leader_email
     // are assigned per-MC via the roster/MC admin screens, so this is complete
     // regardless of whether that person has ever logged into AgentEdge).
+    // $leaderTypes picks which column(s) to include: 'mc_leader', 'bic', or both.
     if ($audience === 'leaders') {
-        $rows = $db->query(
-            "SELECT bic_email AS email FROM market_centers WHERE bic_email != ''
-             UNION
-             SELECT mc_leader_email AS email FROM market_centers WHERE mc_leader_email != ''"
-        )->fetchAll(PDO::FETCH_COLUMN);
+        $selects = [];
+        if (in_array('bic', $leaderTypes, true))       $selects[] = "SELECT bic_email AS email FROM market_centers WHERE bic_email != ''";
+        if (in_array('mc_leader', $leaderTypes, true)) $selects[] = "SELECT mc_leader_email AS email FROM market_centers WHERE mc_leader_email != ''";
+        if (!$selects) return [];
+        $rows = $db->query(implode(' UNION ', $selects))->fetchAll(PDO::FETCH_COLUMN);
 
         $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
         $optOutSet = array_flip(array_map(fn($e) => strtolower(trim($e)), $optOut));
@@ -111,7 +112,7 @@ function ce_resolve_recipients(string $audience, string $mcSlug, string $targetE
 // Requires the caller to be signed in (uses is_admin()/my_mc_slugs() from roles.php).
 // 'person' has no Market Center scoping — anyone with Company Email access
 // (admin/staff/mc_leader/bic) can 1:1 email any address, in or out of the roster.
-function ce_validate_audience(string $audience, string $mcSlug, string $targetEmail): ?string {
+function ce_validate_audience(string $audience, string $mcSlug, string $targetEmail, array $leaderTypes = []): ?string {
     if (!in_array($audience, ['all', 'admin', 'mc', 'person', 'leaders'], true)) return 'Invalid audience';
 
     if ($audience === 'mc') {
@@ -119,6 +120,9 @@ function ce_validate_audience(string $audience, string $mcSlug, string $targetEm
         if (!is_admin() && !in_array($mcSlug, my_mc_slugs(), true)) return 'You can only email a Market Center you lead';
     } elseif ($audience === 'person') {
         if (!$targetEmail || !filter_var($targetEmail, FILTER_VALIDATE_EMAIL)) return 'A valid recipient email is required';
+    } elseif ($audience === 'leaders') {
+        if (!is_admin()) return 'Forbidden';
+        if (!array_intersect($leaderTypes, ['mc_leader', 'bic'])) return 'Pick Market Center Leaders, BICs, or both';
     } elseif (!is_admin()) {
         return 'Forbidden';
     }

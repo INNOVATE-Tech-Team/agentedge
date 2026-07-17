@@ -156,6 +156,17 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email…" autocomplete="off">
           <datalist id="em-person-list"></datalist>
         </div>
+        <div class="field" id="leader-types-row" style="display:none">
+          <label>Include</label>
+          <div style="display:flex;align-items:center;gap:14px;padding-top:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer">
+              <input type="checkbox" id="em-leader-mc" checked onchange="onLeaderTypesChange()"> Market Center Leaders
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer">
+              <input type="checkbox" id="em-leader-bic" checked onchange="onLeaderTypesChange()"> BICs
+            </label>
+          </div>
+        </div>
       </div>
 
       <p class="reach-note" id="reach-note">
@@ -327,13 +338,35 @@ function onAudienceChange() {
   const val = document.getElementById('em-audience').value;
   document.getElementById('mc-target-row').style.display = (val === 'mc') ? '' : 'none';
   document.getElementById('person-target-row').style.display = (val === 'person') ? '' : 'none';
+  document.getElementById('leader-types-row').style.display = (val === 'leaders') ? '' : 'none';
   if (val === 'person' && !PERSON_LIST_LOADED) loadPersonList();
   const note = document.getElementById('reach-note');
   note.textContent = val === 'all'     ? 'Sends to every agent in the company, pulled from the live agent roster.'
                     : val === 'admin'   ? 'Sends only to Super Admin and Staff accounts.'
-                    : val === 'leaders' ? 'Sends to every Market Center Leader and BIC assigned across all Market Centers.'
+                    : val === 'leaders' ? leaderTypesNote()
                     : val === 'person'  ? 'Sends to just the one person you pick.'
                     : 'Sends to every agent in the selected Market Center.';
+}
+
+function getLeaderTypes() {
+  const types = [];
+  if (document.getElementById('em-leader-mc').checked)  types.push('mc_leader');
+  if (document.getElementById('em-leader-bic').checked) types.push('bic');
+  return types;
+}
+
+function leaderTypesNote() {
+  const types = getLeaderTypes();
+  if (types.length === 2) return 'Sends to every Market Center Leader and BIC assigned across all Market Centers.';
+  if (types.includes('mc_leader')) return 'Sends to every Market Center Leader (no BICs).';
+  if (types.includes('bic')) return 'Sends to every BIC (no Market Center Leaders).';
+  return 'Pick at least one: Market Center Leaders or BICs.';
+}
+
+function onLeaderTypesChange() {
+  if (document.getElementById('em-audience').value === 'leaders') {
+    document.getElementById('reach-note').textContent = leaderTypesNote();
+  }
 }
 
 function loadPersonList() {
@@ -351,10 +384,16 @@ function loadPersonList() {
   });
 }
 
-function audLabel(audience, mcSlug) {
+function audLabel(audience, mcSlug, leaderTypes) {
   if (audience === 'all')    return '<span class="aud-chip all">Entire Company</span>';
   if (audience === 'admin')  return '<span class="aud-chip admin">Admin &amp; Staff</span>';
-  if (audience === 'leaders') return '<span class="aud-chip leaders">Leaders &amp; BICs</span>';
+  if (audience === 'leaders') {
+    const types = (leaderTypes || 'mc_leader,bic').split(',').filter(Boolean);
+    const label = types.length === 2 ? 'Leaders &amp; BICs'
+                : types.includes('mc_leader') ? 'Leaders Only'
+                : types.includes('bic') ? 'BICs Only' : 'Leaders &amp; BICs';
+    return '<span class="aud-chip leaders">' + label + '</span>';
+  }
   if (audience === 'person') return '<span class="aud-chip person">1 Person</span>';
   const name = MC_NAME_MAP[mcSlug] || mcSlug || '—';
   return '<span class="aud-chip mc">' + escapeHtml(name) + '</span>';
@@ -518,7 +557,7 @@ function loadScheduled(){
       <tr>
         <td>${fmtDt(r.send_at)}</td>
         <td>${escapeHtml(r.subject)}</td>
-        <td>${audLabel(r.audience, r.target_mc_slug)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
         <td>${r.recipient_count}</td>
         <td><button class="btn-cancel-sched" onclick="cancelScheduled(${r.id})">Cancel</button></td>
       </tr>`).join('');
@@ -551,7 +590,7 @@ function loadHistory() {
       <tr>
         <td>${fmtDt(r.sent_at)}</td>
         <td>${escapeHtml(r.subject)}</td>
-        <td>${audLabel(r.audience, r.target_mc_slug)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
         <td>${r.recipient_count}</td>
         <td>${escapeHtml(r.sender_email)}</td>
       </tr>`).join('');
@@ -579,9 +618,12 @@ function sendEmail() {
   const btn      = document.getElementById('btn-send');
   const isSchedule = document.getElementById('em-schedule-toggle').checked;
 
+  const leaderTypes = getLeaderTypes();
+
   if (!subject || !hasText) { status.textContent = 'Subject and message are required.'; status.className = 'send-status err'; return; }
   if (audience === 'mc' && !mcSlug) { status.textContent = 'Pick a Market Center.'; status.className = 'send-status err'; return; }
   if (audience === 'person' && !targetEmail) { status.textContent = 'Pick a recipient.'; status.className = 'send-status err'; return; }
+  if (audience === 'leaders' && !leaderTypes.length) { status.textContent = 'Pick at least one: Market Center Leaders or BICs.'; status.className = 'send-status err'; return; }
 
   let sendAtIso = '';
   if (isSchedule) {
@@ -604,7 +646,7 @@ function sendEmail() {
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
       audience, target_mc_slug: mcSlug, target_email: targetEmail,
-      subject, body: bodyHtml, send_at: sendAtIso,
+      subject, body: bodyHtml, send_at: sendAtIso, leader_types: leaderTypes,
     })
   })
   .then(r => r.json())

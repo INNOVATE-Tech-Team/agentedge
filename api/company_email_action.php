@@ -27,13 +27,15 @@ if ($action === 'send' || $action === 'schedule') {
     $html        = trim($body['body']             ?? '');
     $hasText     = trim(strip_tags($html)) !== '';
     $sendAt      = trim($body['send_at']           ?? '');
+    $leaderTypes = array_values(array_intersect((array)($body['leader_types'] ?? ['mc_leader', 'bic']), ['mc_leader', 'bic']));
 
     if (!$subject || !$hasText) { echo json_encode(['ok'=>false,'error'=>'Subject and message are required']); exit; }
 
-    $err = ce_validate_audience($audience, $mcSlug, $targetEmail);
+    $err = ce_validate_audience($audience, $mcSlug, $targetEmail, $leaderTypes);
     if ($err) { echo json_encode(['ok'=>false,'error'=>$err]); exit; }
 
-    $recipients = ce_resolve_recipients($audience, $mcSlug, $targetEmail);
+    $recipients = ce_resolve_recipients($audience, $mcSlug, $targetEmail, $leaderTypes);
+    $leaderTypesStr = implode(',', $leaderTypes);
 
     if ($action === 'schedule') {
         $ts = $sendAt ? strtotime($sendAt) : false;
@@ -41,9 +43,9 @@ if ($action === 'send' || $action === 'schedule') {
         if ($ts <= time()) { echo json_encode(['ok'=>false,'error'=>'Scheduled time must be in the future']); exit; }
 
         $db->prepare(
-            "INSERT INTO scheduled_emails (sender_email, sender_role, audience, target_mc_slug, target_email, subject, body, send_at, recipient_count)
-             VALUES (?,?,?,?,?,?,?,?,?)"
-        )->execute([$me, my_role(), $audience, $mcSlug, $targetEmail, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients)]);
+            "INSERT INTO scheduled_emails (sender_email, sender_role, audience, target_mc_slug, target_email, subject, body, send_at, recipient_count, leader_types)
+             VALUES (?,?,?,?,?,?,?,?,?,?)"
+        )->execute([$me, my_role(), $audience, $mcSlug, $targetEmail, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients), $leaderTypesStr]);
 
         echo json_encode(['ok'=>true, 'scheduled'=>true, 'recipients'=>count($recipients)]);
         exit;
@@ -57,9 +59,9 @@ if ($action === 'send' || $action === 'schedule') {
     }
 
     $db->prepare(
-        "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count)
-         VALUES (?,?,?,?,?,?,?)"
-    )->execute([$me, my_role(), $audience, $mcSlug, $subject, $html, count($recipients)]);
+        "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count, leader_types)
+         VALUES (?,?,?,?,?,?,?,?)"
+    )->execute([$me, my_role(), $audience, $mcSlug, $subject, $html, count($recipients), $leaderTypesStr]);
 
     echo json_encode(['ok'=>true, 'recipients'=>count($recipients)]);
     dispatch_notification_queue();
@@ -117,12 +119,12 @@ if ($action === 'roster_list') {
 if ($action === 'history') {
     if (is_admin()) {
         $rows = $db->query(
-            "SELECT sender_email, audience, target_mc_slug, subject, recipient_count, sent_at
+            "SELECT sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
              FROM company_emails ORDER BY sent_at DESC LIMIT 50"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $s = $db->prepare(
-            "SELECT sender_email, audience, target_mc_slug, subject, recipient_count, sent_at
+            "SELECT sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
              FROM company_emails WHERE sender_email=? ORDER BY sent_at DESC LIMIT 50"
         );
         $s->execute([$me]);
@@ -135,12 +137,12 @@ if ($action === 'history') {
 if ($action === 'scheduled_list') {
     if (is_admin()) {
         $rows = $db->query(
-            "SELECT id, sender_email, audience, target_mc_slug, target_email, subject, send_at, recipient_count
+            "SELECT id, sender_email, audience, target_mc_slug, target_email, leader_types, subject, send_at, recipient_count
              FROM scheduled_emails WHERE status='pending' ORDER BY send_at"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $s = $db->prepare(
-            "SELECT id, sender_email, audience, target_mc_slug, target_email, subject, send_at, recipient_count
+            "SELECT id, sender_email, audience, target_mc_slug, target_email, leader_types, subject, send_at, recipient_count
              FROM scheduled_emails WHERE status='pending' AND sender_email=? ORDER BY send_at"
         );
         $s->execute([$me]);
