@@ -93,6 +93,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .aud-chip.admin{background:#fff4e0;color:#a07221}
 .aud-chip.mc{background:#e8f0fe;color:#1a56c4}
 .aud-chip.person{background:#f3e8fe;color:#7a1ac4}
+.aud-chip.leaders{background:#fce8f0;color:#c41a6a}
 .empty-note{color:var(--faint);font-style:italic;text-align:center;padding:20px}
 .btn-cancel-sched{padding:4px 10px;background:#fee2e2;color:#c00;border:none;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer}
 .btn-cancel-sched:hover{background:#fecaca}
@@ -121,6 +122,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
             <?php if (is_admin()): ?>
             <option value="all">Entire Company</option>
             <option value="admin">Admin &amp; Staff Only</option>
+            <option value="leaders">Market Center Leaders &amp; BICs</option>
             <option value="mc">Specific Market Center</option>
             <?php else: ?>
             <option value="mc"><?= $isBicOnly ? "Market Center(s) I'm BIC Over" : "Market Center(s) I Lead" ?></option>
@@ -327,9 +329,10 @@ function onAudienceChange() {
   document.getElementById('person-target-row').style.display = (val === 'person') ? '' : 'none';
   if (val === 'person' && !PERSON_LIST_LOADED) loadPersonList();
   const note = document.getElementById('reach-note');
-  note.textContent = val === 'all'    ? 'Sends to every agent in the company, pulled from the live agent roster.'
-                    : val === 'admin' ? 'Sends only to Super Admin and Staff accounts.'
-                    : val === 'person'? 'Sends to just the one person you pick.'
+  note.textContent = val === 'all'     ? 'Sends to every agent in the company, pulled from the live agent roster.'
+                    : val === 'admin'   ? 'Sends only to Super Admin and Staff accounts.'
+                    : val === 'leaders' ? 'Sends to every Market Center Leader and BIC assigned across all Market Centers.'
+                    : val === 'person'  ? 'Sends to just the one person you pick.'
                     : 'Sends to every agent in the selected Market Center.';
 }
 
@@ -351,6 +354,7 @@ function loadPersonList() {
 function audLabel(audience, mcSlug) {
   if (audience === 'all')    return '<span class="aud-chip all">Entire Company</span>';
   if (audience === 'admin')  return '<span class="aud-chip admin">Admin &amp; Staff</span>';
+  if (audience === 'leaders') return '<span class="aud-chip leaders">Leaders &amp; BICs</span>';
   if (audience === 'person') return '<span class="aud-chip person">1 Person</span>';
   const name = MC_NAME_MAP[mcSlug] || mcSlug || '—';
   return '<span class="aud-chip mc">' + escapeHtml(name) + '</span>';

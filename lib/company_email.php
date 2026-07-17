@@ -42,6 +42,39 @@ function ce_resolve_recipients(string $audience, string $mcSlug, string $targetE
         return $out;
     }
 
+    // MC Leaders & BICs — pulled from market_centers (bic_email/mc_leader_email
+    // are assigned per-MC via the roster/MC admin screens, so this is complete
+    // regardless of whether that person has ever logged into AgentEdge).
+    if ($audience === 'leaders') {
+        $rows = $db->query(
+            "SELECT bic_email AS email FROM market_centers WHERE bic_email != ''
+             UNION
+             SELECT mc_leader_email AS email FROM market_centers WHERE mc_leader_email != ''"
+        )->fetchAll(PDO::FETCH_COLUMN);
+
+        $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
+        $optOutSet = array_flip(array_map(fn($e) => strtolower(trim($e)), $optOut));
+
+        $nameByEmail = [];
+        foreach (ce_fetch_crm_roster() as $a) {
+            $e = strtolower(trim($a['email'] ?? ''));
+            if ($e) $nameByEmail[$e] = $a['fullName'] ?? '';
+        }
+
+        $out = [];
+        foreach ($rows as $email) {
+            $email = strtolower(trim($email));
+            if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL) || isset($optOutSet[$email])) continue;
+            $name = $nameByEmail[$email] ?? '';
+            if ($name === '') {
+                $localPart = strstr($email, '@', true) ?: $email;
+                $name = ucwords(str_replace(['.', '_'], ' ', $localPart));
+            }
+            $out[$email] = ['email' => $email, 'name' => $name];
+        }
+        return array_values($out);
+    }
+
     $roster = ce_fetch_crm_roster();
 
     if ($audience === 'person') {
@@ -79,7 +112,7 @@ function ce_resolve_recipients(string $audience, string $mcSlug, string $targetE
 // 'person' has no Market Center scoping — anyone with Company Email access
 // (admin/staff/mc_leader/bic) can 1:1 email any address, in or out of the roster.
 function ce_validate_audience(string $audience, string $mcSlug, string $targetEmail): ?string {
-    if (!in_array($audience, ['all', 'admin', 'mc', 'person'], true)) return 'Invalid audience';
+    if (!in_array($audience, ['all', 'admin', 'mc', 'person', 'leaders'], true)) return 'Invalid audience';
 
     if ($audience === 'mc') {
         if (!$mcSlug) return 'Market Center required';
