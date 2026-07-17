@@ -29,6 +29,13 @@ return [
     'auth_bridge_url'   => '',   // e.g. https://innovateonline.com/agentedge-auth/verify.php
     'auth_bridge_token' => '',   // must match $BRIDGE_TOKEN in verify.php
 
+    // Default password given to new agents pushed over from Advantage CRM
+    // (api/onboard_push.php) so they have a working login on day one instead
+    // of waiting on a reset link. Only applied if the agent has no password
+    // yet — never overwrites one they've already set. Leave blank to disable
+    // and require the admin "Agent Login Access" tool / a reset link instead.
+    'default_agent_password' => '',   // e.g. Innovate!!
+
     // Show sample dashboard tiles/cap instead of querying a local DB. Keep true
     // on bold360.vip (no local Perfex DB) until the Darwin / tx feed is wired.
     'sample_dashboard' => false,
@@ -141,4 +148,16 @@ return [
     // Never reuse the same key across dev/staging/production, and never commit
     // a real key — config.php is git-ignored, this sample file is not.
     'tax_id_encryption_key' => '',
+
+    // Darwin Cloud custom API (lib/darwin.php, cron/sync_darwin.php) — pulls cap
+    // progress, revenue share, and sales volume from INNOVATE's finance/commission
+    // system into the cap wheel + growth network. Request credentials from
+    // support@accounttech.com. These are only the INITIAL seed values — once
+    // synced, the live pair is tracked in the darwin_auth table and rotates on
+    // every refresh, so don't expect this file to reflect the current token.
+    // Geo-restricted to US IPs (dev + prod) — see the AccountTECH developer guide.
+    'darwin_username'      => '',
+    'darwin_access_token'  => '',
+    'darwin_refresh_token' => '',
+    'darwin_token_expires' => '',  // format: MM/DD/YYYY HH:MM:SS, as issued by AccountTECH
 ];

@@ -459,6 +459,8 @@ function local_db(): PDO {
         created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_documents_email ON agent_documents(email)");
+    // Compliance doc typing (license, E&O cert, MLS paperwork, CE credit, onboarding, other).
+    try { $pdo->exec("ALTER TABLE agent_documents ADD COLUMN category TEXT NOT NULL DEFAULT 'other'"); } catch (\Exception $e) {}
     $adDir = $dir . '/agent_documents';
     if (!is_dir($adDir)) @mkdir($adDir, 0750, true);
     $adHt  = $adDir . '/.htaccess';
@@ -636,6 +638,31 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_vfi_folder ON vault_files(folder_id)");
 
+    // Seed default Vault departments + top-level category folders for
+    // Brokerage/Company and HR/Payroll docs. INSERT OR IGNORE so a name/folder
+    // renamed later by an admin is never overwritten by this seed.
+    $vaultDepts = [
+        ['brokerage',  'Brokerage & Company', 0],
+        ['hr-payroll', 'HR & Payroll',        1],
+    ];
+    $vdi = $pdo->prepare("INSERT OR IGNORE INTO vault_depts (slug,name,sort_ord) VALUES (?,?,?)");
+    foreach ($vaultDepts as $d) { $vdi->execute($d); }
+
+    $vaultFolders = [
+        ['vf-brokerage-corp-formation', 'Corporate Formation & Governance', 'dept',   'brokerage'],
+        ['vf-brokerage-insurance',      'Insurance & E&O',                  'dept',   'brokerage'],
+        ['vf-brokerage-bic-records',    'BIC Records',                      'dept',   'brokerage'],
+        ['vf-brokerage-policies',       'Office Policies & Procedures',     'public', ''],
+        ['vf-hr-employment',            'Employment Agreements',            'dept',   'hr-payroll'],
+        ['vf-hr-commission',            'Commission Plans',                 'dept',   'hr-payroll'],
+        ['vf-hr-payroll-records',       'Payroll Records (W-2/1099)',       'dept',   'hr-payroll'],
+    ];
+    $vfi = $pdo->prepare(
+        "INSERT OR IGNORE INTO vault_folders (id,parent_id,name,visibility,dept_slug,created_by,created_at)
+         VALUES (?,NULL,?,?,?,'system',datetime('now'))"
+    );
+    foreach ($vaultFolders as $f) { $vfi->execute($f); }
+
     // ── Support Tickets ───────────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_departments (
         slug TEXT PRIMARY KEY,
@@ -810,6 +837,19 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_courses_cat ON uni_courses(category_id)");
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN invite_only INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN state_filter TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_courses ADD COLUMN role_filter TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_course_invites (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id   INTEGER NOT NULL,
+        agent_email TEXT    NOT NULL,
+        invited_by  TEXT    NOT NULL DEFAULT '',
+        invited_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(course_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_invites_course ON uni_course_invites(course_id)");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_folders (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -933,6 +973,17 @@ function local_db(): PDO {
     foreach (['FL','VA','DE','RI','NH','OH','NC','GA','PA','SC','MD','TN','NJ','MA'] as $sc) {
         $seedSt->execute([$sc]);
     }
+
+    // ── Per-state PandaDoc onboarding-agreement templates. Not pre-seeded —
+    // rows are added as each state's template is built out (up to 50).
+    // Falls back to the global 'pandadoc_template_id' config value for any
+    // state without a row here (see pandadoc_template_for_state()).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS pandadoc_state_templates (
+        state_code  TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL DEFAULT '',
+        updated_by  TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
 
     // INNOVATE agent roster — organized by state + market center, with license expiry where known.
     // agent_name, state_code, market_center, license_exp (YYYY-MM-DD or empty)
@@ -1070,6 +1121,184 @@ function local_db(): PDO {
         $mi->execute(['Consolidated MLS (Columbia SC)','CMLS','SC – Columbia','RETS','active',0,'crm','2026-05-01','','Paragon RETS feed. 5298 active agents + 1958 offices. Nightly cron 4:30am ET via ~/coastline-server/columbia.sh.']);
         $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
         $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
+    }
+
+    // ── MLS / State Offices & Licenses (from annual license report) ──────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_offices (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        state                 TEXT    NOT NULL DEFAULT '',
+        branch_office         TEXT    NOT NULL DEFAULT '',
+        entity_name           TEXT    NOT NULL DEFAULT '',
+        dba                   TEXT    NOT NULL DEFAULT '',
+        office_type           TEXT    NOT NULL DEFAULT '',
+        office_license_number TEXT    NOT NULL DEFAULT '',
+        license_expiration    TEXT,
+        firm_type             TEXT    NOT NULL DEFAULT 'Residential',
+        designated_broker     TEXT    NOT NULL DEFAULT '',
+        market_leader         TEXT    NOT NULL DEFAULT '',
+        broker_license_number TEXT    NOT NULL DEFAULT '',
+        broker_expiration     TEXT,
+        fub_phone             TEXT    NOT NULL DEFAULT '',
+        address               TEXT    NOT NULL DEFAULT '',
+        lease_payee           TEXT    NOT NULL DEFAULT '',
+        notes                 TEXT    NOT NULL DEFAULT '',
+        mls_integration_id    INTEGER,
+        created_by            TEXT    NOT NULL DEFAULT '',
+        created_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (mls_integration_id) REFERENCES mls_integrations(id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mo_state ON mls_offices(state)");
+    // Seed known state offices/licenses on fresh installs (from Dept. of Lic. annual report)
+    if ($pdo->query("SELECT COUNT(*) FROM mls_offices")->fetchColumn() == 0) {
+        $mo = $pdo->prepare("INSERT INTO mls_offices
+            (state,branch_office,entity_name,dba,office_type,office_license_number,license_expiration,
+             firm_type,designated_broker,market_leader,broker_license_number,broker_expiration,
+             fub_phone,address,lease_payee,notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        $offices = [
+            ['DE','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','00000000','2026-04-30','Residential','Monica Peterson','','RB-0031407','2026-04-30','302-279-2545','153 E Chestnut Hill Rd, Ste 100F, Newark, DE 19713','',''],
+            ['FL','Bradenton','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','CQ1072664','2026-09-30','Residential','Brie Bender','','BK3636462','2027-09-30','941-213-7736','117 7th Street N, Unit 7, Bradenton Beach, FL 34217','',''],
+            ['FL','Referrals','INNOVATE Real Estate Referrals LLC','','','CQ1072827','2026-09-30','Referral','Brie Bender','','BK3636462','2027-09-30','NA','117 7th Street N, Unit 7, Bradenton Beach, FL 34217','',''],
+            ['GA','','INNOVATE Real Estate SC LLC','INNOVATE Real Estate','','00082669','2029-11-30','Residential','Michael Fries','','421553','2026-07-31','','32 Office Park Road, Hilton Head, SC 29928','',''],
+            ['MA','','','','','',null,'Residential','Manny Manenez','','',null,'','','',''],
+            ['MD','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','00606500',null,'Residential','Monica Peterson','','606500','2027-05-16','443-960-7690','153 E Chestnut Hill Rd, Ste 100F, Newark, DE 19713','',''],
+            ['NC','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','Broker Owned/State HQ','C40905','2026-06-30','Residential','Carrie Kinney','Shawn Carter','283428','2026-06-30','910-776-2496','7290-7 Beach Dr SW Ocean Isle Beach, NC 28469-0000','','Shawn Carter is ML of only the Raleigh area'],
+            ['NC','Referrals','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','C40905','2026-06-30','Referral','Kris Fuller','','287606','2026-06-30','NA','767 Main St, N. Myrtle Beach, SC 29577 ( RE Commission has the wrong address)','','North Carolina licenses renew every year'],
+            ['NH','','INNOVATE Real Estate SC, LLC','','','',null,'Residential','Manny Manenez','','',null,'(978) 736-3582','','',''],
+            ['NJ','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','Broker Owned/State HQ','02669143',null,'Residential','Rosemarie Heldman','','1325101',null,'908-888-9704','408 Main Street, 2nd Floor, Chester, NJ 07930','',''],
+            ['OH','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','REC.2025004161','2026-06-30','Residential','Joe Tupta','','BRKP.2025003277','2027-07-14','330-422-4628','4249 Massillon Rd N Canton, OH 44720','',''],
+            ['PA','Doylestown','INNOVATE Doylestown LLC','','Branch/Team Office','RB070309','2026-05-31','Residential','Melanie Henderson','Diane Cleland','RM426259','2026-05-31','484-573-7792','2 W Butler Ave, Doylestown, PA 18901','',''],
+            ['PA','North Wales','INNOVATE Doylestown LLC','INNOVATE Real Estate','Branch/Team Office','RO302928','2026-05-31','Residential','Melanie Henderson','Earl, Kevin, Carolyn, & Jeff','RM426259','2026-05-31','(215) 267-8551','109 N 2nd Street, North Wales, PA 19454','',''],
+            ['PA','Harleysville','INNOVATE Doylestown LLC','INNOVATE Real Estate','Branch/Team Office','RO302933','2026-05-31','Residential','Melanie Henderson','Dan Smith','RM426259','2026-05-31','215-607-6977','840 Harleysville Pike, Suite B, Harleysville, PA 19438','',''],
+            ['PA','','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','RBR006793','2026-05-31','Residential','Monica Peterson','','RMR006794','2026-05-31','','153 E Chestnut Hill Rd, Ste 100F, Newark, DE 19713','',''],
+            ['PA','Quakertown','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','Broker Owned/State HQ','RB302877','2026-05-31','Residential','Melanie Henderson','','RMR006794','2026-05-31','','15 S 14th Street Quakertown, PA  18951','',"Not sure who's office this is??"],
+            ['RI','','','','','',null,'Residential','Manny Manenez','','',null,'','','',''],
+            ['SC','Hartsville','','INNOVATE Real Estate','Corp Owned/State HQ','00022016','2027-06-30','Residential','Carrie Kinney','','134620','2027-06-30','843-896-2969','125 A N 5th St Hartsville SC 29550','Privately Held',''],
+            ['SC','Charleston','','INNOVATE Real Estate','Corp Owned/State HQ','00022203','2027-06-30','Residential','Carrie Kinney','','134620','2027-06-30','843-594-2753','1240 Winnowing Way, Ste 100 PMB Mt. Pleasant, SC 29466','Regus - Mailbox only',''],
+            ['SC','North Myrtle','','INNOVATE Real Estate','Corp Owned/State HQ','00023326','2027-06-30','Residential','Carrie Kinney','','134620','2027-06-30','843-892-6754','767 Main St, N. Myrtle Beach, SC 29582','Privately Held',''],
+            ['SC','Pawleys Island','','INNOVATE Real Estate','Corp Owned/State HQ','00024074','2027-06-30','Residential','Carrie Kinney','','134620','2027-06-30','843-892-6754','11405 Ocean Hwy, Unit 6, Pawleys Island, SC 29585','Privately Held',''],
+            ['SC','Hilton Head','','INNOVATE Real Estate','Corp Owned/State HQ','00028307','2027-06-30','Residential','Michael Fries','','134620','2027-06-30','843-627-2085','32 Office Park Road, Hilton Head, SC 29928','Regus - Mailbox only',''],
+            ['SC','Greenville','','INNOVATE Real Estate','Corp Owned/State HQ','00028207',null,'Residential','Jessica Spikes','','101891','2027-06-30','864-477-1935','128 Millport Cir, Ste 200, Greenville, SC 29607','Regus - Mailbox only',''],
+            ['SC','Murrells Inlet','','INNOVATE Real Estate','Corp Owned/State HQ','00021494','2026-06-30','Residential','Kris Fuller','','100914','2026-06-30','843-892-6754','3103 US-17 Business, Unit F, Murrells Inlet, SC 29576','Privately Held',''],
+            ['SC','Multi MLS','','INNOVATE Real Estate','Corp Owned/State HQ','00024912','2026-06-30','Residential','Kris Fuller','','100914','2026-06-30','843-892-6754','1309 Professional Drive, Myrtle Beach, SC 29577','Privately Held',''],
+            ['SC','Professional Dr','','INNOVATE Real Estate','Corp Owned/State HQ','00018484','2026-06-30','Residential','Kris Fuller','','100914','2026-06-30','843-892-6754','1309 Professional Drive, Myrtle Beach, SC 29577','Privately Held',''],
+            ['SC','Conway','','INNOVATE Real Estate','','00028579','2027-06-30','Residential','Gerry Gilbert','','105604','2027-06-30','','314 Laurel St, Ste 314-A, Conway, SC 29526','',''],
+            ['SC','Referral','','INNOVATE Real Estate','Corp Owned/State HQ','00018653','2026-06-30','Referral','Kris Fuller','','100914','2026-06-30','NA','1309 Professional Drive, Myrtle Beach, SC 29577','Privately Held',''],
+            ['TN','Referral','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','Broker Owned/State HQ','00266150','2027-08-15','Referral','Brenda Brewster','','274139','2027-03-21','NA','9111 Cross Park Dr, Ste D200, STE 283, Knoxville, TN 37923','Spaces',''],
+            ['TN','East TN','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','Broker Owned/State HQ','00266105','2027-07-20','Residential','Brenda Brewster','','274139','2027-03-21','865-535-7958','9111 Cross Park Dr, Ste D200, STE 283, Knoxville, TN 37923','Spaces',''],
+            ['TN','Middle TN','INNOVATE Real Estate SC, LLC','INNOVATE Real Estate','','00266075','2027-06-15','Residential','Monique Westbrooks','','333086','2026-08-22','615-880-6888','106 Public Sq, Ste 1, Gallatin, TN 37066','',''],
+            ['VA','','INNOVATE Real Estate INC','INNOVATE Real Estate','','0 226038285','2026-12-31','Residential','Amy Adams','','225211799','2026-12-31','540-501-7800','1320 Central Park Blvd, Ste 200, Fredericksburg, VA 22401','',''],
+        ];
+        foreach ($offices as $o) { $mo->execute($o); }
+    }
+
+    // ── MLS / Board Memberships (login + billing credentials per office) ─────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_memberships (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        state             TEXT    NOT NULL DEFAULT '',
+        board_or_mls      TEXT    NOT NULL DEFAULT '',
+        name              TEXT    NOT NULL DEFAULT '',
+        membership_type   TEXT    NOT NULL DEFAULT '',
+        address           TEXT    NOT NULL DEFAULT '',
+        phone             TEXT    NOT NULL DEFAULT '',
+        office_id         TEXT    NOT NULL DEFAULT '',
+        broker_of_record  TEXT    NOT NULL DEFAULT '',
+        username          TEXT    NOT NULL DEFAULT '',
+        password          TEXT    NOT NULL DEFAULT '',
+        login_link        TEXT    NOT NULL DEFAULT '',
+        notes             TEXT    NOT NULL DEFAULT '',
+        billing_site      TEXT    NOT NULL DEFAULT '',
+        billing_frequency TEXT    NOT NULL DEFAULT '',
+        billing_username  TEXT    NOT NULL DEFAULT '',
+        billing_password  TEXT    NOT NULL DEFAULT '',
+        office_fees       TEXT    NOT NULL DEFAULT '',
+        broker_fees       TEXT    NOT NULL DEFAULT '',
+        admin_fees        TEXT    NOT NULL DEFAULT '',
+        created_by        TEXT    NOT NULL DEFAULT '',
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mm_state ON mls_memberships(state)");
+    // Seed known board/MLS memberships on fresh installs (from Board_MLS annual report)
+    if ($pdo->query("SELECT COUNT(*) FROM mls_memberships")->fetchColumn() == 0) {
+        $mm = $pdo->prepare("INSERT INTO mls_memberships
+            (state,board_or_mls,name,membership_type,address,phone,office_id,broker_of_record,
+             username,password,login_link,notes,billing_site,billing_frequency,billing_username,
+             billing_password,office_fees,broker_fees,admin_fees)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        $memberships = [
+            ['DE','Board','New Castle County Board of Realtors','Primary (Board)','3615 Miller Rd, Wilmington, DE 19802','302.762.4800','248012079','Monica Peterson','','','','','','','','','','',''],
+            ['FL','Board','Realtor Association of Sarasota & Manatee','Secondary (Board)','2320 Catlemen Rd, Sarasota, FL 34232','941.952.3400','281532745','Brie Bender','752511499','Florida123! ','MYRASM.COM','','','','','','','',''],
+            ['FL','Board','Suncoast Tampa Association of Realtors','Secondary (Board)','4590 Ulmerton Rd, Clearwater, FL 33762','727.347.7655','260034049','Brie Bender','','','','','','','','','','',''],
+            ['FL','Board','Realtor Association of Indian River County','Secondary (Board)','3250 67th St, Vero Beach, FL 32967','772.567.3510','276004366','Brie Bender','','','','','','','','','','',''],
+            ['FL','Board','Orlando Regional Realtor Assoc','Secondary (Board)','5421 Diplomat Cir., Orlando, FL 32810','407.253.3580','','Brie Bender','','','','','','','','','','',''],
+            ['FL','MLS','StellarMLS','MLS','PO BOx 150658, Altamonte Springs, FL 32715-0658','800.686.7451','752524172','Brie Bender','752511499','Florida123!!','https://www.stellarmls.com/','','','','','','','',''],
+            ['FL','MLS','Beaches','MLS','','561.585.4544','752511499','Brie Bender','BenderBR','Florida843!!!','https://beachesmls.mysolidearth.com/resources/enter','','','','','','','',''],
+            ['GA','Board & MLS','Savannah Area Realtors','MLS Only',' 7015 Hodgson memorial Dr, Savannah, GA 31406','912.354.1513','','Michael Fries','421553','Southern310!','https://hivemls.relevateone.com/dashboard','','','','','','','',''],
+            ['NC','Board','Brunswick County Association of Realtor','Primary (Board)','5051 Main St. Suite 5, Shallotte, NC 28470','910.754.5700','752528316','Carrie Kinney','','','','','','','','','','',''],
+            ['NC','Board','Triangle Assoc of Realtors','Secondary (Board)','','','752528316','Carrie Kinney','kinneycar','Diesel1972!','','','','','','','','','$45/quarterly'],
+            ['NC','Board','Cape Fear Assoc of Realtors','Secondary (Board)','','','752528316','Carrie Kinney','carrie@innovateonline.com','Innovate2025!!','','','','','','','','',''],
+            ['NC','Board','Central Carolina Assoc of Realtors','Secondary (Board)','1826 Sir Tyler Dr. Suite 100, Wilmington, NC 28405','910.762.7400','M1 552500608','Carrie Kinney','554031769','','https://next.navicamls.net/659/Ams/AMSIndex','','','','','','','',''],
+            ['NC','Board','Winston Salem Assoc of Realtors','Secondary (Board)','195 Executive Park Blvd, Winston-Salem, NC 27103','336.768.5560','752528316','','','','','','','','','','','',''],
+            ['NC','Board & MLS','Carolina Smokies','Secondary (Board)','131 Heritage Hollow Dr, Franklin, NC 28734','828.524.1179','','Carrie Kinney','CarrieKinney','','https://next.navicamls.net/253','','','','','','','',''],
+            ['NC','Board & MLS','Canopy','Secondary (Board)','1120 Pearl Park Way Suite 200, Charlotte, NC 28204','704.940.3159','R03684','Carrie Kinney','R28479','Charlotte123!','https://login.canopymls.com/idp/login','','','','','','','','$30/quarterly'],
+            ['NC','Board & MLS','Roanoke Valley Lake Gaston','Secondary (Board)','PO Box 746, Roanoke Rapids, NC 27870','252.676.4679','','Carrie Kinney','IRE_2025','Innovate25!','','','','','','','','',''],
+            ['NC','Board & MLS','High Country','Secondary (Board)','4469 Bamboo Rd, Boone, NC 28607','828.262.5437','','Carrie Kinney','283428','','','','','','','','','',''],
+            ['NC','MLS','Doorify | Raleigh','Secondary (Board)','','','','Carrie Kinney','beadlingwhi','Innovate2025!','https://sso.tangilla.com/auth/realms/0415/protocol/openid-connect/auth?client_id=tmls_dashboard&redirect_uri=https%3A%2F%2Fmy.doorifymls.com%2Fhome%2FLoginSSO&response_type=code&scope=openid%20profile%20email%20roles&code_challenge=bCpvBWbNqTmKK79_NTpJ5LibxBhAQiT0LQRQiQMZRH0&code_challenge_method=S256&nonce=638821560682762738.ZmU2NjU2MzAtZTY5ZC00MmJiLTgwNjEtMGIzYTJjODJiODM3OTg4Y2FjYTUtMGVlYy00NDdkLWJhZGItYTM1ZTI3ZmYyZDZl&state=CfDJ8PnQsi8x0u5AoU0MGk3ZLDDAgY4Xby_Dt56Yr0me7LkG8EMYD_6RPMwpyj37Zvy4refOVb1zLpN8CfbPsHnmmq1HsfW-bNe4y9qSBXmRB-5MU7ZSvnRc2ns8iWYxhkj3idHToA0Y9igk-rSSOZLAePkbCamqRiajMmK1WWK9cvSIL9HI3OiyAAEfE3liVyJbqKC6UKiTxmBbFwmTHgnplv8f-Pqjpknhd3vIon6zzrBxy-q7HHzUCTm0T3cOCmNEd-Wp7TR1h5-KF5w3VJHj_hgmvAUGxk6OeCjFpgrvx6HIGJKZAS7xGR4HDvT7lOZaBjAaIUsZFF0gg30yEvu1DdnTN1Fm0hwtWjxEmX44Qr2h-9bze_kgAVxmRCG9Kl3EGg&x-client-SKU=ID_NETSTANDARD2_0&x-client-ver=6.10.0.0','','','','','','','',''],
+            ['NJ','Board','Mid Jersey AoR','Secondary (Board)','14 Old Bridge Turnpike, South River, NJ 08882','732-442-3400','609516338','Rosemarie Heldmann','whitney@innovateonline.com','beadling','MidNJ Portal','','','','','','','',''],
+            ['NJ','Board','North Central Jersey Assoication of Realtors','Primary (Board)','910 Mt. Kemble Ave, Morristown, NJ 07960','973.425.0110','609516338','Rosemarie Heldmann','','','https://ncjar.com/','','','','','','','',''],
+            ['NJ','Board','Gloucester Salem Counties Board of Realtors','Secondary (Board)','343 Glassboro Rd #103, Woodbury Heights, NJ 08097','856.345.1116','','Rosemarie Heldmann','','','http://gscbor.com/','','','','','','','',''],
+            ['NJ','Board & MLS','Cape May County Association of Realtors','Secondary (Board)','','','','Rosemarie Heldmann','InnovateRE','Innovate2026!','https://capemay.paragonrels.com/ParagonLS/Default.mvc/Login','','','','','','','',''],
+            ['NJ','MLS','Garden State MLS','MLS','1719 NJ-10 #223, Parsippany, NJ 07054','973.898.1900','6402','Rosemarie Heldmann','410131','Innovate843','https://mls.gsmls.com/member/','','','','','','','',''],
+            ['NJ','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INNVRESC1','Rosemarie Heldmann','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['NJ','MLS','South Jersey Shore MLS','MLS Only','','','','Rosemarie Heldmann','wbeadling','Innovate2026!!!','https://sjsr.paragonrels.com/ParagonLS/Default.mvc/Login','will be prompted to change your password on the first Tuesday of every month.','https://atci.rapams.com/scripts/mgrqispi.dll','','wbeadling','Ire2026!','','',''],
+            ['NJ','MLS','Monmouth Ocean Regional MLS','MLS Only','','','','Rosemarie Heldmann','mo.p2518','Monmouth1!!','https://www.flexmls.com/ticket/login','','','','','','','',''],
+            ['OH','Board','Akron Cleveland Association of Realtors','Primary (Board)','9100 South Hills Blvd, Suite 150, Broadview heights, OH 44147','216901.013','657026902','Joe Tupta','','','','','','','','','','',''],
+            ['OH','MLS','MLS Now','MLS','5605 Valley Belt Rd, Brooklyn Heights, OH 44131','216.485.4100','20743','Joe Tupta','612929','InnovateAkron123!','https://mmsi-mlsnow.us.auth0.com/login?state=hKFo2SBHRUg2Q3VFbWlaYUlyb1Nya0VjMGRqRXVsZXRHbFhnZ6FupWxvZ2luo3RpZNkgclFxa2doZ3Iyek42dzY0bHVVWHVzLWdDMTBxVEJ5RHWjY2lk2SB0YlAwTGJ1cHBDZWJZWFR4QXhmME1NYlNPTW9pT2Nubw&client=tbP0LbuppCebYXTxAxf0MMbSOMoiOcno&protocol=samlp&SAMLRequest=fZJdT%2BswDIb%2FSpX7Nm3GYIu2SYMJMWlj1VaOzjk3KE1dFqn5oE5h%2FHv6AdK4YFeRHL9%2B%2FNqeodCV48vGH80eXhtAH5x0ZZD3H3PS1IZbgQq5ERqQe8kPy%2B2GsyjmrrbeSluRM8llhUCE2itrSLBezckzK0R5cyXGYjxKrth0AmXBGOTFFGIY3QCb5jJJZDmdFCT4AzW2yjlpC7VyxAbWBr0wvg3F7DqMk5BNsuSajyd8xP6TYNW6UUb4XnX03iGnVGtUoa7Q2PeowUi0zuNIWk17w9TnabzJG%2BfuIP%2F3NzstT2W83eaH3daqnTSWBMtvD3fWYKOhPkD9piQ87TdnlOId8qhjsaG40q6CDkG1LZoKInd0PZLi8LJQSOyjQ3MkSL%2FGe6tMoczL5cnmQxLyhyxLw3R3yMhi1tXl%2FaTqxW%2BdDTRa2RdlOvyMnqtmw308trz1KrWVkh%2FBva218Jfb6SKqCMs%2BlbtudejBeEIXA%2BDnzS0%2BAQ%3D%3D&RelayState=https%3A%2F%2Fmdweb.mmsi2.com%2Fmlsnow%2Flogin.php','','','','','','','',''],
+            ['PA','Board','Bucks County Association of Realtors','Secondary (Board)','','','','Monica Peterson','','','','','','','','','','',''],
+            ['PA','Board','Pennsylvania Association of Realtors','','500 N Twelfth St, Lemoyne, PA 17043','717.561.1303','716518899','Melanie Henderson','','','','','','','','','','',''],
+            ['PA','Board','Tri-County Suburban Realtors','Primary (Board)','1 Country View Rd Suite 201, Malvern PA 19355','610.560.4800','','Melanie Henderson','','','','','','','','','','',''],
+            ['PA | Delaware','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INOVR1','Monica Peterson','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['PA | Doylestown','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INORE1','Melanie Henderson','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['PA | Doylestown','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INOVR2','Monica Peterson','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['PA | Harleysville','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INORE2','Melanie Henderson','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['PA | North Wales','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INORE3','Melanie Henderson','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['SC | CHS','MLS','CHS Regional MLS','MLS','5006 Wetland Crossing, Charleston, SC 29418','843.760.9410','9460','Carrie Kinney','chs.35694','Charleston843!','CHS Regional Dashboard','','','','','','','',''],
+            ['SC | CHS','MLS','CHS Regional MLS','MLS','5006 Wetland Crossing, Charleston, SC 29418','843.760.9410','10419','Carrie Kinney','chs.35694','Charleston843!','CHS Regional Dashboard','','','','','','','','$30/quarterly'],
+            ['SC | Columbia','MLS','Consolidated Multiple Listing Service','MLS','138 Westpark Blvd, Columbia, SC 29210','803.799.7167','','','Whitney Beadling','Columbia123!!!','','Access Denied?','','','','','','','None'],
+            ['SC | GV','Board','Greater Greenville Association of Realtors','Primary (Board)','50 Airpark Ct, Greenville, SC 29607','864.672.4427','752025626','Jessica Spikes','','','','','','','','','','',''],
+            ['SC | GV','MLS','Greater Greenville Association of Realtors','MLS','50 Airpark Ct, Greenville, SC 29607','864.672.4427','10869','Jessica Spikes','752023199','Innovate2025!!','Greenville Paragon','','https://greatergreenvilleassociationofrealtors.growthzoneapp.com/MIC/30393811/30393662/#/MyBillingInfo/MakeaPaymentList','','whitney@innovateonline.com','Greenville123!','','$145/quarter','NONE'],
+            ['SC | HH','Board','Hilton Head Association of Realtors','Secondary (Board)','32 Office Park Rd, Hilton Head Island, SC 29926','843.842.2421','309500828','Carrie Kinney','','','https://hhrealtor.com/','','','','','','','',''],
+            ['SC | HH','MLS','Resides','MLS','18 Bow Cir, Hilton Head Island, SC 29928','843.785.9696','1084','Carrie Kinney','1084402','Innovate26!','https://hhi.clareity.net/','**Admin Access??','','','','','','','$10/monthly'],
+            ['SC | HH','MLS','Beaufort-Jasper County Realtors','MLS',"22 Kemmerlin Lane, Lady's Island, SC 29907",'843.525.6435','','Carrie Kinney','','','','**Admin Access??','','','','','','',''],
+            ['SC | HV','Board','Pee Dee Realtor Association ','Secondary (Board)','1375 Celebration Blvd, Florence SC 29501','843.665.2242','750012958','Carrie Kinney','','','','','','','','','','',''],
+            ['SC | HV','MLS','Pee Dee Realtor Association ','MLS','1375 Celebration Blvd, Florence SC 29501','843.665.2242','596','Carrie Kinney','STF159','Beach843!','https://peedeemls.paragonrels.com/ParagonLS/Default.mvc','Main Hartsville Office','','','','','','','$100/yearly'],
+            ['SC | HV','MLS','Pee Dee Realtor Association ','MLS','1375 Celebration Blvd, Florence SC 29501','843.665.2242','BRG21','Kris Fuller','STF1132','Beach843!','https://peedeemls.paragonrels.com/ParagonLS/Default.mvc','Pee Dee Office attached to the Multi Office','','','','','','',''],
+            ['SC | MI','Board','Coastal Carolina Association of Realtors','MLS','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','2422','Kris Fuller','','','','','','','','','','',''],
+            ['SC | MI','MLS','Coastal Carolina Association of Realtors','Primary (Board)','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','752526590','Kris Fuller','27803','K@ydence0203','CCAR Portal','','','','','','','',''],
+            ['SC | NMB','Board','Coastal Carolina Association of Realtors','MLS','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','752532533','Carrie Kinney','','','','','','','','','','',''],
+            ['SC | NMB','MLS','Coastal Carolina Association of Realtors','Secondary (Board)','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','2803','Carrie Kinney','27803','K@ydence0203','CCAR Portal','','','','','','','',''],
+            ['SC | PI','Board','Coastal Carolina Association of Realtors','MLS','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','752529018','Carrie Kinney','','','','','','','','','','',''],
+            ['SC | PI','MLS','Coastal Carolina Association of Realtors','Secondary (Board)','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','2960','Carrie Kinney','27803','K@ydence0203','CCAR Portal','','','','','','','',''],
+            ['SC | Pro Dr','Board','Coastal Carolina Association of Realtors','MLS','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','752531397','Kris Fuller','','','','','','','','','','',''],
+            ['SC | Pro Dr','Board','Coastal Carolina Association of Realtors','MLS','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','752524172','Kris Fuller','','','','','','','','','','',''],
+            ['SC | Pro Dr','MLS','Coastal Carolina Association of Realtors','Primary (Board)','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','1964','Kris Fuller','27803','K@ydence0203','CCAR Portal','','','','','','','',''],
+            ['SC | Pro Dr','MLS','Coastal Carolina Association of Realtors','Primary (Board)','951 Shine Ave, Myrtle Beach, SC 29577','843.626.3638','3462','Kris Fuller','27803','K@ydence0203','CCAR Portal','','','','','','','',''],
+            ['SC | WUS','MLS','Western Upstate Association of Realtors','MLS Only','600 McGee Rd, Anderson, SC 29625','864.224.7941','747008576','Jessica Spikes','','','','**Admin Access??','','','','','$313.13/quarter','$75/quarter',''],
+            ['TN','Board','East Tennessee Realtors','Primary (Board)','609 Weisgarber Rd, Knoxville, TN 37919','865.584.8647','773527676','Brenda Brewster','','','','','','','','','','',''],
+            ['TN','Board','Greater Nashville Association of Realtors','Primary (Board)','4540 Trousdale Dr, Nashville, TN 37204','615.254.7516','772017228','Monique Westbrooks','','','','','','','','','','',''],
+            ['TN','MLS','East Tennessee Realtors','MLS','609 Weisgarber Rd, Knoxville, TN 37919','865.584.8647','3480o','Brenda Brewster','knx.23368','Knoxville123!!','https://www.flexmls.com/ticket/login','Annual access fee is $150 billed by invoice','','','','','','',''],
+            ['TN','MLS','East Tennessee Realtors','MLS','609 Weisgarber Rd, Knoxville, TN 37919','865.584.8647','3685o','Monique Westbrooks','knx.23368','Knoxville123!!','https://www.flexmls.com/ticket/login','','','','','','','',''],
+            ['TN','MLS','Realtracs','MLS','','','BRGG01','Monica Peterson','WBeadling','Nashville123!','https://www.realtracs.com/auth/signin','','','','','','','',''],
+            ['TN','MLS','Realtracs','MLS','','','BRGK01','Brenda Brewster','WBeadling','Nashville123!','https://www.realtracs.com/auth/signin','','','','','','','',''],
+            ['VA','Board','Fredericksburg Area Association of Realtors','Primary (Board)','2050 Gordon W Shelton Blvd., Fredericksburg, VA 22401','540.373.7711','841004554','Amy Adams','','','https://login.brightmls.com/login','','','','','','','',''],
+            ['VA | Fredericksburg','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INNOVREINC1','Amy Adams','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['VA | Richmond','MLS','BrightMLS','MLS','PO Box 37093, Baltimore, MD 21297-3093','844.552.7444','INRE01-CVR','Amy Adams','w.beadling','InnovateDE2025!!!','https://login.brightmls.com/login','','','','','','','',''],
+            ['NC','Board','Raleigh Regional','Primary (Board)','','','223730','Carrie Kinney','','','','','','','','','','',''],
+            ['NC','MLS','Doorify | Raleigh','MLS','','','','','','','','','','','','','','',''],
+        ];
+        foreach ($memberships as $m) { $mm->execute($m); }
     }
 
     // ── Listing Intelligence ──────────────────────────────────────────────────
@@ -1358,6 +1587,172 @@ function local_db(): PDO {
         created_at TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_agent_notes_email ON agent_notes(email)");
+
+    // Exchange Readiness — IPO milestone tracker (Finance dept, super_admin
+    // only). Moved here from the old Advantage/coastline-server admin page
+    // 2026-07-14 so AgentEdge owns this natively instead of round-tripping
+    // to a separate app. Target listing pushed from NASDAQ 2029 to 2031 —
+    // only phase 3's dates shifted; phases 1-2 (audit/governance buildout,
+    // OTCQB listing) are unchanged.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS exchange_milestones (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        phase          INTEGER NOT NULL,
+        category       TEXT    NOT NULL,
+        title          TEXT    NOT NULL,
+        description    TEXT    NOT NULL DEFAULT '',
+        status         TEXT    NOT NULL DEFAULT 'pending',
+        target_date    TEXT,
+        completed_date TEXT,
+        notes          TEXT,
+        sort_order     INTEGER NOT NULL DEFAULT 0
+    )");
+    if ($pdo->query("SELECT COUNT(*) FROM exchange_milestones")->fetchColumn() == 0) {
+        $ins = $pdo->prepare("INSERT INTO exchange_milestones (phase,category,title,description,target_date,sort_order) VALUES (?,?,?,?,?,?)");
+        foreach ([
+            // ── Phase 1 — Year 1: Foundation (Jul 2026 – Jun 2027) ──
+            [1,'Advisors','Engage securities attorney','Hire a firm specializing in OTCQB / going-public work (not a generalist). They will clean up the cap table, structure equity grants, and eventually file the SEC registration.','2026-09-30',10],
+            [1,'Advisors','Sign PCAOB audit engagement letter for FY2026','CRITICAL PATH — do this before year-end 2026. Must be a PCAOB-registered firm (not your current CPA). Firms to consider: Marcum LLP, Friedman LLP. Audit delay is the #1 reason listings slip.','2026-10-31',20],
+            [1,'Advisors','Hire fractional CFO with public-company experience','Fractional CFO ($5K–$15K/month) who has taken a company public before. They own financial systems, internal controls, and the monthly close process.','2026-11-30',30],
+            [1,'Corporate','Clean up cap table','Document exactly who owns what percentage of INNOVATE Holdings C-Corp. Formalize or extinguish any informal equity promises to agents/employees. Get a 409A valuation.','2026-12-31',40],
+            [1,'Corporate','Document all IP under INNOVATE Holdings C-Corp','Have attorney confirm Coastline CRM, AgentEdge, agent sites, and all code is owned by INNOVATE Holdings C-Corp — not Darren personally.','2026-12-31',50],
+            [1,'Corporate','Document entity relationships legally','Clearly separate INNOVATE Holdings (C-Corp parent) from SeaShore Realty Group (S-Corp) and Carolina Property Insurance. Public companies cannot have ambiguous related-party transactions.','2026-12-31',60],
+            [1,'Governance','Seat Board of Directors (3+ members, 1 financial expert)','At least one member must qualify as an "audit committee financial expert" (public company accounting background). One real estate industry; one capital markets. Budget $15K–$30K/year per member.','2027-03-31',70],
+            [1,'Governance','Establish formal audit committee with written charter','Required for OTCQB and NASDAQ listing. Committee members must be independent directors. Charter documents the scope, authority, and meeting cadence.','2027-03-31',80],
+            [1,'Finance','Establish monthly financial close process','Books closed by the 15th of each month. Public companies file 10-Qs within 45 days of quarter end — this discipline starts now.','2027-01-31',90],
+            [1,'Finance','409A valuation complete','Required before issuing stock options to employees or agents. Sets the fair market value of common stock for tax purposes.','2027-03-31',100],
+            [1,'Growth','Reach 400–500 agents','Company dollar at 300 agents ≈ $2.25M; need $5M–$8M to be taken seriously by investors. Growing to 400–500 agents is the most direct lever. Use Coastline CRM, join.growwithinnovate.com, and social recruiting automation.','2027-06-30',110],
+            // ── Phase 2 — Year 2: Build (Jul 2027 – Jun 2028) ──
+            [2,'Compliance','Year 2 PCAOB audit complete','Must have 2 full years of audited financials to file Form 10 (OTCQB registration). If Year 1 audit started by Oct 2026, Year 2 should be complete by mid-2028.','2028-04-30',10],
+            [2,'Governance','Seat Compensation Committee (written charter)','Sets executive pay, manages stock option plan. Must include independent directors.','2027-12-31',20],
+            [2,'Governance','Seat Nominating/Governance Committee (written charter)','Oversees board composition and corporate governance standards.','2027-12-31',30],
+            [2,'Compliance','Document internal controls framework','Pre-SOX readiness: financial reporting review process, expense approval thresholds, revenue recognition policy, segregation of duties in accounting. CFO owns this.','2028-01-31',40],
+            [2,'Legal','File Form 10 with the SEC','The registration statement that makes INNOVATE a "reporting company." Required for OTCQB listing. Requires 2 years of audited financials. Securities attorney files it — budget 3–6 months.','2028-04-30',50],
+            [2,'Listing','OTCQB listing live','Requirements: 50+ beneficial shareholders (100+ shares each), 10% public float, PCAOB-audited financials, current SEC disclosure on EDGAR. Trading begins under INNOVATE ticker.','2028-06-30',60],
+            [2,'Capital','Complete Reg D raise ($1M–$5M)','A small Rule 506(b) private offering to accredited investors — agents, friends, family, real estate industry angels — to create the initial public float required for OTCQB.','2028-06-30',70],
+            [2,'Technology','Darwin (AccountTECH) integration live in AgentEdge','Per-agent cap amount, paid, remaining, pending/sold count/volume, and sponsor/upline tree live in AgentEdge. Integration meeting was scheduled week of 2026-06-14.','2027-12-31',80],
+            [2,'Technology','License Coastline CRM to at least 1 outside brokerage','Transforms the investor story from "brokerage" to "proptech company" — dramatically different valuation multiple. Even 1 paying customer proves SaaS viability.','2028-03-31',90],
+            [2,'Marketing','Launch investor relations page on innovateonline.com','Company fact sheet, investor presentation, one-pager. Story: "Technology-powered brokerage for the independent agent." Position CRM and AgentEdge as the IP moat.','2027-12-31',100],
+            [2,'Growth','Reach 600–750 agents, $10M+ company dollar revenue','At 85/15 split, 700 agents averaging $1.5M production each = ~$2M in company dollar per agent per year at 15% company cut. Target: $10M–$12M annual company revenue.','2028-06-30',110],
+            // ── Phase 3 — Year 3: Uplift (Jul 2030 – Jun 2031) — dates pushed
+            // +2 years from the original 2028/2029 plan (target listing now 2031).
+            [3,'Compliance','Year 3 PCAOB audit complete','Three full years of audited financials strengthens the NASDAQ application and gives institutional investors the historical view they need.','2031-04-30',10],
+            [3,'Capital','File Regulation A+ Tier 2 Form 1-A with SEC','The "mini-IPO" — raise up to $75M from the general public (not just accredited investors). 4–6 month SEC review. Creates broad shareholder base, PR, brand awareness, and the float needed for NASDAQ.','2030-10-31',20],
+            [3,'Capital','Reg A+ offering qualified — raise complete','Use proceeds: expand to 1,000+ agents, build out CRM SaaS revenue, potentially acquire a competing small brokerage. Reg A+ proceeds more than cover Year 3 compliance costs.','2031-03-31',30],
+            [3,'Listing','Apply to NASDAQ Capital Market','Must meet one of three financial standards: (1) $5M stockholders\' equity, OR (2) $35M+ market cap, OR (3) $750K+ net income. Plus 300+ round-lot shareholders, 1M+ public shares, $4+ bid price, 3 market makers.','2031-03-31',40],
+            [3,'Governance','Majority independent board confirmed','NASDAQ requires majority of board to be independent directors. Recruit any remaining independent members before filing.','2031-01-31',50],
+            [3,'Governance','Code of business conduct and ethics published','Written, posted publicly. Required for NASDAQ listing. Covers conflicts of interest, insider trading, whistleblower policy.','2031-01-31',60],
+            [3,'Listing','NASDAQ Capital Market listing live','Trading begins on NASDAQ. Full SOX Section 302 compliance kicks in: CEO/CFO certifications on quarterly and annual filings.','2031-06-30',70],
+            [3,'Marketing','Hire full-time investor relations firm','Budget $100K–$250K/year. Begin institutional investor outreach. Analyst coverage target: 2–3 small-cap real estate analysts in Year 1 as a public company.','2031-06-30',80],
+            [3,'Growth','Reach 750–1,000 agents, $15M+ company dollar revenue','At $35M+ market cap threshold for NASDAQ, you need investors to believe a 2–3x revenue multiple is justified. $15M revenue × 2.5x = $37.5M market cap. Tech story is key to achieving that multiple.','2031-06-30',90],
+        ] as $r) {
+            $ins->execute($r);
+        }
+    }
+
+    // ── Darwin Cloud custom API sync (lib/darwin.php) ───────────────────────────
+    // Mutable auth state — access/refresh token pair, seeded from config.php on
+    // first use, then rotated in place as refreshes happen (every refresh returns
+    // a new refresh token per AccountTECH's guide, so this must not go stale).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_auth (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT    NOT NULL,
+        access_token  TEXT    NOT NULL,
+        refresh_token TEXT    NOT NULL,
+        expires_at    TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Cap progress — one row per agent, feeds the Agent Edge cap wheel.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_cap_progress (
+        agent_person_id        INTEGER PRIMARY KEY,
+        agent_first_name       TEXT    NOT NULL DEFAULT '',
+        agent_last_name        TEXT    NOT NULL DEFAULT '',
+        agent_name             TEXT    NOT NULL DEFAULT '',
+        agent_email            TEXT    NOT NULL DEFAULT '',
+        commission_plan_id     TEXT    NOT NULL DEFAULT '',
+        commission_plan_name   TEXT    NOT NULL DEFAULT '',
+        cap_amount              REAL   NOT NULL DEFAULT 0,
+        cap_earned              REAL   NOT NULL DEFAULT 0,
+        amount_left_to_cap      REAL   NOT NULL DEFAULT 0,
+        anniversary_date        TEXT    NOT NULL DEFAULT '',
+        anniversary_end_date    TEXT    NOT NULL DEFAULT '',
+        agent_start_date        TEXT    NOT NULL DEFAULT '',
+        terminated_date         TEXT    NOT NULL DEFAULT '',
+        recruited_by_person_id  TEXT    NOT NULL DEFAULT '',
+        recruited_by_name       TEXT    NOT NULL DEFAULT '',
+        office_id                TEXT   NOT NULL DEFAULT '',
+        office_name              TEXT   NOT NULL DEFAULT '',
+        company_id               TEXT   NOT NULL DEFAULT '',
+        company_name             TEXT   NOT NULL DEFAULT '',
+        is_active_agent          INTEGER NOT NULL DEFAULT 1,
+        cap_status_modify_date   TEXT    NOT NULL DEFAULT '',
+        synced_at                TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_active     ON darwin_cap_progress(is_active_agent)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_recruiter  ON darwin_cap_progress(recruited_by_person_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dcp_email      ON darwin_cap_progress(agent_email)");
+
+    // Revenue share — one row per (recruiter, downline agent, override role) pair,
+    // filtered to overrideRole='Revenue Share' at sync time; feeds the growth network.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_revenue_share (
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        recruiter_person_id         INTEGER NOT NULL,
+        recruiter_name              TEXT    NOT NULL DEFAULT '',
+        agent_person_id             INTEGER NOT NULL,
+        agent_name                  TEXT    NOT NULL DEFAULT '',
+        override_role               TEXT    NOT NULL DEFAULT '',
+        ytd_amount                  REAL    NOT NULL DEFAULT 0,
+        ytd_amount_closed_basis     REAL    NOT NULL DEFAULT 0,
+        ytd_amount_posted_basis     REAL    NOT NULL DEFAULT 0,
+        all_time_amount             REAL    NOT NULL DEFAULT 0,
+        all_time_paid_amount        REAL    NOT NULL DEFAULT 0,
+        voucher_count               INTEGER NOT NULL DEFAULT 0,
+        last_override_date          TEXT    NOT NULL DEFAULT '',
+        has_current_override_setup INTEGER  NOT NULL DEFAULT 1,
+        is_non_producing            INTEGER NOT NULL DEFAULT 0,
+        rev_share_modify_date       TEXT    NOT NULL DEFAULT '',
+        company_id                  TEXT    NOT NULL DEFAULT '',
+        synced_at                   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(recruiter_person_id, agent_person_id, override_role)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_drs_recruiter ON darwin_revenue_share(recruiter_person_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_drs_agent     ON darwin_revenue_share(agent_person_id)");
+
+    // Sales volume — one row per agent, YTD closed-transaction volume.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_sales_volume (
+        agent_person_id                   INTEGER PRIMARY KEY,
+        agent_name                        TEXT    NOT NULL DEFAULT '',
+        ytd_sales_volume                  REAL    NOT NULL DEFAULT 0,
+        ytd_sales_volume_processed_basis  REAL    NOT NULL DEFAULT 0,
+        ytd_list_volume                   REAL    NOT NULL DEFAULT 0,
+        ytd_sell_volume                   REAL    NOT NULL DEFAULT 0,
+        ytd_transaction_count             REAL    NOT NULL DEFAULT 0,
+        volume_modify_date                TEXT    NOT NULL DEFAULT '',
+        company_id                        TEXT    NOT NULL DEFAULT '',
+        synced_at                         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Commission check submission log — fed by commission_submit.php /
+    // api/commission_action.php, read by backoffice_commission_checks.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS commission_check_submissions (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email      TEXT    NOT NULL,
+        agent_name       TEXT    NOT NULL DEFAULT '',
+        loop_id          TEXT    NOT NULL,
+        loop_name        TEXT    NOT NULL DEFAULT '',
+        method           TEXT    NOT NULL,
+        office_location  TEXT,
+        check_original   TEXT,
+        check_stored     TEXT,
+        dl_check_doc_id  TEXT,
+        dl_folder_id     TEXT,
+        dotloop_ok       INTEGER NOT NULL DEFAULT 0,
+        email_sent       INTEGER NOT NULL DEFAULT 0,
+        notes            TEXT,
+        submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ccs_agent ON commission_check_submissions(agent_email)");
+
     return $pdo;
 }
 
@@ -1417,6 +1812,23 @@ function state_roster_status(string $code): array {
 // All 14 state roster statuses keyed by state code.
 function state_roster_statuses_all(): array {
     $rows = local_db()->query("SELECT * FROM state_roster_status")->fetchAll(PDO::FETCH_ASSOC);
+    $map = [];
+    foreach ($rows as $r) $map[$r['state_code']] = $r;
+    return $map;
+}
+
+// PandaDoc template id for a given state, or null if no state-specific
+// template has been set up yet (caller falls back to the global default).
+function pandadoc_template_for_state(string $code): ?string {
+    $s = local_db()->prepare("SELECT template_id FROM pandadoc_state_templates WHERE state_code=?");
+    $s->execute([$code]);
+    $id = $s->fetchColumn();
+    return ($id !== false && $id !== '') ? $id : null;
+}
+
+// All configured per-state PandaDoc templates keyed by state code.
+function pandadoc_state_templates_all(): array {
+    $rows = local_db()->query("SELECT * FROM pandadoc_state_templates ORDER BY state_code")->fetchAll(PDO::FETCH_ASSOC);
     $map = [];
     foreach ($rows as $r) $map[$r['state_code']] = $r;
     return $map;

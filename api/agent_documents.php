@@ -16,6 +16,8 @@ if (!is_admin()) { http_response_code(403); header('Content-Type: application/js
 $pdo    = local_db();
 $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 
+const DOC_CATEGORIES = ['license', 'e_and_o', 'mls_paperwork', 'ce_credit', 'onboarding', 'other'];
+
 function agent_documents_dir(): string {
     $cfgDir = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
     return ($cfgDir ?: (__DIR__ . '/../data')) . '/agent_documents';
@@ -51,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $email = strtolower(trim($_GET['email'] ?? ''));
     if ($email === '') { echo json_encode(['error' => 'email required']); exit; }
     $st = $pdo->prepare(
-        "SELECT id, name, source, mime_type, size_bytes, storage_key, uploaded_by, created_at
+        "SELECT id, name, source, category, mime_type, size_bytes, storage_key, uploaded_by, created_at
          FROM agent_documents WHERE email=? ORDER BY created_at DESC"
     );
     $st->execute([$email]);
@@ -85,11 +87,12 @@ if ($action === 'upload') {
     }
 
     $name = trim($_POST['name'] ?? '') ?: basename($f['name']);
+    $category = in_array($_POST['category'] ?? '', DOC_CATEGORIES, true) ? $_POST['category'] : 'other';
     $uploadedBy = strtolower(trim($agent['email'] ?? ''));
     $pdo->prepare(
-        "INSERT INTO agent_documents (email, name, source, external_ref, mime_type, size_bytes, storage_key, uploaded_by)
-         VALUES (?,?,?,?,?,?,?,?)"
-    )->execute([$email, $name, 'manual', '', $mime, $f['size'], $key, $uploadedBy]);
+        "INSERT INTO agent_documents (email, name, source, category, external_ref, mime_type, size_bytes, storage_key, uploaded_by)
+         VALUES (?,?,?,?,?,?,?,?,?)"
+    )->execute([$email, $name, 'manual', $category, '', $mime, $f['size'], $key, $uploadedBy]);
 
     echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]);
     exit;

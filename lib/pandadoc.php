@@ -2,9 +2,14 @@
 // PandaDoc e-signature API — document creation, sending, and webhook
 // verification for the onboarding "Document Signing" step (steps 5-6 of the
 // onboarding workflow: send for signature, get notified once signed).
-// API key/template configured in config.php as 'pandadoc_api_key' / 'pandadoc_template_id'.
+// API key/default template configured in config.php as 'pandadoc_api_key' /
+// 'pandadoc_template_id'. Per-state template overrides live in the
+// pandadoc_state_templates DB table (see pandadoc_template_for_state() in
+// local_db.php), managed via admin_pandadoc_templates.php.
 // Webhook shared key (Developer Dashboard > API Dashboard > Configuration) as 'pandadoc_webhook_key'.
 // Docs: https://developers.pandadoc.com
+
+require_once __DIR__ . '/../local_db.php';
 
 function pandadoc_request(string $method, string $path, ?array $body = null): array {
     $c      = cfg();
@@ -36,22 +41,25 @@ const PANDADOC_ALREADY_SENT_STATUSES = [
     'document.approved', 'document.completed', 'document.waiting_pay', 'document.paid',
 ];
 
-// Creates a document from the configured onboarding template and sends it to
-// the agent for signature. Pass $existingDocId to resume a document that was
-// already created by a prior (failed) attempt instead of creating a duplicate.
-// Pass $onCreated to get the new document id as soon as it exists — the
-// create/poll/send round trip below can take several seconds, and if the
-// caller's request gets interrupted partway (e.g. PHP aborts on client
-// disconnect), the document already exists/may already be sent on PandaDoc's
-// side, so the id needs to be persisted immediately rather than only on
-// full success — otherwise nothing (including the completion webhook) can
-// ever be reconciled back to it.
-function pandadoc_send_document(string $agentName, string $agentEmail, ?string $existingDocId = null, ?callable $onCreated = null): array {
+// Creates a document from the onboarding template and sends it to the agent
+// for signature. Pass $stateCode to use that state's PandaDoc template (see
+// pandadoc_template_for_state()) — falls back to the global
+// 'pandadoc_template_id' config value if that state has no template set up
+// yet, or if $stateCode is blank/unknown. Pass $existingDocId to resume a
+// document that was already created by a prior (failed) attempt instead of
+// creating a duplicate. Pass $onCreated to get the new document id as soon
+// as it exists — the create/poll/send round trip below can take several
+// seconds, and if the caller's request gets interrupted partway (e.g. PHP
+// aborts on client disconnect), the document already exists/may already be
+// sent on PandaDoc's side, so the id needs to be persisted immediately
+// rather than only on full success — otherwise nothing (including the
+// completion webhook) can ever be reconciled back to it.
+function pandadoc_send_document(string $agentName, string $agentEmail, ?string $existingDocId = null, ?callable $onCreated = null, ?string $stateCode = null): array {
     $c      = cfg();
     $apiKey = $c['pandadoc_api_key'] ?? '';
     if ($apiKey === '') return ['ok'=>false,'error'=>'PandaDoc API key not configured'];
 
-    $templateId = $c['pandadoc_template_id'] ?? '';
+    $templateId = ($stateCode ? pandadoc_template_for_state($stateCode) : null) ?? ($c['pandadoc_template_id'] ?? '');
     if (!$existingDocId && $templateId === '') {
         return ['ok'=>false,'error'=>'PandaDoc template not configured'];
     }
@@ -83,7 +91,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
             ]],
         ]);
         if (!$create['ok']) {
-            $err = $create['data']['message'] ?? $create['data']['error'] ?? "HTTP {$create['code']}";
+            $err = $create['data']['message'] ?? $create['data']['error'] ?? $create['data']['info_message'] ?? "HTTP {$create['code']}";
             return ['ok'=>false,'error'=>"Create failed: {$err}"];
         }
         $docId  = $create['data']['id'] ?? null;
@@ -111,7 +119,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
         'silent'  => false,
     ]);
     if (!$send['ok']) {
-        $err = $send['data']['message'] ?? $send['data']['error'] ?? "HTTP {$send['code']}";
+        $err = $send['data']['message'] ?? $send['data']['error'] ?? $send['data']['info_message'] ?? "HTTP {$send['code']}";
         return ['ok'=>false,'error'=>"Send failed: {$err}",'document_id'=>$docId];
     }
 

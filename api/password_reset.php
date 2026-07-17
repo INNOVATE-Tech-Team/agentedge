@@ -35,7 +35,9 @@ if ($action === 'request') {
         } catch (\Throwable $e) {}
     }
     if (!$known) {
-        $u = db_one("SELECT staffid FROM tblstaff WHERE email=? LIMIT 1", [$email]);
+        // db_one_safe: a dead/retired Perfex connection must be treated as
+        // "email not known" (same generic response below), not a crash.
+        $u = db_one_safe("SELECT staffid FROM tblstaff WHERE email=? LIMIT 1", [$email]);
         $known = (bool)$u;
     }
 
@@ -99,7 +101,6 @@ if ($action === 'confirm') {
 
     session_regenerate_id(true);
     $_SESSION['agent'] = $agent;
-    unset($_SESSION['perms']);
     log_login_event($agent['email'], $agent['name'] ?? '', 'password_reset');
 
     echo json_encode(['ok' => true]);

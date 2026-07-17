@@ -74,20 +74,10 @@ function ce_resolve_recipients(string $audience, string $mcSlug, string $targetE
     return $out;
 }
 
-// Which market center (slug) a given CRM roster email belongs to, or '' if none.
-function ce_mc_slug_for_email(string $email): string {
-    foreach (ce_fetch_crm_roster() as $a) {
-        if (strtolower(trim($a['email'] ?? '')) === $email) {
-            $mc = $a['marketCenter'] ?? '';
-            if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
-            return $mc ? slugify_mc($mc) : '';
-        }
-    }
-    return '';
-}
-
 // Validates audience + scope permission. Returns an error string, or null if OK.
 // Requires the caller to be signed in (uses is_admin()/my_mc_slugs() from roles.php).
+// 'person' has no Market Center scoping — anyone with Company Email access
+// (admin/staff/mc_leader/bic) can 1:1 email any address, in or out of the roster.
 function ce_validate_audience(string $audience, string $mcSlug, string $targetEmail): ?string {
     if (!in_array($audience, ['all', 'admin', 'mc', 'person'], true)) return 'Invalid audience';
 
@@ -96,10 +86,6 @@ function ce_validate_audience(string $audience, string $mcSlug, string $targetEm
         if (!is_admin() && !in_array($mcSlug, my_mc_slugs(), true)) return 'You can only email a Market Center you lead';
     } elseif ($audience === 'person') {
         if (!$targetEmail || !filter_var($targetEmail, FILTER_VALIDATE_EMAIL)) return 'A valid recipient email is required';
-        if (!is_admin()) {
-            $slug = ce_mc_slug_for_email($targetEmail);
-            if (!$slug || !in_array($slug, my_mc_slugs(), true)) return 'You can only email someone in a Market Center you lead';
-        }
     } elseif (!is_admin()) {
         return 'Forbidden';
     }

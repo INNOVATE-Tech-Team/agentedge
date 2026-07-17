@@ -130,7 +130,6 @@ if ($u) {
 
 session_regenerate_id(true);
 $_SESSION['agent'] = $agent;
-unset($_SESSION['perms']); // force fresh permissions lookup
 log_login_event($agent['email'], $agent['name'], 'google');
 
 header('Location: index.php');

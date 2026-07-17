@@ -88,7 +88,6 @@ if ($email === '') { http_response_code(400); echo json_encode(['error' => 'emai
 
 if (($body['action'] ?? '') === 'remove') {
     $pdo->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
-    if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
     echo json_encode(['ok' => true, 'removed' => true]);
     exit;
 }
@@ -124,9 +123,5 @@ $pdo->prepare(
 if ($role === 'agent' && $ownMcSlug === '' && $bicEmail === '') {
     $pdo->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
 }
-
-// An admin editing their own row must see the change immediately, not just
-// on next login — matches admin_roles.php's identical carve-out.
-if (strtolower($agent['email']) === $email) unset($_SESSION['perms']);
 
 echo json_encode(['ok' => true, 'role' => $role, 'mc_slugs' => json_decode($json, true), 'own_mc_slug' => $ownMcSlug, 'bic_email' => $bicEmail]);

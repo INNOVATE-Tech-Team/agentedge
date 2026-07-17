@@ -91,21 +91,23 @@ function fetch_perms(string $email): array {
     return $local ?? fetch_perms_crm($email);
 }
 
-// The logged-in agent's permissions, cached in the session.
+// The logged-in agent's permissions. Memoized per-request only (a static, not
+// $_SESSION) — role/mc_slug edits in agent_roles take effect on the agent's
+// very next request instead of needing a fresh login to bust a session cache.
 // In demo mode, ?role=<key> lets you preview any role.
 function current_perms(): array {
+    static $cached = null;
     $c = cfg();
     if (!empty($c['demo']) && isset($_GET['role'])) {
         $r = preg_replace('/[^a-z_]/', '', $_GET['role']);
         if (!isset(ROLE_LABELS[$r])) $r = 'agent';
-        $_SESSION['perms'] = default_perms($r);
-        return $_SESSION['perms'];
+        return default_perms($r);
     }
-    if (!isset($_SESSION['perms'])) {
+    if ($cached === null) {
         $a = current_agent();
-        $_SESSION['perms'] = $a ? fetch_perms($a['email'] ?? '') : default_perms('agent');
+        $cached = $a ? fetch_perms($a['email'] ?? '') : default_perms('agent');
     }
-    return $_SESSION['perms'];
+    return $cached;
 }
 
 // The MC slugs this user leads (mc_leader / bic).

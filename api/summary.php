@@ -4,6 +4,7 @@
 require __DIR__ . '/../db.php';
 require __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/darwin.php';
 header('Content-Type: application/json');
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
@@ -15,9 +16,20 @@ $out = [
     'agent'   => ['id' => $agent['id'], 'name' => $agent['name']],
     'hasData' => false,
     'tiles'   => ['volume' => 0, 'closedDeals' => 0, 'residual' => 0, 'recruits' => 0],
-    'cap'     => null,            // wires in with Darwin
+    'cap'     => null,
     'network' => [],
 ];
+
+// Cap progress — from Darwin sync (lib/darwin.php / cron/sync_darwin.php), matched
+// by email since AgentEdge doesn't otherwise track the agent's Darwin person id.
+try {
+    $capRow = local_db()->prepare("SELECT cap_amount, cap_earned FROM darwin_cap_progress WHERE lower(agent_email)=lower(?) AND is_active_agent=1 LIMIT 1");
+    $capRow->execute([$agent['email'] ?? '']);
+    $cap = $capRow->fetch(PDO::FETCH_ASSOC);
+    if ($cap) {
+        $out['cap'] = ['amount' => (float)$cap['cap_amount'], 'paid' => (float)$cap['cap_earned']];
+    }
+} catch (\Throwable $e) {}
 
 try {
     $me = db_one(
@@ -110,5 +122,45 @@ try {
 } catch (Throwable $e) {
     $out['error'] = 'query failed: ' . $e->getMessage();
 }
+
+// Closed deals + residual income + network — from Darwin sync, when this agent has a
+// Darwin person id (looked up via darwin_cap_progress, which covers the full roster
+// including $0-cap agents). "Residual income" = sum of this agent's Revenue Share
+// override vouchers as a recruiter (Darwin's own term for this is "override" — see
+// customAPI_InnovateRevenueShare). Overrides the Perfex-derived values above when this
+// agent is found in Darwin; falls back to the Perfex figures otherwise.
+try {
+    $idRow = local_db()->prepare("SELECT agent_person_id FROM darwin_cap_progress WHERE lower(agent_email)=lower(?) AND is_active_agent=1 LIMIT 1");
+    $idRow->execute([$agent['email'] ?? '']);
+    $darwinPersonId = $idRow->fetchColumn();
+
+    if ($darwinPersonId) {
+        $svStmt = local_db()->prepare("SELECT ytd_sales_volume, ytd_transaction_count FROM darwin_sales_volume WHERE agent_person_id=?");
+        $svStmt->execute([$darwinPersonId]);
+        $sv = $svStmt->fetch(PDO::FETCH_ASSOC);
+        if ($sv) {
+            $out['tiles']['volume']      = (float)$sv['ytd_sales_volume'];
+            $out['tiles']['closedDeals'] = (int)$sv['ytd_transaction_count'];
+        }
+
+        $rsStmt = local_db()->prepare(
+            "SELECT rs.agent_name, rs.ytd_amount, sv.ytd_sales_volume, sv.ytd_transaction_count
+             FROM darwin_revenue_share rs
+             LEFT JOIN darwin_sales_volume sv ON sv.agent_person_id = rs.agent_person_id
+             WHERE rs.recruiter_person_id = ?
+             ORDER BY sv.ytd_sales_volume DESC"
+        );
+        $rsStmt->execute([$darwinPersonId]);
+        $overrides = $rsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $out['tiles']['residual'] = array_sum(array_map(fn($r) => (float)$r['ytd_amount'], $overrides));
+        $out['network'] = array_map(fn($r) => [
+            'name'   => $r['agent_name'] ?: 'Agent',
+            'volume' => (float)($r['ytd_sales_volume'] ?? 0),
+            'deals'  => (int)($r['ytd_transaction_count'] ?? 0),
+        ], $overrides);
+        $out['hasData'] = true;
+    }
+} catch (\Throwable $e) {}
 
 echo json_encode($out);

@@ -31,14 +31,12 @@ function original_admin(): ?array {
 function start_masquerade(array $target): void {
     $_SESSION['original_admin'] = $_SESSION['agent'];
     $_SESSION['agent']  = $target;
-    unset($_SESSION['perms']); // force permission re-fetch for new identity
 }
 
 function stop_masquerade(): void {
     if (isset($_SESSION['original_admin'])) {
         $_SESSION['agent'] = $_SESSION['original_admin'];
         unset($_SESSION['original_admin']);
-        unset($_SESSION['perms']); // restore admin permissions
     }
 }
 
@@ -64,9 +62,10 @@ function attempt_login(string $email, string $password): ?array {
             $stmt->execute([strtolower($email)]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             if ($row && password_verify($password, $row['password_hash'])) {
-                // Fetch display info from tblstaff first, then innovate_roster as fallback
-                $u = null;
-                try { $u = db_one("SELECT staffid, email, firstname, lastname, profile_image FROM tblstaff WHERE email=? LIMIT 1", [$email]); } catch (\Throwable $e) {}
+                // Fetch display info from tblstaff first, then innovate_roster as fallback.
+                // db_one_safe (not db_one) so a dead Perfex connection just falls through
+                // to innovate_roster instead of hard-exiting an already-successful login.
+                $u = db_one_safe("SELECT staffid, email, firstname, lastname, profile_image FROM tblstaff WHERE email=? LIMIT 1", [$email]);
                 if ($u) {
                     return [
                         'id'    => (int)$u['staffid'],
@@ -98,7 +97,10 @@ function attempt_login(string $email, string $password): ?array {
         if (trim($email) === '' || $password === '') return null;
         return ['id' => 1, 'email' => trim($email), 'name' => 'Demo Agent', 'photo' => null];
     }
-    $u = db_one(
+    // db_one_safe: agents not yet migrated into agent_passwords depend on this
+    // fallback, but a dead/retired Perfex connection must fail closed (no login)
+    // rather than crash the request with an uncaught DB error.
+    $u = db_one_safe(
         "SELECT staffid, email, firstname, lastname, password, profile_image, active, role
          FROM tblstaff WHERE email = ? LIMIT 1",
         [trim($email)]

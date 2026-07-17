@@ -269,7 +269,8 @@ if ($action === 'provision') {
                 // still needs to be recoverable (the webhook matches on it).
                 $pdo->prepare("UPDATE onboard_steps SET pandadoc_document_id=? WHERE queue_id=? AND tool_key=?")
                     ->execute([$docId, $queueId, $toolKey]);
-            }
+            },
+            $entry['state_code'] ?? null
         );
     }
 

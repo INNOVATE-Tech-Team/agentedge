@@ -407,6 +407,14 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
     <div id="ap-tab-documents" class="ap-tab-pane<?= $tab === 'documents' ? ' active' : '' ?>">
       <div class="card" style="padding:20px 24px">
         <div class="upload-row">
+          <select id="doc-upload-category">
+            <option value="license">License</option>
+            <option value="e_and_o">E&amp;O Certificate</option>
+            <option value="mls_paperwork">MLS Paperwork</option>
+            <option value="ce_credit">CE Credit</option>
+            <option value="onboarding">Onboarding</option>
+            <option value="other" selected>Other</option>
+          </select>
           <input type="file" id="doc-upload-file">
           <button type="button" class="btn-detail-link" onclick="uploadDocument()">Upload</button>
           <span id="doc-upload-msg" style="font-size:11px;color:var(--faint)"></span>
@@ -645,6 +653,11 @@ function fmtBytes(n) {
   return n + ' B';
 }
 
+var DOC_CATEGORY_LABELS = {
+  license: 'License', e_and_o: 'E&O Certificate', mls_paperwork: 'MLS Paperwork',
+  ce_credit: 'CE Credit', onboarding: 'Onboarding', other: 'Other'
+};
+
 window.loadDocuments = function () {
   var list = document.getElementById('doc-list');
   list.innerHTML = '<div class="stub-pane">Loading…</div>';
@@ -656,10 +669,11 @@ window.loadDocuments = function () {
       if (!docs.length) { list.innerHTML = '<div class="stub-pane">No documents on file.</div>'; return; }
       list.innerHTML = docs.map(function (d) {
         var srcLabel = d.source === 'pandadoc' ? 'Signed via PandaDoc' : 'Uploaded by ' + (d.uploaded_by || 'admin');
+        var catLabel = DOC_CATEGORY_LABELS[d.category] || 'Other';
         return '<div class="doc-card">' +
           '<span class="doc-icon">📄</span>' +
           '<div class="doc-info">' +
-            '<div class="doc-name">' + esc(d.name) + '</div>' +
+            '<div class="doc-name">' + esc(d.name) + ' <span class="doc-meta" style="border:1px solid var(--border);border-radius:4px;padding:1px 6px">' + esc(catLabel) + '</span></div>' +
             '<div class="doc-meta">' + esc(srcLabel) + ' · ' + esc(fmtBytes(d.size_bytes)) + ' · ' + esc(d.created_at) + '</div>' +
           '</div>' +
           '<div class="doc-actions">' +
@@ -679,6 +693,7 @@ window.uploadDocument = function () {
   if (!file) { msg.textContent = 'Choose a file first.'; return; }
   var fd = new FormData();
   fd.append('email', PROFILE_EMAIL);
+  fd.append('category', document.getElementById('doc-upload-category').value);
   fd.append('file', file);
   msg.textContent = 'Uploading…';
   fetch('api/agent_documents.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
