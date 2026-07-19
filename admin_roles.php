@@ -158,6 +158,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
 // Roles available for the extra-role dropdown (agent excluded; super_admin reserved)
 $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 'super_admin'], true), ARRAY_FILTER_USE_KEY);
+
+// Sort priority for the Roles column — follows ROLE_LABELS order (most senior first)
+$roleOrderMap = array_flip(array_keys(ROLE_LABELS));
 ?>
 <!doctype html>
 <html lang="en">
@@ -340,7 +343,7 @@ $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 
         <?php else: ?>
         <table class="assign-table">
           <thead>
-            <tr><th>Name</th><th class="th-sort" onclick="sortByState()" title="Click to sort by state">State ⇅</th><th>Roles</th><th>Own MC / BIC</th><th>MC Assignments</th><th></th></tr>
+            <tr><th>Name</th><th class="th-sort" onclick="sortByState()" title="Click to sort by state">State ⇅</th><th class="th-sort" onclick="sortByRole()" title="Click to sort by role">Roles ⇅</th><th>Own MC / BIC</th><th>MC Assignments</th><th></th></tr>
           </thead>
           <tbody>
           <?php foreach ($assigned as $lcemail => $r):
@@ -371,8 +374,14 @@ $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 
             $rowStates = array_values(array_unique($rowStates));
             sort($rowStates);
             $stateDisplay = $rowStates ? implode(', ', $rowStates) : '';
+
+            // Sort priority = most senior of primary/extra role (lower = more senior)
+            $rowRoleOrder = $roleOrderMap[$role] ?? 999;
+            if ($curExtraRole && isset($roleOrderMap[canonical_role($curExtraRole)])) {
+                $rowRoleOrder = min($rowRoleOrder, $roleOrderMap[canonical_role($curExtraRole)]);
+            }
           ?>
-            <tr class="agent-row" data-state="<?= h($rowStates[0] ?? '') ?>">
+            <tr class="agent-row" data-state="<?= h($rowStates[0] ?? '') ?>" data-role="<?= h((string)$rowRoleOrder) ?>">
               <td>
                 <div style="font-weight:600"><?= h($info['name'] ?? $lcemail) ?></div>
                 <div style="font-size:11px;color:#888"><?= h($lcemail) ?></div>
@@ -603,6 +612,20 @@ function sortByState() {
     return stateSortAsc ? sa.localeCompare(sb) : sb.localeCompare(sa);
   });
   stateSortAsc = !stateSortAsc;
+  pairs.forEach(([agentRow, editRow]) => { tbody.appendChild(agentRow); tbody.appendChild(editRow); });
+}
+
+let roleSortAsc = true;
+function sortByRole() {
+  const tbody = document.querySelector('.assign-table tbody');
+  if (!tbody) return;
+  const pairs = Array.from(tbody.querySelectorAll('tr.agent-row')).map(r => [r, r.nextElementSibling]);
+  pairs.sort((a, b) => {
+    const ra = Number(a[0].dataset.role ?? 999);
+    const rb = Number(b[0].dataset.role ?? 999);
+    return roleSortAsc ? ra - rb : rb - ra;
+  });
+  roleSortAsc = !roleSortAsc;
   pairs.forEach(([agentRow, editRow]) => { tbody.appendChild(agentRow); tbody.appendChild(editRow); });
 }
 
