@@ -54,7 +54,7 @@ ksort($mc_opts);
 $roleRows = local_db()->query(
     "SELECT email, role, mc_slugs, own_mc_slug, bic_email, extra_roles_json, updated_at
      FROM agent_roles
-     WHERE role != 'agent' OR own_mc_slug != '' OR bic_email != '' OR extra_roles_json != '[]'
+     WHERE role != 'agent' OR extra_roles_json != '[]'
      ORDER BY email"
 )->fetchAll(PDO::FETCH_ASSOC);
 $assigned = [];
