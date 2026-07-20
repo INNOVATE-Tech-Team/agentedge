@@ -71,20 +71,21 @@ $mcOptsJson = json_encode($mcOpts);
                 <input type="email" id="ob-email" required placeholder="jane@example.com">
               </div>
               <div class="field">
+                <label>License State(s) <small style="font-weight:400;color:#999">(can hold more than one)</small></label>
+                <div id="ob-state-checks" style="display:flex;flex-wrap:wrap;gap:6px;padding-top:6px">
+                  <?php foreach (['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'] as $st): ?>
+                    <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;background:#f0f0f0;padding:3px 9px;border-radius:10px;cursor:pointer;margin:0">
+                      <input type="checkbox" class="ob-state-check" value="<?= h($st) ?>" style="margin:0" onchange="onAddStateChange()"><?= h($st) ?>
+                    </label>
+                  <?php endforeach; ?>
+                </div>
+              </div>
+              <div class="field">
                 <label>Market Center *</label>
                 <select id="ob-mc" required>
                   <option value="">Select Market Center…</option>
                   <?php foreach ($mcOpts as $opt): ?>
                   <option value="<?= h($opt['name']) ?>"><?= h(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
-              <div class="field">
-                <label>License State</label>
-                <select id="ob-state">
-                  <option value="">Select state…</option>
-                  <?php foreach (['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'] as $st): ?>
-                    <option value="<?= h($st) ?>"><?= h($st) ?></option>
                   <?php endforeach; ?>
                 </select>
               </div>
@@ -104,7 +105,10 @@ $mcOptsJson = json_encode($mcOpts);
               </div>
               <div class="field">
                 <label>Sponsor / Recruited By</label>
-                <input type="text" id="ob-sponsor" placeholder="Who recruited them?">
+                <div class="search-wrap">
+                  <input type="text" id="ob-sponsor" placeholder="Who recruited them?" autocomplete="off">
+                  <div class="crm-results" id="sponsor-results" style="display:none"></div>
+                </div>
               </div>
               <div class="field full">
                 <label>Notes</label>

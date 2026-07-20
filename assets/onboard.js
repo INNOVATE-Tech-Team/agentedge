@@ -116,15 +116,77 @@
     if (el) el.value = val || '';
   }
 
+  // ── Sponsor / Recruited By autocomplete ────────────────────────────────────
+  // Reuses the same CRM/roster search as "Search CRM Roster" above, but just
+  // fills the sponsor field with the picked name instead of the whole form.
+  let sponsorTimer = null;
+  const sponsorInput   = document.getElementById('ob-sponsor');
+  const sponsorResults = document.getElementById('sponsor-results');
+
+  if (sponsorInput) {
+    sponsorInput.addEventListener('input', () => {
+      clearTimeout(sponsorTimer);
+      const q = sponsorInput.value.trim();
+      if (q.length < 2) { hideSponsorResults(); return; }
+      sponsorTimer = setTimeout(() => fetchSponsor(q), 300);
+    });
+
+    sponsorInput.addEventListener('blur', () => {
+      setTimeout(hideSponsorResults, 200);
+    });
+  }
+
+  function hideSponsorResults() {
+    if (sponsorResults) { sponsorResults.style.display = 'none'; sponsorResults.innerHTML = ''; }
+  }
+
+  function fetchSponsor(q) {
+    fetch('api/onboard_action.php?action=search_crm&q=' + encodeURIComponent(q), {
+      credentials: 'same-origin',
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok || !d.results?.length) { hideSponsorResults(); return; }
+        sponsorResults.innerHTML = d.results.map(r =>
+          `<div class="crm-result-item" data-name="${esc(r.name)}">
+             <strong>${esc(r.name)}</strong>
+             ${r.marketCenter ? `<span style="color:#aaa;font-size:11px;margin-left:6px">${esc(r.marketCenter)}</span>` : ''}
+           </div>`
+        ).join('');
+        sponsorResults.style.display = 'block';
+
+        sponsorResults.querySelectorAll('.crm-result-item').forEach(item => {
+          item.addEventListener('mousedown', () => {
+            sponsorInput.value = item.dataset.name;
+            hideSponsorResults();
+          });
+        });
+      })
+      .catch(() => hideSponsorResults());
+  }
+
+  // ── Add-panel: filter Market Center by checked License State(s) ────────────
+  window.onAddStateChange = function () {
+    const checked = Array.from(document.querySelectorAll('.ob-state-check:checked')).map(cb => cb.value);
+    const mcSelect = document.getElementById('ob-mc');
+    if (!mcSelect) return;
+    const current  = mcSelect.value;
+    const filtered = checked.length ? MC_OPTS.filter(m => checked.includes(m.state_code)) : MC_OPTS;
+    mcSelect.innerHTML = '<option value="">Select Market Center…</option>' +
+      filtered.map(m => `<option value="${esc(m.name)}">${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`).join('');
+    if (filtered.some(m => m.name === current)) mcSelect.value = current;
+  };
+
   // ── Add-agent form submit ──────────────────────────────────────────────────
   const addForm = document.getElementById('ob-add-form');
   if (addForm) {
     addForm.addEventListener('submit', e => {
       e.preventDefault();
-      const btn  = document.getElementById('ob-add-btn');
-      const name = document.getElementById('ob-name')?.value.trim();
-      const email= document.getElementById('ob-email')?.value.trim();
-      const mc   = document.getElementById('ob-mc')?.value.trim();
+      const btn    = document.getElementById('ob-add-btn');
+      const name   = document.getElementById('ob-name')?.value.trim();
+      const email  = document.getElementById('ob-email')?.value.trim();
+      const mc     = document.getElementById('ob-mc')?.value.trim();
+      const states = Array.from(document.querySelectorAll('.ob-state-check:checked')).map(cb => cb.value);
       if (!name || !email) { setMsg('ob-add-msg','Name and email are required.',false); return; }
       if (!mc) { setMsg('ob-add-msg','Market Center is required.',false); return; }
 
@@ -135,7 +197,7 @@
         agent_name:    name,
         agent_email:   email,
         market_center: mc,
-        state_code:    document.getElementById('ob-state')?.value,
+        state_code:    states.join(','),
         role:          document.getElementById('ob-role')?.value,
         start_date:    document.getElementById('ob-start')?.value,
         sponsor:       document.getElementById('ob-sponsor')?.value.trim(),
@@ -146,6 +208,7 @@
           if (d.ok) {
             setMsg('ob-add-msg', name + ' added to queue.', true);
             addForm.reset();
+            onAddStateChange(); // resync Market Center options now states are unchecked
             // Expand the newly added entry after reload
             expandedIds.add(d.id);
             // Switch to active tab and reload
