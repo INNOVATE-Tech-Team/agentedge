@@ -148,4 +148,16 @@ return [
     // Never reuse the same key across dev/staging/production, and never commit
     // a real key — config.php is git-ignored, this sample file is not.
     'tax_id_encryption_key' => '',
+
+    // Darwin Cloud custom API (lib/darwin.php, cron/sync_darwin.php) — pulls cap
+    // progress, revenue share, and sales volume from INNOVATE's finance/commission
+    // system into the cap wheel + growth network. Request credentials from
+    // support@accounttech.com. These are only the INITIAL seed values — once
+    // synced, the live pair is tracked in the darwin_auth table and rotates on
+    // every refresh, so don't expect this file to reflect the current token.
+    // Geo-restricted to US IPs (dev + prod) — see the AccountTECH developer guide.
+    'darwin_username'      => '',
+    'darwin_access_token'  => '',
+    'darwin_refresh_token' => '',
+    'darwin_token_expires' => '',  // format: MM/DD/YYYY HH:MM:SS, as issued by AccountTECH
 ];

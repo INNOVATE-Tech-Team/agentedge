@@ -114,7 +114,7 @@ function process_notification_queue(int $limit = 100): void {
 
     $db   = local_db();
     $rows = $db->prepare(
-        "SELECT id, recipient, channel, subject, body, phone, is_html
+        "SELECT id, recipient, channel, subject, body, phone, is_html, attachment_ids
          FROM notification_queue
          WHERE status='pending' AND attempts < 3
          ORDER BY id
@@ -127,11 +127,23 @@ function process_notification_queue(int $limit = 100): void {
     $markSent   = $db->prepare("UPDATE notification_queue SET status='sent',   sent_at=datetime('now'), attempts=attempts+1 WHERE id=?");
     $markFailed = $db->prepare("UPDATE notification_queue SET status='failed', attempts=attempts+1 WHERE id=?");
 
+    // A whole-company send queues one row per recipient with identical
+    // attachment_ids — cache the resolved (base64-encoded) attachments per
+    // distinct id-list so a 300-recipient blast reads each file once, not 300 times.
+    $attachCache = [];
+
     foreach ($items as $item) {
         try {
             $ok = false;
             if ($item['channel'] === 'email') {
-                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false));
+                $attIds = trim($item['attachment_ids'] ?? '');
+                if ($attIds === '') {
+                    $attachments = [];
+                } else {
+                    if (!isset($attachCache[$attIds])) $attachCache[$attIds] = resolve_email_attachments($attIds);
+                    $attachments = $attachCache[$attIds];
+                }
+                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false), $attachments);
             } elseif ($item['channel'] === 'sms') {
                 $ok = send_sms_twilio($item['phone'], $item['body'], $c);
             }
@@ -140,6 +152,35 @@ function process_notification_queue(int $limit = 100): void {
             $markFailed->execute([$item['id']]);
         }
     }
+}
+
+// Resolves a comma-separated email_attachments.id list into SendGrid-ready
+// attachment objects (base64 content + filename + mime type). Missing files
+// on disk are silently skipped rather than failing the whole send.
+function resolve_email_attachments(string $attachmentIds): array {
+    $ids = array_values(array_filter(array_map('intval', explode(',', $attachmentIds))));
+    if (!$ids) return [];
+
+    $db = local_db();
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $rows = $db->prepare("SELECT orig_name, mime_type, storage_key FROM email_attachments WHERE id IN ($placeholders)");
+    $rows->execute($ids);
+
+    $c   = cfg();
+    $dir = ($c['local_db_dir'] ?? (__DIR__ . '/../data')) . '/email_attachments';
+
+    $out = [];
+    foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $path = $dir . '/' . $r['storage_key'];
+        if (!is_file($path)) continue;
+        $out[] = [
+            'content'     => base64_encode(file_get_contents($path)),
+            'filename'    => $r['orig_name'] ?: $r['storage_key'],
+            'type'        => $r['mime_type'] ?: 'application/octet-stream',
+            'disposition' => 'attachment',
+        ];
+    }
+    return $out;
 }
 
 // ── Onboarding / Offboarding direct notifications ─────────────────────────────
@@ -585,7 +626,7 @@ function notify_suggestion_created(int $suggestionId, string $title, string $bod
 
 // ── SendGrid email ────────────────────────────────────────────────────────────
 
-function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false): bool {
+function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false, array $attachments = []): bool {
     $key  = $c['sendgrid_key']  ?? '';
     $from = $c['sendgrid_from'] ?? 'noreply@innovateonline.com';
     $name = $c['sendgrid_name'] ?? 'INNOVATE Real Estate';
@@ -603,7 +644,7 @@ function send_email_sendgrid(string $to, string $subject, string $body, array $c
         $htmlBody  = nl2br(htmlspecialchars($body, ENT_QUOTES));
     }
 
-    $payload = json_encode([
+    $payloadArr = [
         'personalizations' => [['to' => [['email' => $to]]]],
         'from'    => ['email' => $from, 'name' => $name],
         'subject' => $subject,
@@ -611,7 +652,9 @@ function send_email_sendgrid(string $to, string $subject, string $body, array $c
             ['type' => 'text/plain', 'value' => $plainText],
             ['type' => 'text/html',  'value' => $htmlBody],
         ],
-    ]);
+    ];
+    if ($attachments) $payloadArr['attachments'] = $attachments;
+    $payload = json_encode($payloadArr);
 
     $ch = curl_init('https://api.sendgrid.com/v3/mail/send');
     curl_setopt_array($ch, [

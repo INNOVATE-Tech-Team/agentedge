@@ -205,6 +205,21 @@ if ($action === 'set_state') {
     json_out(['ok'=>true]);
 }
 
+// ── POST: set_market_center ───────────────────────────────────────────────────
+// Lets an admin fix a queue entry's Market Center after the fact — needed
+// because api/onboard_push.php (Advantage CRM) can send a value that doesn't
+// match the canonical market_centers list, which normalize_market_center()
+// then leaves blank rather than passing through untouched.
+if ($action === 'set_market_center') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $mc      = normalize_market_center($pdo, $body['market_center'] ?? '');
+    if (!$queueId || $mc === '') {
+        json_out(['ok'=>false,'error'=>'queue_id and a valid market_center are required']);
+    }
+    $pdo->prepare("UPDATE onboard_queue SET market_center = ? WHERE id = ?")->execute([$mc, $queueId]);
+    json_out(['ok'=>true]);
+}
+
 // ── POST: mark_done ───────────────────────────────────────────────────────────
 if ($action === 'mark_done') {
     $queueId = (int)($body['queue_id'] ?? 0);
@@ -316,6 +331,14 @@ if ($action === 'complete_onboarding') {
     $state = strtoupper(trim($row['state_code'] ?? ''));
     if (!in_array($state, ROSTER_VALID_STATES, true)) {
         json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
+    }
+    // Same treatment as state above — market_center only ever reaches this
+    // table already normalized against the canonical list (see
+    // normalize_market_center()), so a blank value here means it was never
+    // set or didn't match a real Market Center and needs a human to fix it.
+    $mc = trim($row['market_center'] ?? '');
+    if ($mc === '') {
+        json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
     }
 
     add_or_reactivate_roster_agent(

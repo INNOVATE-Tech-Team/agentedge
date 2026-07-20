@@ -16,6 +16,7 @@ const ROLE_LABELS = [
     'launch_coach'         => 'Launch Coach',
     'director_of_coaching' => 'Director of Coaching',
     'launch_facilitator'   => 'Launch Facilitator',
+    'launch_agent'         => 'Launch Agent',
     'agent'                => 'Agent',
 ];
 
@@ -128,8 +129,13 @@ function is_leader(): bool         { return is_admin() || is_bic() || is_mc_lead
 // Can post announcements (any role except plain agent/recruiter)
 function can_post_announcements(): bool { return is_admin() || is_mc_leader() || is_bic(); }
 // Can send a Company Email — same tier as announcements: admin/staff (any audience),
-// mc_leader/bic (only the Market Centers in their own mc_slugs).
-function can_send_company_email(): bool { return can_post_announcements(); }
+// mc_leader/bic (only the Market Centers in their own mc_slugs), plus LAUNCH
+// coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
+function can_send_company_email(): bool { return can_post_announcements() || is_launch_coach(); }
+// LAUNCH coaching staff (coach or the director role above them).
+function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
+// Can create/edit cohorts and reassign coaches (admin or coaching leadership).
+function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }

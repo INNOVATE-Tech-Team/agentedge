@@ -10,6 +10,7 @@
   let expandedIds   = new Set();   // queue ids whose checklist is open
   const TOOLS       = window.ONBOARD_TOOLS || [];
   const STATES      = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
+  const MC_OPTS     = window.ONBOARD_MC_OPTS || [];
 
   // Tool key → definition map
   const TOOL_MAP = {};
@@ -123,7 +124,9 @@
       const btn  = document.getElementById('ob-add-btn');
       const name = document.getElementById('ob-name')?.value.trim();
       const email= document.getElementById('ob-email')?.value.trim();
+      const mc   = document.getElementById('ob-mc')?.value.trim();
       if (!name || !email) { setMsg('ob-add-msg','Name and email are required.',false); return; }
+      if (!mc) { setMsg('ob-add-msg','Market Center is required.',false); return; }
 
       btn.disabled = true;
       setMsg('ob-add-msg','Adding…',true);
@@ -131,7 +134,7 @@
       post('api/onboard_action.php?action=add_to_queue', {
         agent_name:    name,
         agent_email:   email,
-        market_center: document.getElementById('ob-mc')?.value.trim(),
+        market_center: mc,
         state_code:    document.getElementById('ob-state')?.value,
         role:          document.getElementById('ob-role')?.value,
         start_date:    document.getElementById('ob-start')?.value,
@@ -254,9 +257,19 @@
         ${stateOptions}
       </select>` : (entry.state_code ? esc(entry.state_code) : '');
 
+    const mcOptions = MC_OPTS.map(m =>
+      `<option value="${esc(m.name)}"${entry.market_center === m.name ? ' selected' : ''}>${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
+    ).join('');
+    const mcSelectHtml = entry.status === 'active' ? `
+      <select class="ob-state-select" onchange="setQueueMarketCenter(${entry.id}, this)" title="Market Center (required to complete onboarding)">
+        <option value="">Market Center…</option>
+        ${mcOptions}
+      </select>` : (entry.market_center ? esc(entry.market_center) : '');
+
     const footerHtml = entry.status === 'active' ? `
       <div class="ob-footer">
-        <button class="ob-btn-sm ob-btn-done" onclick="completeOnboarding(${entry.id}, this, ${entry.state_code ? 'true' : 'false'})">Mark Complete</button>
+        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${entry.market_center ? '1' : '0'}"
+                onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
@@ -280,7 +293,10 @@
           </div>
         </div>
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
-          ${entry.status === 'active' ? `<div class="ob-state-row" style="padding:4px 0 12px;font-size:12px;color:#888">License state (required to complete): ${stateSelectHtml}</div>` : ''}
+          ${entry.status === 'active' ? `<div class="ob-state-row" style="padding:4px 0 12px;font-size:12px;color:#888;display:flex;gap:16px;flex-wrap:wrap">
+            <span>License state (required to complete): ${stateSelectHtml}</span>
+            <span>Market Center (required to complete): ${mcSelectHtml}</span>
+          </div>` : ''}
           ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
           ${footerHtml}
         </div>
@@ -407,14 +423,32 @@
         select.disabled = false;
         if (!d.ok) { alert(d.error || 'Could not set state.'); return; }
         const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
-        if (btn) btn.setAttribute('onclick', `completeOnboarding(${queueId}, this, true)`);
+        if (btn) btn.dataset.hasState = '1';
+      })
+      .catch(() => { select.disabled = false; });
+  };
+
+  // ── Set Market Center on a queue entry ─────────────────────────────────────
+  window.setQueueMarketCenter = function (queueId, select) {
+    const mc = select.value;
+    if (!mc) return;
+    select.disabled = true;
+    post('api/onboard_action.php?action=set_market_center', { queue_id: queueId, market_center: mc })
+      .then(d => {
+        select.disabled = false;
+        if (!d.ok) { alert(d.error || 'Could not set Market Center.'); return; }
+        const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
+        if (btn) btn.dataset.hasMc = '1';
       })
       .catch(() => { select.disabled = false; });
   };
 
   // ── Complete / Cancel queue entry ──────────────────────────────────────────
-  window.completeOnboarding = function (queueId, btn, hasState) {
+  window.completeOnboarding = function (queueId, btn) {
+    const hasState = btn.dataset.hasState === '1';
+    const hasMc    = btn.dataset.hasMc === '1';
     if (!hasState) { alert('Set a license state for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
+    if (!hasMc) { alert('Set a Market Center for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
     if (!confirm('Mark this agent\'s onboarding as complete?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=complete_onboarding', { queue_id: queueId })

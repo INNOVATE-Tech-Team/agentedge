@@ -91,7 +91,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
             ]],
         ]);
         if (!$create['ok']) {
-            $err = $create['data']['message'] ?? $create['data']['error'] ?? "HTTP {$create['code']}";
+            $err = $create['data']['message'] ?? $create['data']['error'] ?? $create['data']['info_message'] ?? "HTTP {$create['code']}";
             return ['ok'=>false,'error'=>"Create failed: {$err}"];
         }
         $docId  = $create['data']['id'] ?? null;
@@ -119,7 +119,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
         'silent'  => false,
     ]);
     if (!$send['ok']) {
-        $err = $send['data']['message'] ?? $send['data']['error'] ?? "HTTP {$send['code']}";
+        $err = $send['data']['message'] ?? $send['data']['error'] ?? $send['data']['info_message'] ?? "HTTP {$send['code']}";
         return ['ok'=>false,'error'=>"Send failed: {$err}",'document_id'=>$docId];
     }
 

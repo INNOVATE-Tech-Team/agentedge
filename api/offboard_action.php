@@ -18,10 +18,17 @@ function json_out(array $d, int $code = 200): void {
 }
 
 $agent = require_login();
-if (!is_admin()) json_out(['ok'=>false,'error'=>'Admin access required'], 403);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 $pdo    = local_db();
+
+// mc_leader/bic may only initiate offboarding (queue a departing agent from
+// their own Market Center) — every other action (queue list/management,
+// checklists, deprovisioning tools) stays admin-only.
+$leaderRole = !is_admin() && (is_mc_leader() || is_bic());
+if (!is_admin() && !($leaderRole && $action === 'add_to_queue')) {
+    json_out(['ok'=>false,'error'=>'Admin access required'], 403);
+}
 
 // ── GET: list_queue ───────────────────────────────────────────────────────────
 if ($action === 'list_queue') {
@@ -158,6 +165,26 @@ foreach ($_POST as $k => $v) {
 if ($action === 'add_to_queue') {
     $email = trim($body['agent_email'] ?? '');
     $name  = trim($body['agent_name']  ?? '');
+    $mc    = trim($body['market_center'] ?? '');
+
+    // mc_leader/bic: verify against the agent's actual roster record (by id,
+    // not the client-submitted name/email/market_center, which could be
+    // spoofed) that this agent belongs to a Market Center the caller leads.
+    // Name/MC are then trusted from that roster row, not the request body.
+    if ($leaderRole) {
+        $rosterId = (int)($body['roster_id'] ?? 0);
+        if (!$rosterId) json_out(['ok'=>false,'error'=>'Missing roster reference'], 403);
+        $rr = $pdo->prepare("SELECT agent_name, email, market_center FROM innovate_roster WHERE id=? AND active=1");
+        $rr->execute([$rosterId]);
+        $row = $rr->fetch(PDO::FETCH_ASSOC);
+        if (!$row || !in_array(slugify_mc($row['market_center'] ?: ''), my_mc_slugs(), true)) {
+            json_out(['ok'=>false,'error'=>'You can only send agents from your own Market Center to offboarding'], 403);
+        }
+        $name = $row['agent_name'];
+        $mc   = $row['market_center'];
+        if ($row['email']) $email = $row['email'];
+    }
+
     if ($email === '' || $name === '') {
         json_out(['ok'=>false,'error'=>'agent_email and agent_name are required']);
     }
@@ -176,7 +203,7 @@ if ($action === 'add_to_queue') {
     $ins->execute([
         $email,
         $name,
-        trim($body['market_center']  ?? ''),
+        $mc,
         trim($body['last_day']       ?? ''),
         $reason,
         trim($body['reason_notes']   ?? ''),
@@ -222,7 +249,7 @@ if ($action === 'add_to_queue') {
         notify_offboard_added(
             $name,
             $email,
-            trim($body['market_center']  ?? ''),
+            $mc,
             trim($body['last_day']       ?? ''),
             $reason,
             trim($body['reason_notes']   ?? ''),

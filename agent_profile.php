@@ -31,6 +31,7 @@ $TABS = [
     'billing_log'    => 'Billing Log',
     'commission_log' => 'Commission Log',
     'notes'          => 'Notes',
+    'comms'          => 'Communications',
     'checklist'      => 'Task Checklist',
     'other_income'   => 'Other Income',
     'network'        => 'Network Tree',
@@ -53,6 +54,13 @@ if ($targetEmail !== '') {
     $nst = local_db()->prepare("SELECT id, note, created_by, created_at FROM agent_notes WHERE email=? ORDER BY created_at DESC, id DESC");
     $nst->execute([$targetEmail]);
     $notes = $nst->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$commsLog = [];
+if ($targetEmail !== '') {
+    $cst = local_db()->prepare("SELECT sender_email, subject, snippet, sent_at FROM agent_comms_log WHERE agent_email=? ORDER BY sent_at DESC, id DESC LIMIT 100");
+    $cst->execute([$targetEmail]);
+    $commsLog = $cst->fetchAll(PDO::FETCH_ASSOC);
 }
 
 $displayName = $profileData['full_name'] ?? $targetEmail;
@@ -377,6 +385,20 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <span id="admin-save-msg" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
           </div>
 
+          <div class="dg-section">Reset Agent Password</div>
+          <div class="dg-field">
+            <span class="dg-label">New Password</span>
+            <input type="password" id="admin-reset-pw-new" autocomplete="new-password" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+          </div>
+          <div class="dg-field">
+            <span class="dg-label">Confirm New Password</span>
+            <input type="password" id="admin-reset-pw-confirm" autocomplete="new-password" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+          </div>
+          <div class="dg-field" style="grid-column:1/-1">
+            <button type="button" class="btn-detail-link" onclick="resetAgentPassword()">Reset Password</button>
+            <span id="admin-reset-pw-msg" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
+          </div>
+
           <div class="detail-actions">
             <?php if (!empty($a['submitted'])): ?>
               <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? date('M j, Y', strtotime($a['submitted_at'])) : '—') ?></span>
@@ -407,6 +429,14 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
     <div id="ap-tab-documents" class="ap-tab-pane<?= $tab === 'documents' ? ' active' : '' ?>">
       <div class="card" style="padding:20px 24px">
         <div class="upload-row">
+          <select id="doc-upload-category">
+            <option value="license">License</option>
+            <option value="e_and_o">E&amp;O Certificate</option>
+            <option value="mls_paperwork">MLS Paperwork</option>
+            <option value="ce_credit">CE Credit</option>
+            <option value="onboarding">Onboarding</option>
+            <option value="other" selected>Other</option>
+          </select>
           <input type="file" id="doc-upload-file">
           <button type="button" class="btn-detail-link" onclick="uploadDocument()">Upload</button>
           <span id="doc-upload-msg" style="font-size:11px;color:var(--faint)"></span>
@@ -450,6 +480,23 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="note-card">
               <div class="note-meta"><?= h($n['created_by']) ?> — <?= h(date('M j, Y g:ia', strtotime($n['created_at']))) ?></div>
               <div class="note-body"><?= h($n['note']) ?></div>
+            </div>
+          <?php endforeach; endif; ?>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── COMMUNICATIONS ────────────────────────────────────────────────── -->
+    <div id="ap-tab-comms" class="ap-tab-pane<?= $tab === 'comms' ? ' active' : '' ?>">
+      <div class="card" style="padding:20px 24px">
+        <p style="font-size:12px;color:var(--faint);margin:0 0 14px">Every Company Email this agent has received, pulled onto their record automatically — sent from <a href="backoffice_email.php">Company Email</a>.</p>
+        <div class="notes-list">
+          <?php if (!$commsLog): ?>
+            <div class="stub-pane" style="padding:20px">No communications logged yet.</div>
+          <?php else: foreach ($commsLog as $c): ?>
+            <div class="note-card">
+              <div class="note-meta"><?= h($c['sender_email']) ?> — <?= h(date('M j, Y g:ia', strtotime($c['sent_at']))) ?></div>
+              <div class="note-body"><strong><?= h($c['subject']) ?></strong><br><?= h($c['snippet']) ?></div>
             </div>
           <?php endforeach; endif; ?>
         </div>
@@ -645,6 +692,11 @@ function fmtBytes(n) {
   return n + ' B';
 }
 
+var DOC_CATEGORY_LABELS = {
+  license: 'License', e_and_o: 'E&O Certificate', mls_paperwork: 'MLS Paperwork',
+  ce_credit: 'CE Credit', onboarding: 'Onboarding', other: 'Other'
+};
+
 window.loadDocuments = function () {
   var list = document.getElementById('doc-list');
   list.innerHTML = '<div class="stub-pane">Loading…</div>';
@@ -656,10 +708,11 @@ window.loadDocuments = function () {
       if (!docs.length) { list.innerHTML = '<div class="stub-pane">No documents on file.</div>'; return; }
       list.innerHTML = docs.map(function (d) {
         var srcLabel = d.source === 'pandadoc' ? 'Signed via PandaDoc' : 'Uploaded by ' + (d.uploaded_by || 'admin');
+        var catLabel = DOC_CATEGORY_LABELS[d.category] || 'Other';
         return '<div class="doc-card">' +
           '<span class="doc-icon">📄</span>' +
           '<div class="doc-info">' +
-            '<div class="doc-name">' + esc(d.name) + '</div>' +
+            '<div class="doc-name">' + esc(d.name) + ' <span class="doc-meta" style="border:1px solid var(--border);border-radius:4px;padding:1px 6px">' + esc(catLabel) + '</span></div>' +
             '<div class="doc-meta">' + esc(srcLabel) + ' · ' + esc(fmtBytes(d.size_bytes)) + ' · ' + esc(d.created_at) + '</div>' +
           '</div>' +
           '<div class="doc-actions">' +
@@ -679,6 +732,7 @@ window.uploadDocument = function () {
   if (!file) { msg.textContent = 'Choose a file first.'; return; }
   var fd = new FormData();
   fd.append('email', PROFILE_EMAIL);
+  fd.append('category', document.getElementById('doc-upload-category').value);
   fd.append('file', file);
   msg.textContent = 'Uploading…';
   fetch('api/agent_documents.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
@@ -779,6 +833,35 @@ window.saveAdminFields = function () {
       if (res.ok) setTimeout(function () { msg.textContent = ''; }, 3000);
     })
     .catch(function () { msg.textContent = 'Network error.'; });
+};
+
+window.resetAgentPassword = function () {
+  var next = document.getElementById('admin-reset-pw-new').value;
+  var confirm = document.getElementById('admin-reset-pw-confirm').value;
+  var msg = document.getElementById('admin-reset-pw-msg');
+  if (!next || !confirm) { msg.textContent = 'Enter and confirm a new password.'; msg.style.color = '#c00'; return; }
+  if (next !== confirm) { msg.textContent = "Passwords don't match."; msg.style.color = '#c00'; return; }
+  if (next.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; msg.style.color = '#c00'; return; }
+  if (!window.confirm('Reset the login password for ' + PROFILE_EMAIL + '?')) return;
+
+  msg.textContent = 'Saving…'; msg.style.color = 'var(--faint)';
+  fetch('api/admin_change_password.php', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: PROFILE_EMAIL, new_password: next })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (res.ok) {
+        msg.textContent = 'Password reset ✓'; msg.style.color = '#5b8e0d';
+        document.getElementById('admin-reset-pw-new').value = '';
+        document.getElementById('admin-reset-pw-confirm').value = '';
+        setTimeout(function () { msg.textContent = ''; }, 3000);
+      } else {
+        msg.textContent = res.error || 'Reset failed.'; msg.style.color = '#c00';
+      }
+    })
+    .catch(function () { msg.textContent = 'Network error.'; msg.style.color = '#c00'; });
 };
 
 // ── Edit Profile modal ──────────────────────────────────────────────────────

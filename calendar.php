@@ -5,6 +5,7 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent    = require_login();
 $is_admin = is_admin();
+$is_leader = is_leader();
 $cal_id   = cfg()['gcal_calendar_id'] ?? 'training@innovateonline.com';
 $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
 ?>
@@ -36,6 +37,9 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
               <button class="cal-tab" data-filter="mc" id="cal-tab-mc">Market Center <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="training">Training <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="events">Events <span class="cal-tab-count"></span></button>
+              <?php if ($is_leader): ?>
+              <button class="cal-tab" data-filter="bic">Birthdays &amp; Anniversaries <span class="cal-tab-count"></span></button>
+              <?php endif; ?>
               <button class="cal-tab" data-filter="mycal">My Calendar <span class="cal-tab-count"></span></button>
             </div>
             <div class="cal-nav">

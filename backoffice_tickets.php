@@ -207,6 +207,7 @@ function renderDetail(d){
       <textarea id="reply-body" placeholder="Write a reply…" oninput="updateCharCount()"></textarea>
       <div class="reply-foot">
         <button class="btn-primary" onclick="sendReply(${t.id})">Reply</button>
+        <button class="btn-sm" style="background:#f0f0f0;color:#555" onclick="closeTicket(${t.id})">Close Ticket</button>
         <span class="char-count" id="char-count">0 characters</span>
       </div>
     </div>` : '<p style="color:#888;font-size:12px">This ticket is closed.</p>'}`;
@@ -250,6 +251,11 @@ function setStatus(id,status){
     body:JSON.stringify({action:'status',id,status}),
   }).then(r=>r.json()).then(d=>{ if(!d.ok){alert(d.error||'Could not update status.');return;} load(); })
     .catch(()=>alert('Network error — status not updated.'));
+}
+
+function closeTicket(id){
+  if(!confirm('Close this ticket?')) return;
+  setStatus(id,'closed');
 }
 
 function sendReply(id){

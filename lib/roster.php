@@ -6,6 +6,23 @@
 
 const ROSTER_VALID_STATES = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
 
+// Normalizes free-text Market Center input against the canonical
+// market_centers list (case-insensitive, trimmed) — returns the canonical
+// name if matched, or '' if not. Used everywhere a Market Center gets written
+// (onboarding queue, direct roster writes, the set_market_center action) so
+// an unrecognized value (typo, stale/renamed office, blank) can never
+// silently create a mismatched/duplicate innovate_roster row — it just stays
+// blank until a human picks a real one. Added 2026-07-19 after a real
+// incident: onboarding's free-text Market Center field let bad data ride
+// straight through to innovate_roster with zero validation.
+function normalize_market_center(PDO $pdo, string $raw): string {
+    $raw = trim($raw);
+    if ($raw === '') return '';
+    $stmt = $pdo->prepare("SELECT name FROM market_centers WHERE enabled=1 AND LOWER(name) = LOWER(?) LIMIT 1");
+    $stmt->execute([$raw]);
+    return (string)($stmt->fetchColumn() ?: '');
+}
+
 // Add a new agent to innovate_roster, or reactivate an existing (soft-removed)
 // row instead of inserting a duplicate. Matches first by canonical_agent_id
 // (exact — agents that came through onboarding carry this), falling back to

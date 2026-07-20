@@ -17,6 +17,7 @@ const SCOPES = {
   personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
+  bic:            { bg: '#f5a623', text: '#111' },
 };
 
 function calEsc(s) {
@@ -52,7 +53,7 @@ async function loadEvents(key) {
   const params = new URLSearchParams({ month: key });
   if (agentMCSlug) params.set('dept', agentMCSlug);
 
-  const [companyRes, trainingRes, eventsRes, personalRes] = await Promise.allSettled([
+  const [companyRes, trainingRes, eventsRes, personalRes, bicRes] = await Promise.allSettled([
     fetch('api/events.php?' + params, { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [] })
       .catch(() => ({ events: [] })),
@@ -65,6 +66,9 @@ async function loadEvents(key) {
     fetch('api/personal_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [], has_url: false })
       .catch(() => ({ events: [], has_url: false })),
+    fetch('api/bic_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
   ]);
 
   const company  = companyRes.status  === 'fulfilled' ? (companyRes.value.events  ?? []) : [];
@@ -72,6 +76,7 @@ async function loadEvents(key) {
   const events   = eventsRes.status   === 'fulfilled' ? (eventsRes.value.events   ?? []) : [];
   const personal = personalRes.status === 'fulfilled' ? (personalRes.value.events ?? []) : [];
   const hasPersonalUrl = personalRes.status === 'fulfilled' ? (personalRes.value.has_url ?? false) : false;
+  const bic      = bicRes.status       === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
 
   // Update personal bar status text
   const personalStatus = document.getElementById('cal-personal-status');
@@ -85,7 +90,7 @@ async function loadEvents(key) {
     }
   }
 
-  evCache[key] = [...company, ...training, ...events, ...personal].sort((a, b) => a.date.localeCompare(b.date));
+  evCache[key] = [...company, ...training, ...events, ...personal, ...bic].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 
@@ -95,6 +100,7 @@ function filtered(evs) {
   if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
   if (calFilter === 'events')   return evs.filter(e => e.scope === 'events');
   if (calFilter === 'mycal')    return evs.filter(e => e.scope === 'personal');
+  if (calFilter === 'bic')      return evs.filter(e => e.scope === 'bic');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -143,6 +149,7 @@ function scopeLabel(scope) {
   if (scope === 'personal')      return 'Personal';
   if (scope === 'training')      return 'Training';
   if (scope === 'events')        return 'Events';
+  if (scope === 'bic')           return 'Birthday / Anniversary';
   return 'Company';
 }
 
@@ -195,13 +202,14 @@ function renderList(evs) {
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, bic: 0 };
   evs.forEach(e => {
     if      (e.scope === 'company')        counts.company++;
     else if (e.scope === 'market-center')  counts.mc++;
     else if (e.scope === 'training')       counts.training++;
     else if (e.scope === 'events')         counts.events++;
     else if (e.scope === 'personal')       counts.mycal++;
+    else if (e.scope === 'bic')            counts.bic++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;

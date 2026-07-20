@@ -7,7 +7,23 @@ require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/lib/crypto.php';
 $agent = require_login();
 $perms = current_perms();
-if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
+$isAdmin  = !empty($perms['isAdmin']);
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) { header('Location: index.php'); exit; }
+// mc_leader/bic get a view scoped to the Market Center(s) they lead, with the
+// Tax ID reveal / Staff-Managed section / Edit Profile actions hidden — every
+// edit control below stays admin-only.
+$myMcSlugs = $isAdmin ? null : my_mc_slugs();
+
+// Email -> list of MC slugs this agent is on the active roster under (an
+// agent can have rows in more than one state/MC). Used below to scope the
+// three agent lists to the leader's own Market Center(s).
+$rosterMcSlugsByEmail = [];
+if ($myMcSlugs !== null) {
+    foreach (local_db()->query("SELECT email, market_center FROM innovate_roster WHERE active=1 AND email != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $rosterMcSlugsByEmail[strtolower(trim($r['email']))][] = slugify_mc($r['market_center'] ?: '');
+    }
+}
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 function dv(string $val): string {
     if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
@@ -43,6 +59,14 @@ $intakeAgents = local_db()->query(
      LEFT JOIN agent_admin aa ON aa.email = i.email
      ORDER BY i.submitted DESC, i.updated_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $intakeAgents = array_values(array_filter($intakeAgents, function($a) use ($rosterMcSlugsByEmail, $myMcSlugs) {
+        $email = strtolower(trim($a['email'] ?? ''));
+        $slugs = $rosterMcSlugsByEmail[$email] ?? [];
+        if (!$slugs && !empty($a['office_location'])) $slugs = [slugify_mc($a['office_location'])];
+        return (bool)array_intersect($slugs, $myMcSlugs);
+    }));
+}
 
 $launchCoaches = local_db()->query(
     "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
@@ -67,6 +91,9 @@ $pendingAgents = local_db()->query(
        AND LOWER(q.agent_email) NOT IN (SELECT LOWER(email) FROM agent_intake)
      ORDER BY q.added_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $pendingAgents = array_values(array_filter($pendingAgents, fn($p) => in_array(slugify_mc($p['office_location'] ?? ''), $myMcSlugs, true)));
+}
 
 // Active roster agents with no agent_intake row at all — never started a
 // profile (as opposed to $pendingAgents, which is mid-onboarding). Matched
@@ -111,6 +138,14 @@ foreach ($byRosterName as $key => $r) {
     }
 }
 usort($missingAgents, fn($x, $y) => strcasecmp($x['full_name'], $y['full_name']));
+if ($myMcSlugs !== null) {
+    $missingAgents = array_values(array_filter($missingAgents, function($m) use ($myMcSlugs) {
+        foreach (explode(', ', $m['office_location'] ?? '') as $mcName) {
+            if (in_array(slugify_mc($mcName), $myMcSlugs, true)) return true;
+        }
+        return false;
+    }));
+}
 
 $hsCount = [];
 foreach (local_db()->query("SELECT agent_email, COUNT(*) as cnt FROM agent_intake_files GROUP BY agent_email")->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -343,6 +378,7 @@ $missingCount = count($missingAgents);
                   $personalLast4  = tax_id_last4($a['personal_tax_id_enc'] ?? '');
                   $corporateLast4 = tax_id_last4($a['corporate_tax_id_enc'] ?? '');
                 ?>
+                <?php if ($isAdmin): ?>
                 <div class="dg-field">
                   <span class="dg-label">Personal Tax ID</span>
                   <?php if ($personalLast4 !== ''): ?>
@@ -363,6 +399,7 @@ $missingCount = count($missingAgents);
                     <span class="dg-value empty">—</span>
                   <?php endif; ?>
                 </div>
+                <?php endif; ?>
 
                 <div class="dg-section">License &amp; Certs</div>
                 <div class="dg-field"><span class="dg-label">License Number</span><?= dv($a['license_number']) ?></div>
@@ -437,6 +474,7 @@ $missingCount = count($missingAgents);
                   <?php endif; ?>
                 </div>
 
+                <?php if ($isAdmin): ?>
                 <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
                 <div class="dg-field">
                   <span class="dg-label">1099 Type</span>
@@ -482,93 +520,7 @@ $missingCount = count($missingAgents);
                   <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
                   <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
                 </div>
-
-                <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
-                <div class="dg-field">
-                  <span class="dg-label">1099 Type</span>
-                  <select id="admin-1099type-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                    <?php foreach (['1099-NEC', '1099-MISC', 'W-2', 'N/A'] as $opt): ?>
-                      <option value="<?= h($opt) ?>" <?= ($a['tax_1099_type'] ?? '') === $opt ? 'selected' : '' ?>><?= h($opt) ?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Gets 1099?</span>
-                  <label style="font-size:12px"><input type="checkbox" id="admin-gets1099-<?= $idx ?>" style="width:auto;vertical-align:middle;margin-right:6px" <?= !empty($a['gets_1099']) || $a['gets_1099'] === null ? 'checked' : '' ?>> Yes</label>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Terminated Date</span>
-                  <input type="date" id="admin-terminated-<?= $idx ?>" value="<?= h($a['terminated_date'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Agent Team</span>
-                  <input type="text" id="admin-team-<?= $idx ?>" value="<?= h($a['agent_team'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Coached By</span>
-                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                    <?php foreach ($launchCoaches as $lc): ?>
-                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Managed By</span>
-                  <input type="text" id="admin-managed-<?= $idx ?>" value="<?= h($a['managed_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Recruit Source</span>
-                  <select id="admin-recruitsrc-<?= $idx ?>" class="rs-select" data-current="<?= h($a['recruit_source_email'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                  </select>
-                </div>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
-                  <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
-                </div>
-
-                <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
-                <div class="dg-field">
-                  <span class="dg-label">1099 Type</span>
-                  <select id="admin-1099type-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                    <?php foreach (['1099-NEC', '1099-MISC', 'W-2', 'N/A'] as $opt): ?>
-                      <option value="<?= h($opt) ?>" <?= ($a['tax_1099_type'] ?? '') === $opt ? 'selected' : '' ?>><?= h($opt) ?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Gets 1099?</span>
-                  <label style="font-size:12px"><input type="checkbox" id="admin-gets1099-<?= $idx ?>" style="width:auto;vertical-align:middle;margin-right:6px" <?= !empty($a['gets_1099']) || $a['gets_1099'] === null ? 'checked' : '' ?>> Yes</label>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Terminated Date</span>
-                  <input type="date" id="admin-terminated-<?= $idx ?>" value="<?= h($a['terminated_date'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Agent Team</span>
-                  <input type="text" id="admin-team-<?= $idx ?>" value="<?= h($a['agent_team'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Coached By</span>
-                  <input type="text" id="admin-coached-<?= $idx ?>" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Managed By</span>
-                  <input type="text" id="admin-managed-<?= $idx ?>" value="<?= h($a['managed_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Recruit Source</span>
-                  <select id="admin-recruitsrc-<?= $idx ?>" class="rs-select" data-current="<?= h($a['recruit_source_email'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                  </select>
-                </div>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
-                  <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
-                </div>
+                <?php endif; ?>
 
                 <div class="detail-actions">
                   <?php if ($isSubmitted): ?>
@@ -576,10 +528,14 @@ $missingCount = count($missingAgents);
                   <?php else: ?>
                     <span style="font-size:11px;color:var(--faint)">Last updated <?= h($updated) ?></span>
                   <?php endif; ?>
+                  <?php if ($isAdmin): ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
+                  <?php endif; ?>
                   <a href="intake.php" target="_blank" class="btn-detail-link">View Intake Form →</a>
+                  <?php if ($isAdmin): ?>
                   <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
                   <a href="agent_profile.php?email=<?= h($a['email']) ?>" class="btn-detail-link">View Full Profile →</a>
+                  <?php endif; ?>
                 </div>
 
               </div>
@@ -619,7 +575,9 @@ $missingCount = count($missingAgents);
                   <span class="dg-value empty">No intake form submitted yet</span>
                 </div>
                 <div class="detail-actions">
+                  <?php if ($isAdmin): ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
+                  <?php endif; ?>
                 </div>
               </div>
             </td>
@@ -653,7 +611,9 @@ $missingCount = count($missingAgents);
                   <span class="dg-value empty">No profile started — never submitted an intake form</span>
                 </div>
                 <div class="detail-actions">
+                  <?php if ($isAdmin): ?>
                   <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>', '<?= h($m['office_location']) ?>')">Create Profile →</button>
+                  <?php endif; ?>
                 </div>
               </div>
             </td>
