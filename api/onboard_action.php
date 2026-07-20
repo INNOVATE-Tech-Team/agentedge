@@ -195,13 +195,27 @@ if ($action === 'add_to_queue') {
 }
 
 // ── POST: set_state ───────────────────────────────────────────────────────────
+// An agent can be licensed in more than one state, so state_code stores a
+// comma-separated list (e.g. "SC,NC") — accepts state_codes as an array, or a
+// single state_code string for backward compatibility.
 if ($action === 'set_state') {
     $queueId = (int)($body['queue_id'] ?? 0);
-    $state   = strtoupper(trim($body['state_code'] ?? ''));
-    if (!$queueId || !in_array($state, ONBOARD_VALID_STATES, true)) {
-        json_out(['ok'=>false,'error'=>'queue_id and a valid state_code are required']);
+    if (!$queueId) json_out(['ok'=>false,'error'=>'queue_id is required']);
+
+    $raw = $body['state_codes'] ?? $body['state_code'] ?? [];
+    if (!is_array($raw)) $raw = [$raw];
+
+    $states = [];
+    foreach ($raw as $s) {
+        $s = strtoupper(trim((string)$s));
+        if ($s === '') continue;
+        if (!in_array($s, ONBOARD_VALID_STATES, true)) {
+            json_out(['ok'=>false,'error'=>"\"$s\" is not a valid state."]);
+        }
+        if (!in_array($s, $states, true)) $states[] = $s;
     }
-    $pdo->prepare("UPDATE onboard_queue SET state_code = ? WHERE id = ?")->execute([$state, $queueId]);
+
+    $pdo->prepare("UPDATE onboard_queue SET state_code = ? WHERE id = ?")->execute([implode(',', $states), $queueId]);
     json_out(['ok'=>true]);
 }
 
@@ -285,7 +299,9 @@ if ($action === 'provision') {
                 $pdo->prepare("UPDATE onboard_steps SET pandadoc_document_id=? WHERE queue_id=? AND tool_key=?")
                     ->execute([$docId, $queueId, $toolKey]);
             },
-            $entry['state_code'] ?? null
+            // Only one template can be picked — an agent licensed in several
+            // states gets the doc for the first one listed.
+            explode(',', $entry['state_code'] ?? '')[0] ?: null
         );
     }
 
@@ -328,9 +344,19 @@ if ($action === 'complete_onboarding') {
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
 
-    $state = strtoupper(trim($row['state_code'] ?? ''));
-    if (!in_array($state, ROSTER_VALID_STATES, true)) {
-        json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
+    // state_code is a comma-separated list — an agent can be licensed in more
+    // than one state. Each valid state gets its own innovate_roster row (same
+    // Market Center on all of them), tied together by canonical_agent_id.
+    $states = array_values(array_unique(array_filter(
+        array_map(fn($s) => strtoupper(trim($s)), explode(',', $row['state_code'] ?? ''))
+    )));
+    if (!$states) {
+        json_out(['ok'=>false,'error'=>'Set at least one valid license state for this agent before completing onboarding.']);
+    }
+    foreach ($states as $s) {
+        if (!in_array($s, ROSTER_VALID_STATES, true)) {
+            json_out(['ok'=>false,'error'=>"\"$s\" is not a valid license state."]);
+        }
     }
     // Same treatment as state above — market_center only ever reaches this
     // table already normalized against the canonical list (see
@@ -341,15 +367,17 @@ if ($action === 'complete_onboarding') {
         json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
     }
 
-    add_or_reactivate_roster_agent(
-        $pdo,
-        $row['agent_name'],
-        $state,
-        $row['market_center'] ?? '',
-        '',
-        $row['canonical_agent_id'] ?? null,
-        $agent['email']
-    );
+    foreach ($states as $s) {
+        add_or_reactivate_roster_agent(
+            $pdo,
+            $row['agent_name'],
+            $s,
+            $mc,
+            '',
+            $row['canonical_agent_id'] ?? null,
+            $agent['email']
+        );
+    }
 
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);

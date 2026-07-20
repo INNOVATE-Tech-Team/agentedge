@@ -248,21 +248,34 @@
 
     const stepsHtml = steps.map(s => renderStep(entry.id, s, entry.status)).join('');
 
-    const stateOptions = STATES.map(s =>
-      `<option value="${s}"${entry.state_code === s ? ' selected' : ''}>${s}</option>`
-    ).join('');
-    const stateSelectHtml = entry.status === 'active' ? `
-      <select class="ob-state-select" onchange="setQueueState(${entry.id}, this)" title="License state (required to complete onboarding)">
-        <option value="">State…</option>
-        ${stateOptions}
-      </select>` : (entry.state_code ? esc(entry.state_code) : '');
+    // An agent can be licensed in more than one state, so state_code is a
+    // comma-separated list — rendered as checkboxes instead of a single select.
+    const selectedStates = (entry.state_code || '').split(',').map(s => s.trim()).filter(Boolean);
+    const stateChecksHtml = STATES.map(s => `
+      <label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;background:#f0f0f0;padding:2px 7px;border-radius:10px;cursor:pointer;margin:0 4px 4px 0">
+        <input type="checkbox" value="${s}" style="margin:0" ${selectedStates.includes(s) ? 'checked' : ''}
+               onchange="onStateCheckboxChange(${entry.id})">${s}
+      </label>`).join('');
+    const stateSelectHtml = entry.status === 'active'
+      ? `<span id="ob-states-${entry.id}">${stateChecksHtml}</span>`
+      : (selectedStates.join(', ') || '');
 
-    const mcOptions = MC_OPTS.map(m =>
+    // Market Center options are filtered to whichever states are checked
+    // above (falls back to the full list until at least one is checked).
+    const filteredMcOpts = selectedStates.length
+      ? MC_OPTS.filter(m => selectedStates.includes(m.state_code))
+      : MC_OPTS;
+    const mcOptions = filteredMcOpts.map(m =>
       `<option value="${esc(m.name)}"${entry.market_center === m.name ? ' selected' : ''}>${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
     ).join('');
+    // Keep the currently-saved Market Center selectable even if a state edit
+    // just filtered it out of the list — don't silently orphan existing data.
+    const currentMcOrphaned = entry.market_center && !filteredMcOpts.some(m => m.name === entry.market_center);
+    const orphanedOption = currentMcOrphaned ? `<option value="${esc(entry.market_center)}" selected>${esc(entry.market_center)}</option>` : '';
     const mcSelectHtml = entry.status === 'active' ? `
       <select class="ob-state-select" onchange="setQueueMarketCenter(${entry.id}, this)" title="Market Center (required to complete onboarding)">
         <option value="">Market Center…</option>
+        ${orphanedOption}
         ${mcOptions}
       </select>` : (entry.market_center ? esc(entry.market_center) : '');
 
@@ -413,19 +426,21 @@
       });
   };
 
-  // ── Set license state on a queue entry ─────────────────────────────────────
-  window.setQueueState = function (queueId, select) {
-    const state = select.value;
-    if (!state) return;
-    select.disabled = true;
-    post('api/onboard_action.php?action=set_state', { queue_id: queueId, state_code: state })
+  // ── Set license state(s) on a queue entry ──────────────────────────────────
+  // Reloads the whole queue on success (rather than patching in place) since
+  // the Market Center dropdown's options depend on which states are checked.
+  window.onStateCheckboxChange = function (queueId) {
+    const container = document.getElementById(`ob-states-${queueId}`);
+    if (!container) return;
+    const boxes  = Array.from(container.querySelectorAll('input[type=checkbox]'));
+    const states = boxes.filter(cb => cb.checked).map(cb => cb.value);
+    boxes.forEach(cb => cb.disabled = true);
+    post('api/onboard_action.php?action=set_state', { queue_id: queueId, state_codes: states })
       .then(d => {
-        select.disabled = false;
-        if (!d.ok) { alert(d.error || 'Could not set state.'); return; }
-        const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
-        if (btn) btn.dataset.hasState = '1';
+        if (!d.ok) alert(d.error || 'Could not set state.');
+        loadQueue();
       })
-      .catch(() => { select.disabled = false; });
+      .catch(() => { boxes.forEach(cb => cb.disabled = false); });
   };
 
   // ── Set Market Center on a queue entry ─────────────────────────────────────
