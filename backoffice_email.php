@@ -70,12 +70,13 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .img-size-btn.active{background:#82C112;color:#000;border-color:#82C112;font-weight:700}
 .img-remove-btn{padding:5px 10px;border:1px solid #f3c6c6;border-radius:5px;background:#fff;font-size:12px;cursor:pointer;color:#c0392b;margin-left:auto}
 .img-remove-btn:hover{background:#fee2e2}
-.rte-color-swatch{display:flex;flex-direction:column;align-items:center;gap:2px;width:30px;height:30px;padding:3px 0 0;border:1px solid transparent;border-radius:5px;cursor:pointer;background:none;flex-shrink:0}
-.rte-color-swatch:hover{background:#fff;border-color:#ddd}
-.rte-color-swatch span.glyph{font-size:12px;font-weight:800;line-height:1;color:#444}
-.rte-color-swatch input[type=color]{-webkit-appearance:none;appearance:none;width:20px;height:6px;padding:0;border:1px solid #bbb;border-radius:2px;cursor:pointer;background:none}
-.rte-color-swatch input[type=color]::-webkit-color-swatch-wrapper{padding:0}
-.rte-color-swatch input[type=color]::-webkit-color-swatch{border:none;border-radius:2px}
+.cdd-swatch-menu{display:grid;grid-template-columns:repeat(6,20px);gap:6px;padding:6px}
+.cdd-swatch{width:20px;height:20px;padding:0;border:1px solid rgba(0,0,0,.18);border-radius:4px;cursor:pointer}
+.cdd-swatch:hover{transform:scale(1.15)}
+.cdd-swatch-clear{display:flex;align-items:center;justify-content:center;font-size:10px;color:#999;background:#fff}
+.cdd-swatch-custom-row{display:flex;align-items:center;gap:7px;padding:7px 6px 3px;margin-top:2px;border-top:1px solid #eee;white-space:nowrap}
+.cdd-swatch-custom-row label{font-size:12px;color:#666}
+.cdd-swatch-custom-row input[type=color]{width:24px;height:20px;padding:0;border:1px solid #bbb;border-radius:3px;cursor:pointer;background:none}
 .rte-body{min-height:160px;padding:10px 12px;font-size:13px;line-height:1.6;outline:none;background:#fff;cursor:text;border-radius:0 0 7px 7px}
 .rte-body:empty:before{content:attr(data-placeholder);color:#aaa;pointer-events:none;display:block}
 .rte-body h2{font-size:18px;font-weight:800;color:#111;margin:0 0 6px;line-height:1.3}
@@ -315,14 +316,50 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
               </button>
             </div>
             <div class="rte-group">
-              <span class="rte-color-swatch" title="Text color">
-                <span class="glyph">A</span>
-                <input type="color" value="#000000" onchange="rteCmd('foreColor', this.value);focusBody()">
-              </span>
-              <span class="rte-color-swatch" title="Highlight color">
-                <span class="glyph">H</span>
-                <input type="color" value="#ffff00" onchange="rteHighlight(this.value);focusBody()">
-              </span>
+              <div class="cdd" id="cdd-color">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('color')" title="Text color">
+                  <span>A</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-swatch-menu">
+                    <button type="button" class="cdd-swatch" style="background:#000000" title="Black" onmousedown="event.preventDefault();rteCmd('foreColor','#000000');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#434343" title="Dark gray" onmousedown="event.preventDefault();rteCmd('foreColor','#434343');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#999999" title="Gray" onmousedown="event.preventDefault();rteCmd('foreColor','#999999');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#cc0000" title="Red" onmousedown="event.preventDefault();rteCmd('foreColor','#cc0000');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#e69138" title="Orange" onmousedown="event.preventDefault();rteCmd('foreColor','#e69138');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#f1c232" title="Gold" onmousedown="event.preventDefault();rteCmd('foreColor','#f1c232');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#38761d" title="Green" onmousedown="event.preventDefault();rteCmd('foreColor','#38761d');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#0b5394" title="Blue" onmousedown="event.preventDefault();rteCmd('foreColor','#0b5394');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#674ea7" title="Purple" onmousedown="event.preventDefault();rteCmd('foreColor','#674ea7');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#a64d79" title="Magenta" onmousedown="event.preventDefault();rteCmd('foreColor','#a64d79');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#82C112" title="INNOVATE green" onmousedown="event.preventDefault();rteCmd('foreColor','#82C112');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#ffffff" title="White" onmousedown="event.preventDefault();rteCmd('foreColor','#ffffff');closeDropdowns();focusBody()"></button>
+                  </div>
+                  <div class="cdd-swatch-custom-row">
+                    <label for="em-color-custom">Custom</label>
+                    <input type="color" id="em-color-custom" value="#000000" onmousedown="saveColorSelection('em-body')" onchange="restoreColorSelection();rteCmd('foreColor', this.value);closeDropdowns();focusBody()">
+                  </div>
+                </div>
+              </div>
+              <div class="cdd" id="cdd-highlight">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('highlight')" title="Highlight color">
+                  <span>H</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-swatch-menu">
+                    <button type="button" class="cdd-swatch" style="background:#fff2cc" title="Yellow" onmousedown="event.preventDefault();rteHighlight('#fff2cc');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#d9ead3" title="Green" onmousedown="event.preventDefault();rteHighlight('#d9ead3');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#cfe2f3" title="Blue" onmousedown="event.preventDefault();rteHighlight('#cfe2f3');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#f4cccc" title="Red" onmousedown="event.preventDefault();rteHighlight('#f4cccc');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#e6d9f2" title="Purple" onmousedown="event.preventDefault();rteHighlight('#e6d9f2');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch cdd-swatch-clear" title="Clear highlight" onmousedown="event.preventDefault();rteHighlight('transparent');closeDropdowns();focusBody()">&#10005;</button>
+                  </div>
+                  <div class="cdd-swatch-custom-row">
+                    <label for="em-highlight-custom">Custom</label>
+                    <input type="color" id="em-highlight-custom" value="#ffff00" onmousedown="saveColorSelection('em-body')" onchange="restoreColorSelection();rteHighlight(this.value);closeDropdowns();focusBody()">
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="rte-group">
               <button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="document.getElementById('em-img-file').click()" title="Insert image">
@@ -423,10 +460,31 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
                   <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline" style="font-size:15px"><u>U</u></button>
                 </div>
                 <div class="rte-group">
-                  <span class="rte-color-swatch" title="Text color">
-                    <span class="glyph">A</span>
-                    <input type="color" value="#000000" onchange="rteCmd('foreColor', this.value);document.getElementById('sig-custom-body').focus()">
-                  </span>
+                  <div class="cdd" id="cdd-sigcolor">
+                    <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('sigcolor')" title="Text color">
+                      <span>A</span><span class="cdd-arrow">&#9662;</span>
+                    </button>
+                    <div class="cdd-menu">
+                      <div class="cdd-swatch-menu">
+                        <button type="button" class="cdd-swatch" style="background:#000000" title="Black" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#000000');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#434343" title="Dark gray" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#434343');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#999999" title="Gray" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#999999');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#cc0000" title="Red" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#cc0000');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#e69138" title="Orange" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#e69138');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#f1c232" title="Gold" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#f1c232');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#38761d" title="Green" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#38761d');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#0b5394" title="Blue" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#0b5394');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#674ea7" title="Purple" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#674ea7');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#a64d79" title="Magenta" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#a64d79');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#82C112" title="INNOVATE green" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#82C112');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#ffffff" title="White" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#ffffff');closeDropdowns()"></button>
+                      </div>
+                      <div class="cdd-swatch-custom-row">
+                        <label for="sig-color-custom">Custom</label>
+                        <input type="color" id="sig-color-custom" value="#000000" onmousedown="saveColorSelection('sig-custom-body')" onchange="restoreColorSelection();document.getElementById('sig-custom-body').focus();rteCmd('foreColor', this.value);closeDropdowns()">
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="rte-group">
                   <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteInsertLink('sig-custom-body')" title="Insert link">
@@ -637,6 +695,28 @@ function rteHighlight(color){
   if(!document.execCommand('hiliteColor', false, color)){
     document.execCommand('backColor', false, color);
   }
+}
+
+// The preset color swatches never lose the editor's text selection (their
+// onmousedown handlers call preventDefault, so focus never leaves the body).
+// A native <input type="color"> can't do that — opening its OS picker steals
+// focus and the browser drops the contentEditable selection — so the "Custom"
+// swatch saves the range on mousedown (before focus moves) and restores it
+// once onchange fires, right before applying the color.
+let savedColorRange = null;
+
+function saveColorSelection(bodyId){
+  const sel = window.getSelection();
+  const body = document.getElementById(bodyId);
+  savedColorRange = (sel && sel.rangeCount && body.contains(sel.anchorNode))
+    ? sel.getRangeAt(0).cloneRange() : null;
+}
+
+function restoreColorSelection(){
+  if (!savedColorRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(savedColorRange);
 }
 
 function rteInsertLink(bodyId){
