@@ -441,8 +441,8 @@ $intakeMarketCenters = local_db()
         credentials: 'same-origin',
         body: fd
       }).then(function(r) { return r.json(); }).then(function(res) {
-        if (res.ok && res.key) {
-          addThumb(res.key);
+        if (res.ok && res.file_key) {
+          addThumb(res.file_key);
           syncUploadState(hsCount());
           el('hs-msg').textContent = 'Uploaded.';
           setTimeout(function() { el('hs-msg').textContent = ''; }, 2000);

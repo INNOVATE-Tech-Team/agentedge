@@ -111,6 +111,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .ap-header-row{display:flex;align-items:center;gap:14px}
 .ap-avatar-img{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border)}
 .ap-avatar-fallback{width:52px;height:52px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hs-grid{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.hs-thumb{position:relative;width:90px;height:90px;border-radius:6px;overflow:hidden;border:1px solid var(--border)}
+.hs-thumb img{width:100%;height:100%;object-fit:cover}
+.hs-del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+.hs-del:hover{background:rgba(200,0,0,.8)}
+.hs-upload-label{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f5e8;border:1px dashed #82C112;border-radius:7px;font-size:13px;font-weight:700;color:#5b8e0d;cursor:pointer}
+.hs-upload-label:hover{background:#e4f0d8}
+.hs-upload-label.disabled{opacity:.5;cursor:not-allowed}
+#hs-file{display:none}
+.hs-note{font-size:11px;color:var(--faint);margin-top:6px}
+.hs-msg{font-size:12px;color:var(--faint);margin-top:6px;min-height:16px}
 .doc-list{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .doc-card{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:#fafbfa}
 .doc-icon{font-size:18px;flex-shrink:0}
@@ -331,18 +342,25 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <?php endif; ?>
           </div>
 
-          <?php if ($headshotCount > 0): ?>
           <div class="dg-section">Headshots</div>
           <div class="dg-field" style="grid-column:1/-1">
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="hs-grid" id="hs-grid">
               <?php foreach ($headshots as $hsFile): ?>
-                <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                  <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:90px;height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
-                </a>
+                <div class="hs-thumb" data-key="<?= h($hsFile['file_key']) ?>">
+                  <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                    <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>">
+                  </a>
+                  <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>', this.parentElement)">&#10005;</button>
+                </div>
               <?php endforeach; ?>
             </div>
+            <label class="hs-upload-label<?= $headshotCount >= 5 ? ' disabled' : '' ?>" id="hs-upload-label" for="hs-file">
+              <span>&#43; Add Headshot</span>
+            </label>
+            <input type="file" id="hs-file" accept="image/*" <?= $headshotCount >= 5 ? 'disabled' : '' ?>>
+            <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
+            <div class="hs-msg" id="hs-msg"></div>
           </div>
-          <?php endif; ?>
 
           <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
           <div class="dg-field">
@@ -683,6 +701,79 @@ window.switchApTab = function (t) {
   if (t === 'permission' && CAN_EDIT_PERMISSIONS && !permissionLoaded) { permissionLoaded = true; loadPermissionTab(); }
   if (t === 'documents' && !documentsLoaded) { documentsLoaded = true; loadDocuments(); }
 };
+
+// ── Headshots ────────────────────────────────────────────────────────────────
+function hsCount() { return document.getElementById('hs-grid').querySelectorAll('.hs-thumb').length; }
+
+function hsSyncUploadState(count) {
+  var lbl = document.getElementById('hs-upload-label');
+  var inp = document.getElementById('hs-file');
+  lbl.classList.toggle('disabled', count >= 5);
+  inp.disabled = count >= 5;
+}
+
+function hsAddThumb(key, origName) {
+  var grid = document.getElementById('hs-grid');
+  var wrap = document.createElement('div');
+  wrap.className = 'hs-thumb';
+  wrap.dataset.key = key;
+  wrap.innerHTML =
+    '<a href="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" target="_blank" title="' + esc(origName || '') + '">' +
+      '<img src="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" alt="' + esc(origName || '') + '">' +
+    '</a>' +
+    '<button type="button" class="hs-del">&#10005;</button>';
+  wrap.querySelector('.hs-del').addEventListener('click', function () { deleteHeadshot(key, wrap); });
+  grid.appendChild(wrap);
+}
+
+window.deleteHeadshot = function (key, wrap) {
+  if (!confirm('Delete this headshot?')) return;
+  var msg = document.getElementById('hs-msg');
+  msg.textContent = 'Deleting…';
+  fetch('api/intake.php?action=delete_file', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: key })
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    if (res.ok) {
+      wrap.remove();
+      hsSyncUploadState(hsCount());
+      msg.textContent = 'Deleted.';
+      setTimeout(function () { msg.textContent = ''; }, 2000);
+    } else {
+      msg.textContent = res.error || 'Delete failed.';
+    }
+  }).catch(function () { msg.textContent = 'Network error.'; });
+};
+
+var hsFileInput = document.getElementById('hs-file');
+if (hsFileInput) hsFileInput.addEventListener('change', function () {
+  var file = this.files[0];
+  var msg = document.getElementById('hs-msg');
+  if (!file) return;
+  if (hsCount() >= 5) { msg.textContent = 'Maximum 5 headshots reached.'; return; }
+  if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
+
+  msg.textContent = 'Uploading…';
+  var fd = new FormData();
+  fd.append('headshot', file);
+  fd.append('email', PROFILE_EMAIL);
+
+  fetch('api/intake.php?action=upload', {
+    method: 'POST', credentials: 'same-origin', body: fd
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    if (res.ok && res.file_key) {
+      hsAddThumb(res.file_key, res.orig_name);
+      hsSyncUploadState(hsCount());
+      msg.textContent = 'Uploaded.';
+      setTimeout(function () { msg.textContent = ''; }, 2000);
+    } else {
+      msg.textContent = res.error || 'Upload failed.';
+    }
+  }).catch(function () { msg.textContent = 'Network error.'; });
+
+  this.value = '';
+});
 
 // ── Documents tab ────────────────────────────────────────────────────────────
 function fmtBytes(n) {
