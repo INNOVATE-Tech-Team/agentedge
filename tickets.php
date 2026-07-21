@@ -75,6 +75,11 @@ $agent = require_login();
             <textarea id="nt-body" placeholder="Describe your issue or request…" oninput="updateNtCharCount()"></textarea>
             <span class="char-count" id="nt-char-count">0 characters</span>
           </div>
+          <div class="field">
+            <label>Attach a screenshot or document (optional)</label>
+            <input type="file" id="nt-file" multiple onchange="onPickNtFiles(this)">
+            <div class="support-files" id="nt-files-preview"></div>
+          </div>
           <button class="btn-primary" onclick="submitTicket()">Submit</button>
         </div>
         <div class="tkt-tabs">
@@ -93,6 +98,53 @@ function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt
 function fmtDate(s){if(!s)return'—';return new Date(s).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
 
 let tickets=[], curTab='all', openId=null;
+let ntPendingFiles=[], replyPendingFiles=[];
+
+function fileChipsHtml(files){
+  if(!files||!files.length)return'';
+  return '<div class="file-chip-row">'+files.map(f=>
+    `<span class="file-chip"><a href="api/ticket_file_download.php?id=${f.id}" target="_blank">${esc(f.orig_name)}</a></span>`
+  ).join('')+'</div>';
+}
+
+function onPickNtFiles(input){
+  ntPendingFiles=ntPendingFiles.concat(Array.from(input.files));
+  input.value='';
+  renderNtFiles();
+}
+function removeNtFile(idx){ ntPendingFiles.splice(idx,1); renderNtFiles(); }
+function renderNtFiles(){
+  const el=document.getElementById('nt-files-preview');
+  if(!el)return;
+  el.innerHTML=ntPendingFiles.map((f,i)=>
+    `<span class="file-chip">${esc(f.name)} <button type="button" class="file-x" onclick="removeNtFile(${i})" title="Remove">&times;</button></span>`
+  ).join('');
+}
+
+function onPickReplyFiles(input){
+  replyPendingFiles=replyPendingFiles.concat(Array.from(input.files));
+  input.value='';
+  renderReplyFiles();
+}
+function removeReplyFile(idx){ replyPendingFiles.splice(idx,1); renderReplyFiles(); }
+function renderReplyFiles(){
+  const el=document.getElementById('reply-files-preview');
+  if(!el)return;
+  el.innerHTML=replyPendingFiles.map((f,i)=>
+    `<span class="file-chip">${esc(f.name)} <button type="button" class="file-x" onclick="removeReplyFile(${i})" title="Remove">&times;</button></span>`
+  ).join('');
+}
+
+function uploadTicketFile(messageId,file){
+  const fd=new FormData();
+  fd.append('file',file);
+  fd.append('message_id',messageId);
+  fd.append('csrf',window.AE_CSRF||'');
+  return fetch('api/ticket_file_action.php',{method:'POST',credentials:'same-origin',body:fd}).then(r=>r.json());
+}
+function uploadTicketFilesSequential(messageId,files){
+  return files.reduce((p,file)=>p.then(()=>uploadTicketFile(messageId,file)),Promise.resolve());
+}
 
 // Load departments
 fetch('api/support_departments.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
@@ -152,6 +204,7 @@ function render(){
 
 function loadDetail(id){
   openId=id;
+  replyPendingFiles=[];
   fetch('api/tickets_detail.php?id='+id,{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
     if(!d.ok){alert(d.error||'Could not load this ticket.');return;}
     const t=d.ticket,msgs=d.messages||[];
@@ -168,12 +221,17 @@ function loadDetail(id){
           <div class="msg${m.is_staff?' staff':''}">
             <div class="msg-meta"><strong>${esc(m.is_staff?'INNOVATE Staff':m.author)}</strong> · ${fmtDate(m.created_at)}</div>
             <div>${esc(m.body)}</div>
+            ${fileChipsHtml(m.files)}
           </div>`).join('')}
       </div>
       ${t.status!=='closed'?`
-      <div class="reply-row">
+      <div class="reply-row" style="flex-wrap:wrap">
         <textarea id="reply-body" placeholder="Write a reply…"></textarea>
         <button class="btn-primary" onclick="sendReply(${t.id})">Reply</button>
+        <div style="flex-basis:100%">
+          <input type="file" id="reply-file" multiple onchange="onPickReplyFiles(this)">
+          <div class="support-files" id="reply-files-preview"></div>
+        </div>
       </div>`:'<p style="color:#888;font-size:12px">This ticket is closed.</p>'}`;
     wrap.scrollIntoView({behavior:'smooth',block:'start'});
   }).catch(()=>alert('Network error loading this ticket — please try again.'));
@@ -182,12 +240,17 @@ function loadDetail(id){
 function sendReply(id){
   const body=document.getElementById('reply-body').value.trim();
   if(!body)return;
+  const files=replyPendingFiles.slice();
   fetch('api/ticket_action.php',{
     method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'reply',id,body}),
   }).then(r=>r.json()).then(d=>{
-    if(d.ok){document.getElementById('reply-body').value='';load();}
+    if(d.ok){
+      document.getElementById('reply-body').value='';
+      replyPendingFiles=[];
+      (files.length?uploadTicketFilesSequential(d.messageId,files):Promise.resolve()).then(load);
+    }
     else alert(d.error||'Reply failed — please try again.');
   }).catch(()=>alert('Network error — reply was not sent.'));
 }
@@ -208,6 +271,7 @@ function submitTicket(){
   if(!body){alert('Please describe the issue.');return;}
   const btn=document.querySelector('#new-ticket-form .btn-primary');
   if(btn) btn.disabled=true;
+  const files=ntPendingFiles.slice();
   fetch('api/support_ticket.php',{
     method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
@@ -218,8 +282,10 @@ function submitTicket(){
       document.getElementById('nt-body').value='';
       document.getElementById('nt-dept').value='';
       document.getElementById('nt-issue').value='';
+      ntPendingFiles=[];
+      renderNtFiles();
       updateNtCharCount();
-      load();
+      (files.length?uploadTicketFilesSequential(d.messageId,files):Promise.resolve()).then(load);
     }else alert(d.error||'Error submitting ticket — please try again.');
   }).catch(()=>alert('Network error — ticket was not submitted. Please try again.'))
     .finally(()=>{ if(btn) btn.disabled=false; });

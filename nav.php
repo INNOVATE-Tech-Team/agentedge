@@ -298,6 +298,8 @@ function render_sidebar(string $current, array $agent): void {
     }
     echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
+    if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+    echo '<script>window.AE_CSRF = ' . json_encode($_SESSION['csrf']) . ';</script>';
     echo '<script src="assets/mc-links.js"></script>';
     echo '<script src="assets/global.js"></script>';
     if (function_exists('is_masquerading') && is_masquerading()) {

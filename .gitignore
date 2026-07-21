@@ -26,3 +26,4 @@ tash
 data/*.bak-*
 data/suggestion_uploads/
 data/agent_documents/
+data/ticket_uploads/
