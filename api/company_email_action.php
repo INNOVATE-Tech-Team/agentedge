@@ -67,10 +67,10 @@ if ($action === 'send' || $action === 'schedule') {
     }
 
     $sigHtml = ce_signature_html($me, $agent['name'] ?? $me, $_SERVER['HTTP_HOST']);
-    $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids) VALUES (?, 'email', ?, ?, '', 1, ?)");
+    $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
     foreach ($recipients as $r) {
         $personalized = ce_apply_merge_vars($html, $r);
-        $ins->execute([$r['email'], $subject, $personalized . $sigHtml, $attachIdsStr]);
+        $ins->execute([$r['email'], $subject, $personalized . $sigHtml, $attachIdsStr, $me, $agent['name'] ?? '']);
     }
 
     $db->prepare(

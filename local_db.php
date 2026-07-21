@@ -564,6 +564,12 @@ function local_db(): PDO {
     // by Company Email sends — every other notification_queue writer omits it
     // and gets the '' default (no attachments).
     try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // from_email/from_name: the AgentEdge user whose action triggered this
+    // email, so it sends from them instead of the system default. Blank
+    // means no specific actor (system/cron/webhook-triggered) — falls back
+    // to cfg()'s sendgrid_from at send time.
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_name  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Company Email (Back Office) ───────────────────────────────────────────
     // These three tables existed live on Lightsail long before this migration
@@ -857,6 +863,27 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktevt_tid ON support_ticket_events(ticket_id)");
+
+    // Attachments — screenshots/documents attached to a ticket message (the
+    // initial description or a reply), uploaded by either the agent or staff.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_files (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id   INTEGER NOT NULL,
+        message_id  INTEGER NOT NULL,
+        orig_name   TEXT    NOT NULL,
+        mime_type   TEXT    NOT NULL DEFAULT '',
+        size_bytes  INTEGER NOT NULL DEFAULT 0,
+        storage_key TEXT    NOT NULL,
+        uploaded_by TEXT    NOT NULL,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktfiles_msg ON support_ticket_files(message_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktfiles_tid ON support_ticket_files(ticket_id)");
+
+    $tktUploadsDir = $dir . '/ticket_uploads';
+    if (!is_dir($tktUploadsDir)) @mkdir($tktUploadsDir, 0750, true);
+    $tktUploadsHt = $tktUploadsDir . '/.htaccess';
+    if (!file_exists($tktUploadsHt)) @file_put_contents($tktUploadsHt, "Deny from all\n");
 
     // Predefined replies — quick canned responses staff can insert into a reply.
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_canned_replies (

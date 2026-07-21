@@ -37,6 +37,7 @@ if ($action === 'reply') {
     $isStaff = is_admin() ? 1 : 0;
     $db->prepare("INSERT INTO support_ticket_messages (ticket_id,author,is_staff,body) VALUES (?,?,?,?)")
        ->execute([$id, $me['email'], $isStaff, $body]);
+    $messageId = (int)$db->lastInsertId();
 
     // Staff replying moves the ticket to "answered" (agent's turn); the agent
     // replying moves it back to "open" (needs staff attention) — unless the
@@ -50,8 +51,8 @@ if ($action === 'reply') {
         log_ticket_event($db, $id, 'status_change', "{$tkt['status']} -> {$newStatus}", $me['email']);
     }
 
-    echo json_encode(['ok'=>true]);
-    notify_ticket_reply($id, $tkt['title'], $body, (bool)$isStaff, $tkt['dept_slug'] ?? '', $tkt['agent_email']);
+    echo json_encode(['ok'=>true,'messageId'=>$messageId]);
+    notify_ticket_reply($id, $tkt['title'], $body, (bool)$isStaff, $tkt['dept_slug'] ?? '', $tkt['agent_email'], $me['email'], $me['name'] ?? '');
     dispatch_notification_queue();
     exit;
 }
@@ -87,7 +88,7 @@ if ($action === 'cc_add') {
         log_ticket_event($db, $id, 'cc_added', $email, $me['email']);
     }
     echo json_encode(['ok'=>true]);
-    notify_ticket_cc_added($id, $tkt['title'], $email);
+    notify_ticket_cc_added($id, $tkt['title'], $email, $me['email'], $me['name'] ?? '');
     dispatch_notification_queue();
     exit;
 }

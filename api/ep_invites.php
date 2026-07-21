@@ -89,10 +89,10 @@ $body_     = $ev['title'] . "\n" . $when . ($ev['location'] ? "\n" . $ev['locati
            . "RSVP here: " . $publicUrl;
 
 $insInvite = $db->prepare("INSERT INTO ep_invites (event_id, email, invited_by) VALUES (?,?,?)");
-$insQueue  = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?, 'email', ?, ?, '')");
+$insQueue  = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?, 'email', ?, ?, '', ?, ?)");
 foreach ($toSend as $addr) {
     $insInvite->execute([$eventId, $addr, $email]);
-    $insQueue->execute([$addr, $subject, $body_]);
+    $insQueue->execute([$addr, $subject, $body_, $email, $agent['name'] ?? '']);
 }
 
 echo json_encode(['ok' => true, 'queued' => count($toSend), 'skipped' => count($valid) - count($toSend), 'invalid' => $invalid]);

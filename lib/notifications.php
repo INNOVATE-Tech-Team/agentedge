@@ -62,15 +62,17 @@ function queue_announcement_notifications(
     string $body,
     string $audience,
     string $targetMcSlug,
-    string $targetBicEmail
+    string $targetBicEmail,
+    string $fromEmail = '',
+    string $fromName = ''
 ): int {
     $recipients = resolve_notification_recipients($audience, $targetMcSlug, $targetBicEmail);
     if (!$recipients) return 0;
 
     $db      = local_db();
     $ins     = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone)
-         VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)"
     );
     $subject  = 'New Announcement: ' . $title;
     $emailBody = $title . "\n\n" . $body . "\n\n— INNOVATE Real Estate\nLog in to AgentEdge: https://agentedge.innovateonline.com";
@@ -80,11 +82,11 @@ function queue_announcement_notifications(
     $queued = 0;
     foreach ($recipients as $r) {
         if ($r['notify_email']) {
-            $ins->execute([$r['email'], 'email', $subject, $emailBody, '']);
+            $ins->execute([$r['email'], 'email', $subject, $emailBody, '', $fromEmail, $fromName]);
             $queued++;
         }
         if ($r['notify_sms'] && $r['sms_phone'] !== '') {
-            $ins->execute([$r['email'], 'sms', '', $smsBody, $r['sms_phone']]);
+            $ins->execute([$r['email'], 'sms', '', $smsBody, $r['sms_phone'], '', '']);
             $queued++;
         }
     }
@@ -114,7 +116,7 @@ function process_notification_queue(int $limit = 100): void {
 
     $db   = local_db();
     $rows = $db->prepare(
-        "SELECT id, recipient, channel, subject, body, phone, is_html, attachment_ids
+        "SELECT id, recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name
          FROM notification_queue
          WHERE status='pending' AND attempts < 3
          ORDER BY id
@@ -143,7 +145,7 @@ function process_notification_queue(int $limit = 100): void {
                     if (!isset($attachCache[$attIds])) $attachCache[$attIds] = resolve_email_attachments($attIds);
                     $attachments = $attachCache[$attIds];
                 }
-                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false), $attachments);
+                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false), $attachments, $item['from_email'] ?? '', $item['from_name'] ?? '');
             } elseif ($item['channel'] === 'sms') {
                 $ok = send_sms_twilio($item['phone'], $item['body'], $c);
             }
@@ -195,8 +197,13 @@ function notify_onboard_added(
     string $startDate,
     string $sponsor,
     string $role,
-    string $addedBy
+    string $addedBy,
+    string $addedByName = ''
 ): void {
+    // $addedBy is usually the acting admin's own email, but a webhook caller
+    // (e.g. onboard_push.php from Advantage CRM) can pass a non-email label —
+    // only use it as the From address when it's actually a real address.
+    $fromEmail = filter_var($addedBy, FILTER_VALIDATE_EMAIL) ? $addedBy : '';
     $c       = cfg();
     $subject = "New Agent Onboarding: {$agentName}";
     $body    = implode("\n", [
@@ -217,10 +224,10 @@ function notify_onboard_added(
 
     $db  = local_db();
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
 
-    $ins->execute([$addedBy, 'email', $subject, $body, '']);
+    $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
 
     $ccEmails = $c['onboard_notify_emails'] ?? [];
     if (is_string($ccEmails)) {
@@ -228,7 +235,7 @@ function notify_onboard_added(
     }
     foreach ((array)$ccEmails as $cc) {
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
-            $ins->execute([$cc, 'email', $subject, $body, '']);
+            $ins->execute([$cc, 'email', $subject, $body, '', $fromEmail, $addedByName]);
         }
     }
 }
@@ -241,8 +248,10 @@ function notify_offboard_added(
     string $lastDay,
     string $reason,
     string $reasonNotes,
-    string $addedBy
+    string $addedBy,
+    string $addedByName = ''
 ): void {
+    $fromEmail = filter_var($addedBy, FILTER_VALIDATE_EMAIL) ? $addedBy : '';
     $c          = cfg();
     $reasonLabel = match ($reason) {
         'voluntary'   => 'Voluntary Resignation',
@@ -269,10 +278,10 @@ function notify_offboard_added(
 
     $db  = local_db();
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
 
-    $ins->execute([$addedBy, 'email', $subject, $body, '']);
+    $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
 
     $ccEmails = $c['onboard_notify_emails'] ?? [];
     if (is_string($ccEmails)) {
@@ -280,7 +289,7 @@ function notify_offboard_added(
     }
     foreach ((array)$ccEmails as $cc) {
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
-            $ins->execute([$cc, 'email', $subject, $body, '']);
+            $ins->execute([$cc, 'email', $subject, $body, '', $fromEmail, $addedByName]);
         }
     }
 }
@@ -289,17 +298,17 @@ function notify_offboard_added(
 // step's assignees. Shared by the admin mark_done action and the exit
 // interview self-service submit path, so both go through the same
 // update+notify pair.
-function complete_offboard_step(PDO $pdo, int $queueId, string $toolKey, string $doneBy): void {
+function complete_offboard_step(PDO $pdo, int $queueId, string $toolKey, string $doneBy, string $doneByName = ''): void {
     $now = date('Y-m-d H:i:s');
     $pdo->prepare(
         "UPDATE offboard_steps SET status='done', done_by=?, done_at=? WHERE queue_id=? AND tool_key=?"
     )->execute([$doneBy, $now, $queueId, $toolKey]);
-    maybe_notify_next_actionable_step($pdo, 'offboard', $queueId);
+    maybe_notify_next_actionable_step($pdo, 'offboard', $queueId, $doneBy, $doneByName);
 }
 
 // Queue a short confirmation email to the agent when their onboarding is
 // marked complete (api/onboard_action.php's complete_onboarding action).
-function notify_onboard_completed(string $agentName, string $agentEmail): void {
+function notify_onboard_completed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
     $subject = "Your onboarding is complete — welcome aboard!";
     $body    = implode("\n", [
         "Hi {$agentName},",
@@ -311,14 +320,14 @@ function notify_onboard_completed(string $agentName, string $agentEmail): void {
 
     $db  = local_db();
     $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '']);
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    )->execute([$agentEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
 }
 
 // Queue an email to the Director of Coaching + Launch Facilitator(s) to assign
 // a Launch Coach and LAUNCH class. Only called for new agents (no prior
 // brokerage affiliation on their intake form) — experienced transfers skip this.
-function notify_coach_assignment_needed(string $agentName, string $agentEmail): void {
+function notify_coach_assignment_needed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
     $db   = local_db();
     $st   = $db->prepare("SELECT email FROM agent_roles WHERE role IN ('director_of_coaching','launch_facilitator')");
     $st->execute();
@@ -335,10 +344,10 @@ function notify_coach_assignment_needed(string $agentName, string $agentEmail): 
     ]);
 
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
     foreach ($emails as $email) {
-        $ins->execute([$email, 'email', $subject, $body, '']);
+        $ins->execute([$email, 'email', $subject, $body, '', $fromEmail, $fromName]);
     }
 }
 
@@ -346,7 +355,7 @@ function notify_coach_assignment_needed(string $agentName, string $agentEmail): 
 // looked up from market_centers by matching the agent's market center name.
 // A non-matching/blank market center is a no-op, not an error — shouldn't
 // block onboarding completion over a mismatched free-text field.
-function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, string $marketCenter): void {
+function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, string $marketCenter, string $fromEmail = '', string $fromName = ''): void {
     $marketCenter = trim($marketCenter);
     if ($marketCenter === '') return;
 
@@ -367,10 +376,10 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
     ]);
 
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
     foreach ($emails as $email) {
-        $ins->execute([$email, 'email', $subject, $body, '']);
+        $ins->execute([$email, 'email', $subject, $body, '', $fromEmail, $fromName]);
     }
 }
 
@@ -378,7 +387,7 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
 // interview. Sent when an admin clicks "Send Exit Interview" — the agent's
 // AgentEdge login is still active at this point (account inactivation is a
 // later offboarding step), so this is a plain login link, not a public/token link.
-function notify_exit_interview_sent(string $agentName, string $agentEmail): void {
+function notify_exit_interview_sent(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
     $subject = "Please complete your exit interview — AgentEdge";
     $body    = implode("\n", [
         "Hi {$agentName},",
@@ -394,8 +403,8 @@ function notify_exit_interview_sent(string $agentName, string $agentEmail): void
 
     $db  = local_db();
     $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?,?,?,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '']);
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    )->execute([$agentEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
 }
 
 // ── Onboarding / Offboarding per-step notifications ───────────────────────────
@@ -411,7 +420,7 @@ function step_assignees(string $process, string $stepKey): array {
 // Heads-up email sent once, when a case is created, to everyone assigned to
 // any step in it — consolidated into one email per person listing all of
 // their steps for this case. $steps is a list of ['key'=>..., 'label'=>...].
-function notify_step_assignees_on_create(string $process, string $agentName, string $agentEmail, array $steps): void {
+function notify_step_assignees_on_create(string $process, string $agentName, string $agentEmail, array $steps, string $fromEmail = '', string $fromName = ''): void {
     $byEmail = [];
     foreach ($steps as $step) {
         foreach (step_assignees($process, $step['key']) as $email) {
@@ -438,12 +447,12 @@ function notify_step_assignees_on_create(string $process, string $agentName, str
             "",
             "— AgentEdge",
         ]);
-        queue_email_to([$email], $subject, $body);
+        queue_email_to([$email], $subject, $body, $fromEmail, $fromName);
     }
 }
 
 // "It's your turn" email sent when a step becomes the next actionable one.
-function notify_step_actionable(string $process, string $stepKey, string $stepLabel, string $agentName, string $agentEmail): void {
+function notify_step_actionable(string $process, string $stepKey, string $stepLabel, string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
     $emails = step_assignees($process, $stepKey);
     if (!$emails) return;
 
@@ -458,15 +467,16 @@ function notify_step_actionable(string $process, string $stepKey, string $stepLa
         "",
         "— AgentEdge",
     ]);
-    queue_email_to($emails, $subject, $body);
+    queue_email_to($emails, $subject, $body, $fromEmail, $fromName);
 }
 
 // Finds the earliest pending step (in tool order) that hasn't been notified
 // yet and, if found, emails its assignees and marks it notified. Call this
 // right after any step transitions to done/skipped so the next step's
 // owners find out as soon as it's their turn. Safe to call unconditionally —
-// no-ops if nothing changed.
-function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queueId): void {
+// no-ops if nothing changed. $fromEmail/$fromName identify whoever completed
+// the prior step (the action that made this one actionable).
+function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queueId, string $fromEmail = '', string $fromName = ''): void {
     $stepTable  = $process === 'onboard' ? 'onboard_steps' : 'offboard_steps';
     $queueTable = $process === 'onboard' ? 'onboard_queue' : 'offboard_queue';
 
@@ -484,7 +494,7 @@ function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queue
     $entry = $q->fetch(PDO::FETCH_ASSOC);
     if (!$entry) return;
 
-    notify_step_actionable($process, $step['tool_key'], $step['tool_label'], $entry['agent_name'], $entry['agent_email']);
+    notify_step_actionable($process, $step['tool_key'], $step['tool_label'], $entry['agent_name'], $entry['agent_email'], $fromEmail, $fromName);
     $pdo->prepare("UPDATE {$stepTable} SET notified_at=datetime('now') WHERE id=?")->execute([$step['id']]);
 }
 
@@ -514,7 +524,7 @@ function notify_profile_changed(string $agentName, string $agentEmail, array $ch
             "— AgentEdge",
         ]
     ));
-    queue_email_to(['whitney@innovateonline.com'], $subject, $body);
+    queue_email_to(['whitney@innovateonline.com'], $subject, $body, $agentEmail, $agentName);
 }
 
 // ── Support ticket notifications ─────────────────────────────────────────────
@@ -534,14 +544,16 @@ function support_ticket_cc_emails(int $ticketId): array {
 }
 
 // Queue a plain-text email to a list of recipients (deduped, empty entries dropped).
-function queue_email_to(array $emails, string $subject, string $body): int {
+// $fromEmail/$fromName identify the AgentEdge user whose action triggered this
+// send — blank means no specific actor, falls back to the system default sender.
+function queue_email_to(array $emails, string $subject, string $body, string $fromEmail = '', string $fromName = ''): int {
     $ins = local_db()->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone) VALUES (?, 'email', ?, ?, '')"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?, 'email', ?, ?, '', ?, ?)"
     );
     $sent = 0;
     foreach (array_unique(array_filter(array_map('trim', $emails))) as $email) {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
-        $ins->execute([$email, $subject, $body]);
+        $ins->execute([$email, $subject, $body, $fromEmail, $fromName]);
         $sent++;
     }
     return $sent;
@@ -564,13 +576,14 @@ function notify_ticket_created(int $ticketId, string $title, string $body, strin
         "",
         "— AgentEdge",
     ]);
-    return queue_email_to($emails, $subject, $msg);
+    return queue_email_to($emails, $subject, $msg, $agentEmail, $agentName);
 }
 
 // A reply was posted — notify the other side of the conversation (the agent
 // when staff replies, or all super admins when the agent replies) plus
-// anyone CC'd on the ticket.
-function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bool $isStaffReply, string $deptSlug, string $agentEmail): int {
+// anyone CC'd on the ticket. $fromEmail/$fromName are the actual replier
+// (staff member or agent), not necessarily $agentEmail (the ticket owner).
+function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bool $isStaffReply, string $deptSlug, string $agentEmail, string $fromEmail = '', string $fromName = ''): int {
     $recipients = $isStaffReply ? [$agentEmail] : super_admin_emails();
     $recipients = array_merge($recipients, support_ticket_cc_emails($ticketId));
 
@@ -586,11 +599,11 @@ function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bo
         "",
         "— AgentEdge",
     ]);
-    return queue_email_to($recipients, $subject, $msg);
+    return queue_email_to($recipients, $subject, $msg, $fromEmail, $fromName);
 }
 
 // A staff member was CC'd on a ticket.
-function notify_ticket_cc_added(int $ticketId, string $title, string $ccEmail): void {
+function notify_ticket_cc_added(int $ticketId, string $title, string $ccEmail, string $fromEmail = '', string $fromName = ''): void {
     $subject = "You were CC'd on Support Ticket #{$ticketId}: {$title}";
     $msg     = implode("\n", [
         "You've been added as a CC on a support ticket in AgentEdge.",
@@ -600,7 +613,7 @@ function notify_ticket_cc_added(int $ticketId, string $title, string $ccEmail): 
         "",
         "— AgentEdge",
     ]);
-    queue_email_to([$ccEmail], $subject, $msg);
+    queue_email_to([$ccEmail], $subject, $msg, $fromEmail, $fromName);
 }
 
 // ── Suggestion notifications ─────────────────────────────────────────────────
@@ -621,15 +634,20 @@ function notify_suggestion_created(int $suggestionId, string $title, string $bod
         "",
         "— AgentEdge",
     ]);
-    return queue_email_to(super_admin_emails(), $subject, $msg);
+    return queue_email_to(super_admin_emails(), $subject, $msg, $submitterEmail, $submitterName);
 }
 
 // ── SendGrid email ────────────────────────────────────────────────────────────
 
-function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false, array $attachments = []): bool {
+function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false, array $attachments = [], string $fromEmail = '', string $fromName = ''): bool {
     $key  = $c['sendgrid_key']  ?? '';
-    $from = $c['sendgrid_from'] ?? 'noreply@innovateonline.com';
-    $name = $c['sendgrid_name'] ?? 'INNOVATE Real Estate';
+    // A specific AgentEdge user triggered this email (e.g. replied to a
+    // ticket, sent a Company Email) — send from them; otherwise fall back
+    // to the system default. Domain (innovateonline.com) is authenticated
+    // with SendGrid, so any address on it works as a From, not just one
+    // verified sender.
+    $from = $fromEmail !== '' ? $fromEmail : ($c['sendgrid_from'] ?? 'noreply@innovateonline.com');
+    $name = $fromEmail !== '' ? ($fromName !== '' ? $fromName : $fromEmail) : ($c['sendgrid_name'] ?? 'INNOVATE Real Estate');
     if (!$key || !$to) return false;
 
     if ($isHtml) {

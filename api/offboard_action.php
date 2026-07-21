@@ -253,10 +253,11 @@ if ($action === 'add_to_queue') {
             trim($body['last_day']       ?? ''),
             $reason,
             trim($body['reason_notes']   ?? ''),
-            $agent['email']
+            $agent['email'],
+            $agent['name'] ?? ''
         );
-        notify_step_assignees_on_create('offboard', $name, $email, offboard_tools());
-        maybe_notify_next_actionable_step($pdo, 'offboard', $queueId);
+        notify_step_assignees_on_create('offboard', $name, $email, offboard_tools(), $agent['email'], $agent['name'] ?? '');
+        maybe_notify_next_actionable_step($pdo, 'offboard', $queueId, $agent['email'], $agent['name'] ?? '');
     } catch (\Throwable $e) {}
 
     http_response_code(200);
@@ -281,7 +282,7 @@ if ($action === 'mark_done') {
     try { require_once __DIR__ . '/../lib/notifications.php'; } catch (\Throwable $e) {}
 
     if ($status === 'done') {
-        try { complete_offboard_step($pdo, $queueId, $toolKey, $agent['email']); } catch (\Throwable $e) {}
+        try { complete_offboard_step($pdo, $queueId, $toolKey, $agent['email'], $agent['name'] ?? ''); } catch (\Throwable $e) {}
     } else {
         $upd = $pdo->prepare(
             "UPDATE offboard_steps SET status=?, done_by=NULL, done_at=NULL
@@ -289,7 +290,7 @@ if ($action === 'mark_done') {
         );
         $upd->execute([$status, $queueId, $toolKey]);
         if ($status === 'skipped') {
-            try { maybe_notify_next_actionable_step($pdo, 'offboard', $queueId); } catch (\Throwable $e) {}
+            try { maybe_notify_next_actionable_step($pdo, 'offboard', $queueId, $agent['email'], $agent['name'] ?? ''); } catch (\Throwable $e) {}
         }
     }
 
@@ -307,7 +308,7 @@ if ($action === 'send_exit_interview') {
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
-        notify_exit_interview_sent($entry['agent_name'], $entry['agent_email']);
+        notify_exit_interview_sent($entry['agent_name'], $entry['agent_email'], $agent['email'], $agent['name'] ?? '');
     } catch (\Throwable $e) {}
 
     http_response_code(200);

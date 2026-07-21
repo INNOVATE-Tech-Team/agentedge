@@ -34,10 +34,10 @@ foreach ($due as $row) {
         // matching what the immediate-send path does when $agent['name'] is empty.
         $sigHtml = ce_signature_html($row['sender_email'], $row['sender_email'], CRON_HOST);
         $attachIdsStr = $row['attachment_ids'] ?? '';
-        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids) VALUES (?, 'email', ?, ?, '', 1, ?)");
+        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
         foreach ($recipients as $r) {
             $personalized = ce_apply_merge_vars($row['body'], $r);
-            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr]);
+            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr, $row['sender_email'], $row['sender_email']]);
         }
 
         $db->prepare(

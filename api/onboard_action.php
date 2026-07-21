@@ -178,7 +178,8 @@ if ($action === 'add_to_queue') {
         $body['start_date'] ?? '',
         $body['sponsor']    ?? '',
         $body['role']       ?? 'agent',
-        $body['notes']      ?? ''
+        $body['notes']      ?? '',
+        $agent['name']      ?? ''
     );
     $queueId = $result['id'];
 
@@ -256,7 +257,7 @@ if ($action === 'mark_done') {
     if (in_array($status, ['done','skipped'], true)) {
         try {
             require_once __DIR__ . '/../lib/notifications.php';
-            maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
+            maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $agent['email'], $agent['name'] ?? '');
         } catch (\Throwable $e) {}
     }
 
@@ -330,7 +331,7 @@ if ($action === 'provision') {
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
-        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $agent['email'], $agent['name'] ?? '');
     } catch (\Throwable $e) {}
 
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
@@ -384,8 +385,8 @@ if ($action === 'complete_onboarding') {
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
-        notify_onboard_completed($row['agent_name'], $row['agent_email']);
-        notify_bic_ml_onboard_complete($row['agent_name'], $row['agent_email'], $row['market_center'] ?? '');
+        notify_onboard_completed($row['agent_name'], $row['agent_email'], $agent['email'], $agent['name'] ?? '');
+        notify_bic_ml_onboard_complete($row['agent_name'], $row['agent_email'], $row['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
 
         // Step 11 (Coach/LAUNCH assignment) is new-agents-only — determined by
         // whether the intake form shows a prior brokerage; blank means new.
@@ -394,7 +395,7 @@ if ($action === 'complete_onboarding') {
         $intake = $intakeSt->fetch(PDO::FETCH_ASSOC);
         $isNewAgent = $intake && trim($intake['prior_occupation'] ?? '') === '' && trim($intake['prior_affiliation'] ?? '') === '';
         if ($isNewAgent) {
-            notify_coach_assignment_needed($row['agent_name'], $row['agent_email']);
+            notify_coach_assignment_needed($row['agent_name'], $row['agent_email'], $agent['email'], $agent['name'] ?? '');
         }
 
         // Step 13 — schedule the 10-day post-completion check-in text.
