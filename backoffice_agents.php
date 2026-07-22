@@ -32,6 +32,14 @@ function dv(string $val): string {
 function dvBool($val): string {
     return '<span class="dg-value">' . ($val ? 'Yes' : 'No') . '</span>';
 }
+function lastNameFirst(string $full): string {
+    $full = trim($full);
+    if ($full === '') return '';
+    $parts = preg_split('/\s+/', $full);
+    if (count($parts) < 2) return $full;
+    $last = array_pop($parts);
+    return $last . ', ' . implode(' ', $parts);
+}
 
 $intakeAgents = local_db()->query(
     "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
@@ -57,7 +65,7 @@ $intakeAgents = local_db()->query(
      LEFT JOIN agent_extra e ON e.email = i.email
      LEFT JOIN agent_roles ar ON ar.email = i.email
      LEFT JOIN agent_admin aa ON aa.email = i.email
-     ORDER BY i.submitted DESC, i.updated_at DESC"
+     ORDER BY i.full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
 if ($myMcSlugs !== null) {
     $intakeAgents = array_values(array_filter($intakeAgents, function($a) use ($rosterMcSlugsByEmail, $myMcSlugs) {
@@ -67,6 +75,7 @@ if ($myMcSlugs !== null) {
         return (bool)array_intersect($slugs, $myMcSlugs);
     }));
 }
+usort($intakeAgents, fn($x, $y) => strcasecmp(lastNameFirst($x['full_name'] ?? ''), lastNameFirst($y['full_name'] ?? '')));
 
 $launchCoaches = local_db()->query(
     "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
@@ -334,7 +343,7 @@ $missingCount = count($missingAgents);
           <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>"
               data-search="<?= h(strtolower($a['full_name'] . ' ' . $a['email'] . ' ' . $a['office_location'])) ?>">
             <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this)">&#9658;</button></td>
-            <td><?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'row-avatar') ?><strong><?= h($a['full_name'] ?: '—') ?></strong></td>
+            <td><?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'row-avatar') ?><strong><?= h($a['full_name'] ? lastNameFirst($a['full_name']) : '—') ?></strong></td>
             <td><?= h($a['email']) ?></td>
             <td><?= h($a['office_location'] ?: '—') ?></td>
             <td><?= h($a['phone'] ?: '—') ?></td>
@@ -351,7 +360,7 @@ $missingCount = count($missingAgents);
                 <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
                 <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
-                <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday']) ?></div>
+                <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
                 <?php
                   $addrParts = array_filter([$a['address_line1'] ?? '', $a['address_line2'] ?? '']);
                   $cityStZip = array_filter([$a['city'] ?? '', $a['state'] ?? '', $a['zip'] ?? '']);
