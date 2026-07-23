@@ -23,3 +23,6 @@ cache/
 *.bak
 *.bak.*
 tash
+data/*.bak-*
+data/suggestion_uploads/
+data/agent_documents/
