@@ -305,9 +305,10 @@
           <div class="ob-notes" id="ob-notes-${entry.id}" data-email="${esc(entry.agent_email)}">
             <div class="ob-notes-list" id="ob-notes-list-${entry.id}" style="font-size:12px;color:#aaa">Loading notes…</div>
             <div style="display:flex;gap:8px;margin-top:8px">
-              <input type="text" id="ob-notes-input-${entry.id}" placeholder="Add a note (admin/BIC/ML only — not visible to the agent)…"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault();addOnboardNote(${entry.id});}"
-                     style="flex:1;padding:6px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px">
+              <textarea id="ob-notes-input-${entry.id}" placeholder="Add a note (admin/BIC/ML only — not visible to the agent)… (Enter to save, Shift+Enter for a new line)" rows="1"
+                        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addOnboardNote(${entry.id});}"
+                        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
+                        style="flex:1;padding:6px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
               <button class="ob-btn-sm ob-btn-done" onclick="addOnboardNote(${entry.id})">Add Note</button>
             </div>
           </div>
@@ -417,7 +418,7 @@
     if (!note || !email) return;
     post('api/agent_notes.php', { email, note })
       .then(d => {
-        if (d.ok) { input.value = ''; loadNotes(queueId, true); }
+        if (d.ok) { input.value = ''; input.style.height = 'auto'; loadNotes(queueId, true); }
         else { alert(d.error || 'Could not save note.'); }
       })
       .catch(() => { alert('Network error saving note.'); });
