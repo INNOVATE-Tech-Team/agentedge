@@ -31,12 +31,19 @@ if (!is_admin()) {
 $month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
 [$year, $mon] = array_map('intval', explode('-', $month));
 
-$mcByEmail = [];
-if ($mcFilterSlugs !== null) {
-    $rosterRows = local_db()->query("SELECT email, market_center FROM innovate_roster WHERE market_center != ''")->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($rosterRows as $r) {
-        $mcByEmail[strtolower(trim($r['email']))] = slugify_mc($r['market_center']);
-    }
+$mcByEmail   = [];
+$nameByEmail = [];
+$rosterRows = local_db()->query("SELECT email, agent_name, market_center FROM innovate_roster WHERE email != ''")->fetchAll(PDO::FETCH_ASSOC);
+foreach ($rosterRows as $r) {
+    $email = strtolower(trim($r['email']));
+    if ($mcFilterSlugs !== null && $r['market_center'] !== '') $mcByEmail[$email] = slugify_mc($r['market_center']);
+    if (!empty($r['agent_name'])) $nameByEmail[$email] = $r['agent_name'];
+}
+// Roster only covers active agents — fall back to the Intake Form's name for
+// anyone whose birthday/anniversary is on file but isn't (or isn't yet) on it.
+foreach (local_db()->query("SELECT email, full_name FROM agent_intake WHERE full_name != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+    $email = strtolower(trim($r['email']));
+    if (!isset($nameByEmail[$email])) $nameByEmail[$email] = $r['full_name'];
 }
 
 $extraRows = local_db()->query("SELECT email, birthday, hire_date FROM agent_extra")->fetchAll(PDO::FETCH_ASSOC);
@@ -71,9 +78,9 @@ foreach ($rowsByEmail as $email => $r) {
         if ((int)$m[1] === $mon) {
             $events[] = [
                 'date'        => sprintf('%04d-%02d-%02d', $year, (int)$m[1], (int)$m[2]),
-                'title'       => '🎂 Birthday: ' . agent_display_name($r['email']),
+                'title'       => '🎂 Birthday: ' . ($nameByEmail[$email] ?? agent_display_name($r['email'])),
                 'scope'       => 'bic',
-                'description' => $r['email'],
+                'description' => '',
             ];
         }
     }
@@ -86,9 +93,9 @@ foreach ($rowsByEmail as $email => $r) {
             if ($years > 0) {
                 $events[] = [
                     'date'        => sprintf('%04d-%02d-%02d', $year, (int)$m[1], (int)$m[2]),
-                    'title'       => '🎉 ' . $years . '-Year Anniversary: ' . agent_display_name($r['email']),
+                    'title'       => '🎉 ' . $years . '-Year Anniversary: ' . ($nameByEmail[$email] ?? agent_display_name($r['email'])),
                     'scope'       => 'bic',
-                    'description' => $r['email'],
+                    'description' => '',
                 ];
             }
         }
