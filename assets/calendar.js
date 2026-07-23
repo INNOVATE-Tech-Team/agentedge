@@ -42,6 +42,14 @@ function monthKeyOf(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// The "Next 30 Days" rolling list only makes sense while the grid is showing
+// the actual current month — once you page away with prev/next, the list
+// below switches to plain events for whichever month is on screen.
+function isCurrentMonth() {
+  const today = new Date();
+  return calYear === today.getFullYear() && calMonth === today.getMonth();
+}
+
 // The event list below the grid is a rolling "next 30 days" window anchored
 // to today, independent of whatever month the grid above is paged to — it
 // may span two months' worth of cached event data.
@@ -179,11 +187,13 @@ function calRsvpLabel(ev) {
 }
 
 function renderList(evs) {
-  document.getElementById('cal-list-title').textContent = 'Next 30 Days';
+  const onCurMonth = isCurrentMonth();
+  document.getElementById('cal-list-title').textContent =
+    onCurMonth ? 'Next 30 Days' : `${CAL_MONTHS[calMonth]} ${calYear} Events`;
   const vis  = filtered(evs);
   const body = document.getElementById('cal-event-list-body');
   if (!vis.length) {
-    body.innerHTML = '<p class="muted" style="padding:.75rem 0">No events in the next 30 days.</p>';
+    body.innerHTML = `<p class="muted" style="padding:.75rem 0">No events ${onCurMonth ? 'in the next 30 days' : 'this month'}.</p>`;
     return;
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
@@ -259,7 +269,7 @@ async function calDraw() {
   const evs = await loadEvents(calKey());
   renderGrid(evs);
   updateTabCounts(evs);
-  renderList(await loadUpcomingWindow());
+  renderList(isCurrentMonth() ? await loadUpcomingWindow() : evs);
 }
 
 function updateTrainingBar() {
@@ -291,8 +301,11 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     updateEventsBar();
     updateMyCalBar();
     if (calFilter === 'mycal') loadCalFeedUrl();
-    loadEvents(calKey()).then(evs => renderGrid(evs));
-    loadUpcomingWindow().then(evs => renderList(evs));
+    loadEvents(calKey()).then(evs => {
+      renderGrid(evs);
+      if (!isCurrentMonth()) renderList(evs);
+    });
+    if (isCurrentMonth()) loadUpcomingWindow().then(evs => renderList(evs));
   });
 });
 
