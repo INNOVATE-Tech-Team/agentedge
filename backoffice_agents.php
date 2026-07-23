@@ -347,7 +347,7 @@ $missingCount = count($missingAgents);
             <td><?= h($a['email']) ?></td>
             <td><?= h($a['office_location'] ?: '—') ?></td>
             <td><?= h($a['phone'] ?: '—') ?></td>
-            <td><span class="st-badge <?= $statusClass ?>"><?= $statusLabel ?></span></td>
+            <td><?php if (!$isSubmitted): ?><span class="st-badge <?= $statusClass ?>"><?= $statusLabel ?></span><?php endif; ?></td>
             <td><?= h($updated) ?></td>
           </tr>
           <tr class="detail-row" id="<?= $detailId ?>" style="display:none" data-tab="<?= $tabAttr ?>">
@@ -481,6 +481,16 @@ $missingCount = count($missingAgents);
                   <?php else: ?>
                     <span class="dg-value empty">No headshot uploaded yet</span>
                   <?php endif; ?>
+                </div>
+
+                <div class="dg-section">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
+                <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
+                  <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
+                  <div style="display:flex;gap:8px;margin-top:8px">
+                    <input type="text" id="bo-notes-input-<?= $idx ?>" placeholder="Add a note…"
+                           style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+                    <button type="button" class="btn-detail-link" onclick="addAgentNote(<?= $idx ?>)">Add Note</button>
+                  </div>
                 </div>
 
                 <?php if ($isAdmin): ?>
@@ -1048,7 +1058,62 @@ $missingCount = count($missingAgents);
       detailRow.dataset.open = '1';
       btn.classList.add('open');
       if (dataRow) dataRow.classList.add('expanded');
+      var m = /^detail-(\d+)$/.exec(detailId);
+      if (m) loadAgentNotes(m[1]);
     }
+  };
+
+  // ── Notes (admin/BIC/ML only — enforced server-side by api/agent_notes.php,
+  // never surfaced to the agent since this whole page is staff-only) ─────────
+  var notesLoadedIdx = {};
+
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  window.loadAgentNotes = function (idx, force) {
+    if (notesLoadedIdx[idx] && !force) return;
+    var wrap = document.getElementById('bo-notes-' + idx);
+    var email = wrap && wrap.dataset.email;
+    if (!email) return;
+    fetch('api/agent_notes.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        notesLoadedIdx[idx] = true;
+        var list = document.getElementById('bo-notes-list-' + idx);
+        if (!list) return;
+        if (!d.ok) { list.innerHTML = '<span style="color:var(--faint)">' + (d.error || 'Could not load notes.') + '</span>'; return; }
+        var notes = d.notes || [];
+        if (!notes.length) { list.innerHTML = '<span style="color:var(--faint)">No notes yet.</span>'; return; }
+        list.innerHTML = notes.map(function (n) {
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="white-space:pre-wrap;color:var(--ink)">' + escHtml(n.note) + '</div>' +
+            '<div style="font-size:11px;color:var(--faint);margin-top:2px">' + escHtml(n.created_by) + ' · ' + escHtml(n.created_at) + '</div>' +
+            '</div>';
+        }).join('');
+      })
+      .catch(function () {});
+  };
+
+  window.addAgentNote = function (idx) {
+    var wrap = document.getElementById('bo-notes-' + idx);
+    var input = document.getElementById('bo-notes-input-' + idx);
+    var email = wrap && wrap.dataset.email;
+    var note = (input && input.value || '').trim();
+    if (!email || !note) return;
+    fetch('api/agent_notes.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, note: note })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) { input.value = ''; loadAgentNotes(idx, true); }
+        else { alert(d.error || 'Could not save note.'); }
+      })
+      .catch(function () { alert('Network error saving note.'); });
   };
 }());
 </script>

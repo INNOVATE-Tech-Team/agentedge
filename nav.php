@@ -84,7 +84,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         // themselves scope their data to the leader's own Market Center(s).
         ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'standalone'=>true],
         ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations', 'leaderVisible'=>true],
-        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
+        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
@@ -211,8 +211,9 @@ function render_sidebar(string $current, array $agent): void {
     // Back Office section — admins see everything; mc_leader/bic see it too, but with
     // Finance, Human Resources, and Technology departments hidden entirely, and
     // Operations filtered down to just the 'leaderVisible' items (Agent Profiles /
-    // Agent Roster — both scope their own data to the leader's MC). Launch coaches
-    // (the other non-admin group that reaches this block) see no Operations items.
+    // Agent Roster / Onboarding Queue — all three scope their own data to the
+    // leader's MC). Launch coaches (the other non-admin group that reaches this
+    // block) see no Operations items.
     // Finance Accounting Checklists is scoped to 3 named staff (see roles.php),
     // narrower than any role tier — so it needs its own bypass into a section
     // (Finance) that's otherwise hidden from non-admins entirely.
