@@ -43,7 +43,11 @@ if ($name === '' || $email === '') {
 $pdo  = local_db();
 $base = rtrim($c['agentedge_base_url'] ?? 'https://agentedge.innovateonline.com', '/');
 
-$mc                = trim($body['market_center']       ?? '');
+// Normalized against the canonical market_centers list — Advantage's payload
+// is free text and not guaranteed to match exactly (typo, renamed office,
+// etc.); an unrecognized value lands as blank here rather than silently
+// creating a mismatched/duplicate innovate_roster row below.
+$mc                = normalize_market_center($pdo, trim($body['market_center'] ?? ''));
 $role              = trim($body['role']                ?? 'agent');
 $sponsor           = trim($body['sponsor']              ?? '');
 $start             = trim($body['start_date']           ?? '');
@@ -56,6 +60,17 @@ $canonicalAgentId  = isset($body['canonical_agent_id']) ? (string)$body['canonic
 $result   = queue_onboarding_agent($pdo, $email, $name, $mc, $stateCode, $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes);
 $queueId  = $result['id'];
 $queueUrl = $base . '/onboarding.php?open=' . $queueId;
+
+// Give the agent a working AgentEdge login on day one instead of leaving them
+// to wait on a reset link. INSERT OR IGNORE so this never overwrites a
+// password the agent (or an admin) already set — e.g. on a re-push/reactivation.
+$defaultPw = trim($c['default_agent_password'] ?? '');
+if ($defaultPw !== '') {
+    $pdo->prepare(
+        "INSERT OR IGNORE INTO agent_passwords (email, password_hash, updated_at)
+         VALUES (?, ?, datetime('now'))"
+    )->execute([strtolower($email), password_hash($defaultPw, PASSWORD_BCRYPT)]);
+}
 
 // Auto-add to innovate_roster if state_code was provided at intake time —
 // otherwise this happens later, when onboarding is marked complete

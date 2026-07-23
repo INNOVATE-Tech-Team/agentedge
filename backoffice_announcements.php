@@ -35,17 +35,28 @@ $isBicOnly = is_bic() && !is_admin();
     .btn-pin{background:#fff4e0;color:#a06000}
 
     /* ── Advanced Rich Text Editor ─────────────────────────────────────── */
-    .rte-wrap{border:1px solid #ccc;border-radius:8px;overflow:hidden;background:#fff}
+    .rte-wrap{border:1px solid #ccc;border-radius:8px;background:#fff}
     .rte-wrap:focus-within{outline:2px solid #82C112;border-color:#82C112}
-    .rte-toolbar{display:flex;align-items:center;gap:1px;padding:5px 8px;background:#f7f7f7;border-bottom:1px solid #e0e0e0;flex-wrap:wrap}
-    .rte-group{display:flex;align-items:center;gap:1px}
-    .rte-group+.rte-group{margin-left:4px;padding-left:5px;border-left:1px solid #ddd}
-    .rte-btn{display:inline-flex;align-items:center;justify-content:center;padding:4px 7px;border:none;background:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;color:#333;line-height:1;min-width:26px;height:26px;gap:3px}
-    .rte-btn:hover{background:#e8e8e8}
-    .rte-btn.active{background:#d4edab;color:#2a5c00}
-    .rte-select{padding:3px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;height:26px;outline:none;color:#333}
-    .rte-select:focus{border-color:#82C112}
-    .rte-body{min-height:110px;padding:10px 12px;font-size:13px;line-height:1.6;outline:none;background:#fff;cursor:text}
+    .rte-toolbar{display:flex;align-items:center;gap:2px;padding:7px 10px;background:#f7f7f7;border-bottom:1px solid #e0e0e0;flex-wrap:wrap;row-gap:6px;border-radius:7px 7px 0 0}
+    .rte-group{display:flex;align-items:center;gap:2px}
+    .rte-group+.rte-group{margin-left:6px;padding-left:8px;border-left:1px solid #dcdcdc}
+    .rte-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid transparent;background:none;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;color:#333;line-height:1;width:30px;height:30px;flex-shrink:0}
+    .rte-btn:hover{background:#fff;border-color:#ddd}
+    .rte-btn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+    /* Custom dropdown — plain divs, not a native <select>, so the box always
+       sizes to fit its own label text exactly. */
+    .cdd{position:relative;flex-shrink:0}
+    .cdd-toggle{display:flex;align-items:center;gap:5px;height:30px;padding:0 9px;border:1px solid #ccc;border-radius:5px;
+      background:#fff;font-size:12px;font-family:inherit;color:#333;cursor:pointer;white-space:nowrap}
+    .cdd-toggle:hover{border-color:#aaa}
+    .cdd.open .cdd-toggle{border-color:#82C112}
+    .cdd-arrow{font-size:8px;color:#888;line-height:1}
+    .cdd-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #ccc;border-radius:6px;
+      box-shadow:0 4px 14px rgba(0,0,0,.15);min-width:150px;z-index:50;padding:4px;white-space:nowrap}
+    .cdd.open .cdd-menu{display:block}
+    .cdd-item{padding:7px 10px;font-size:13px;color:#333;border-radius:4px;cursor:pointer}
+    .cdd-item:hover{background:#eef5e8;color:#5b8e0d}
+    .rte-body{min-height:110px;padding:10px 12px;font-size:13px;line-height:1.6;outline:none;background:#fff;cursor:text;border-radius:0 0 7px 7px}
     .rte-body:empty:before{content:attr(data-placeholder);color:#aaa;pointer-events:none;display:block}
     .rte-body h2{font-size:18px;font-weight:800;color:#111;margin:0 0 6px;line-height:1.3}
     .rte-body h3{font-size:15px;font-weight:700;color:#333;margin:0 0 4px;line-height:1.3}
@@ -131,30 +142,41 @@ $isBicOnly = is_bic() && !is_admin();
                   <div class="rte-toolbar">
                     <!-- Paragraph style -->
                     <div class="rte-group">
-                      <select class="rte-select" title="Paragraph style"
-                        onchange="rteFormat(this.value);this.selectedIndex=0;document.getElementById('ann-body').focus()">
-                        <option value="">¶ Style</option>
-                        <option value="p">Paragraph</option>
-                        <option value="h2">Heading 1</option>
-                        <option value="h3">Heading 2</option>
-                        <option value="blockquote">Quote</option>
-                      </select>
+                      <div class="cdd" id="cdd-style">
+                        <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('style')" title="Paragraph style">
+                          <span>Style</span><span class="cdd-arrow">&#9662;</span>
+                        </button>
+                        <div class="cdd-menu">
+                          <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('p');closeDropdowns();document.getElementById('ann-body').focus()">Paragraph</div>
+                          <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('h2');closeDropdowns();document.getElementById('ann-body').focus()">Heading 1</div>
+                          <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('h3');closeDropdowns();document.getElementById('ann-body').focus()">Heading 2</div>
+                          <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('blockquote');closeDropdowns();document.getElementById('ann-body').focus()">Quote</div>
+                        </div>
+                      </div>
                     </div>
                     <!-- Text formatting -->
                     <div class="rte-group">
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('bold')" title="Bold"><b>B</b></button>
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('italic')" title="Italic"><i>I</i></button>
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline"><u>U</u></button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('bold')" title="Bold" style="font-size:15px"><b>B</b></button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('italic')" title="Italic" style="font-size:15px"><i>I</i></button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline" style="font-size:15px"><u>U</u></button>
                     </div>
                     <!-- Lists -->
                     <div class="rte-group">
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('insertUnorderedList')" title="Bullet list">&#8226; List</button>
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('insertOrderedList')" title="Numbered list">1. List</button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('insertUnorderedList')" title="Bullet list">
+                        <svg viewBox="0 0 20 20"><circle cx="4" cy="5" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="5" x2="17" y2="5"/><circle cx="4" cy="10" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="10" x2="17" y2="10"/><circle cx="4" cy="15" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="15" x2="17" y2="15"/></svg>
+                      </button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('insertOrderedList')" title="Numbered list">
+                        <svg viewBox="0 0 20 20"><text x="1.5" y="6.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">1</text><line x1="8" y1="5" x2="17" y2="5"/><text x="1.5" y="11.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">2</text><line x1="8" y1="10" x2="17" y2="10"/><text x="1.5" y="16.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">3</text><line x1="8" y1="15" x2="17" y2="15"/></svg>
+                      </button>
                     </div>
                     <!-- Link & Clear -->
                     <div class="rte-group">
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteInsertLink()" title="Insert link">&#128279; Link</button>
-                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('removeFormat');rteFormat('p')" title="Clear formatting" style="color:#888">&#x2715; Clear</button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteInsertLink()" title="Insert link">
+                        <svg viewBox="0 0 20 20"><path d="M8.7 12.3l2.6-2.6"/><path d="M9.3 6.3H8a3 3 0 0 0 0 6h1.3"/><path d="M10.7 13.7H12a3 3 0 0 0 0-6h-1.3"/></svg>
+                      </button>
+                      <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('removeFormat');rteFormat('p')" title="Clear formatting" style="color:#999">
+                        <svg viewBox="0 0 20 20"><path d="M5 4h7l3 12H8z"/><line x1="7" y1="4" x2="10" y2="16"/><line x1="4" y1="17" x2="16" y2="17" stroke-width="2"/></svg>
+                      </button>
                     </div>
                   </div>
                   <div id="ann-body" class="rte-body" contenteditable="true" data-placeholder="Write your announcement here…"></div>
@@ -278,6 +300,22 @@ const IS_ADMIN = <?= is_admin()     ? 'true' : 'false' ?>;
 const MY_MCS   = <?= json_encode($myMcSlugs) ?>;
 
 // ── Rich text editor ──────────────────────────────────────────────────────────
+// ── Custom toolbar dropdown (Style) ────────────────────────────────────────
+function toggleDropdown(name){
+  const cdd = document.getElementById('cdd-' + name);
+  const wasOpen = cdd.classList.contains('open');
+  closeDropdowns();
+  if (!wasOpen) cdd.classList.add('open');
+}
+
+function closeDropdowns(){
+  document.querySelectorAll('.cdd.open').forEach(el => el.classList.remove('open'));
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.cdd')) closeDropdowns();
+});
+
 function rteCmd(cmd){document.execCommand(cmd,false,null);}
 
 function rteFormat(val){
