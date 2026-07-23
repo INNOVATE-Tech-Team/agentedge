@@ -1112,7 +1112,7 @@ $missingCount = count($missingAgents);
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (d.ok) { input.value = ''; loadAgentNotes(idx, true); }
+        if (d.ok) { input.value = ''; input.style.height = 'auto'; loadAgentNotes(idx, true); }
         else { alert(d.error || 'Could not save note.'); }
       })
       .catch(function () { alert('Network error saving note.'); });
