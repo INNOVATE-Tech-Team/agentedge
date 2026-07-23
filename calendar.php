@@ -5,6 +5,7 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent    = require_login();
 $is_admin = is_admin();
+$is_leader = is_leader();
 $cal_id   = cfg()['gcal_calendar_id'] ?? 'training@innovateonline.com';
 $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
 ?>
@@ -36,6 +37,9 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
               <button class="cal-tab" data-filter="mc" id="cal-tab-mc">Market Center <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="training">Training <span class="cal-tab-count"></span></button>
               <button class="cal-tab" data-filter="events">Events <span class="cal-tab-count"></span></button>
+              <?php if ($is_leader): ?>
+              <button class="cal-tab" data-filter="bic">Birthdays &amp; Anniversaries <span class="cal-tab-count"></span></button>
+              <?php endif; ?>
               <button class="cal-tab" data-filter="mycal">My Calendar <span class="cal-tab-count"></span></button>
             </div>
             <div class="cal-nav">
@@ -44,78 +48,46 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
               <button class="btn-cal-nav" id="cal-next">&#8594;</button>
             </div>
           </div>
-          <!-- Personal calendar sync bar — shown when "My Calendar" tab active -->
+          <!-- Personal calendar sync bar — shown when "My Calendar" tab active; opens the connect modal -->
           <div id="cal-personal-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
             <span style="font-size:12px;color:#888" id="cal-personal-status">Loading…</span>
             <button class="cal-rsvp-btn" onclick="openPersonalCalModal()" style="margin-left:auto">&#128197; Sync Calendar URL</button>
           </div>
-          <!-- My Calendar tab — ICS sync UI -->
-
+          <!-- My Calendar tab — inbound: connect a personal ICS feed; outbound: subscribe to company calendar -->
           <div id="cal-mycal-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:14px;padding:12px 14px;background:#f8f8f8;border:1px solid #eee;border-radius:8px">
-
             <div id="cal-mycal-connected" style="display:none">
-
               <div style="font-size:13px;color:#444;margin-bottom:8px"><strong>Calendar connected.</strong> Your personal events appear in teal below.</div>
-
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-
                 <button id="cal-mycal-change-btn" class="cal-rsvp-btn" style="font-size:12px">Change URL</button>
-
                 <button id="cal-mycal-remove-btn" style="font-size:12px;padding:5px 10px;border:1px solid #fcc;background:white;border-radius:4px;cursor:pointer;color:#c00">Disconnect</button>
-
               </div>
-
             </div>
-
             <div id="cal-mycal-setup">
-
               <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px">Connect your personal calendar</div>
-
               <div style="font-size:12px;color:#666;margin-bottom:10px">Paste your Google Calendar, Apple Calendar, or Outlook <strong>ICS link</strong>.<br><span style="color:#999">Google: Settings &rarr; [Your calendar] &rarr; "Secret address in iCal format"</span></div>
-
               <div style="display:flex;gap:8px;align-items:center">
-
                 <input type="url" id="cal-mycal-url" placeholder="https://calendar.google.com/calendar/ical/&hellip;" style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px;min-width:0">
-
                 <button id="cal-mycal-save-btn" class="cal-rsvp-btn cal-rsvp-active" style="white-space:nowrap">Connect</button>
-
               </div>
-
               <div id="cal-mycal-msg" style="font-size:12px;margin-top:6px"></div>
-
             </div>
-
             <div id="cal-mycal-export" style="border-top:1px solid #e8e8e8;padding-top:10px;margin-top:2px">
-
               <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:3px">Add company events to your calendar</div>
-
-              <div style="font-size:12px;color:#666;margin-bottom:8px">Copy this URL and subscribe in Google Calendar, Apple Calendar, or Outlook.<br>
-
-                <span style="color:#999">Google: Other calendars (+) &rarr; From URL &nbsp;|&nbsp; Apple: File &rarr; New Calendar Subscription &nbsp;|&nbsp; Outlook: Add calendar &rarr; From internet</span>
-
+              <div style="font-size:12px;color:#666;margin-bottom:8px">
+                Copy this URL and subscribe in Google Calendar, Apple Calendar, or Outlook.<br>
+                <span style="color:#999">Google: Other calendars (+) &rarr; "From URL" &nbsp;|&nbsp; Apple: File &rarr; New Calendar Subscription &nbsp;|&nbsp; Outlook: Add calendar &rarr; From internet</span>
               </div>
-
               <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-
-                <input type="url" id="cal-feed-url" readonly placeholder="Loading..." style="flex:1;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:12px;background:#f5f5f5;min-width:0;color:#555">
-
+                <input type="url" id="cal-feed-url" readonly placeholder="Loading…"
+                       style="flex:1;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:12px;background:#f5f5f5;min-width:0;color:#555">
                 <button id="cal-feed-copy-btn" class="cal-rsvp-btn" style="white-space:nowrap">Copy</button>
-
               </div>
-
               <div>
-
                 <button id="cal-feed-regen-btn" style="font-size:11px;padding:4px 8px;border:1px solid #ccc;background:white;border-radius:4px;cursor:pointer;color:#666">Regenerate URL</button>
-
                 <span id="cal-feed-msg" style="font-size:11px;color:#888;margin-left:8px"></span>
-
               </div>
-
             </div>
-
           </div>
-
-
 
           <!-- Training tab actions — shown/hidden by JS -->
           <div id="cal-training-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
