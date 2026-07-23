@@ -79,7 +79,7 @@ foreach ($rowsByEmail as $email => $r) {
             $events[] = [
                 'date'        => sprintf('%04d-%02d-%02d', $year, (int)$m[1], (int)$m[2]),
                 'title'       => '🎂 Birthday: ' . ($nameByEmail[$email] ?? agent_display_name($r['email'])),
-                'scope'       => 'bic',
+                'scope'       => 'birthday',
                 'description' => '',
             ];
         }
@@ -94,7 +94,7 @@ foreach ($rowsByEmail as $email => $r) {
                 $events[] = [
                     'date'        => sprintf('%04d-%02d-%02d', $year, (int)$m[1], (int)$m[2]),
                     'title'       => '🎉 ' . $years . '-Year Anniversary: ' . ($nameByEmail[$email] ?? agent_display_name($r['email'])),
-                    'scope'       => 'bic',
+                    'scope'       => 'anniversary',
                     'description' => '',
                 ];
             }

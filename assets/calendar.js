@@ -18,7 +18,8 @@ const SCOPES = {
   personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
-  bic:            { bg: '#f5a623', text: '#111' },
+  birthday:       { bg: '#f5a623', text: '#111' },
+  anniversary:    { bg: '#2e9e6b', text: '#fff' },
 };
 
 function calEsc(s) {
@@ -126,7 +127,8 @@ function filtered(evs) {
   if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
   if (calFilter === 'events')   return evs.filter(e => e.scope === 'events');
   if (calFilter === 'mycal')    return evs.filter(e => e.scope === 'personal');
-  if (calFilter === 'bic')      return evs.filter(e => e.scope === 'bic');
+  if (calFilter === 'birthday')    return evs.filter(e => e.scope === 'birthday');
+  if (calFilter === 'anniversary') return evs.filter(e => e.scope === 'anniversary');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -175,7 +177,8 @@ function scopeLabel(scope) {
   if (scope === 'personal')      return 'Personal';
   if (scope === 'training')      return 'Training';
   if (scope === 'events')        return 'Events';
-  if (scope === 'bic')           return 'Birthday / Anniversary';
+  if (scope === 'birthday')      return 'Birthday';
+  if (scope === 'anniversary')   return 'Anniversary';
   return 'Company';
 }
 
@@ -229,14 +232,15 @@ function renderList(evs) {
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, bic: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, birthday: 0, anniversary: 0 };
   evs.forEach(e => {
     if      (e.scope === 'company')        counts.company++;
     else if (e.scope === 'market-center')  counts.mc++;
     else if (e.scope === 'training')       counts.training++;
     else if (e.scope === 'events')         counts.events++;
     else if (e.scope === 'personal')       counts.mycal++;
-    else if (e.scope === 'bic')            counts.bic++;
+    else if (e.scope === 'birthday')       counts.birthday++;
+    else if (e.scope === 'anniversary')    counts.anniversary++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;
