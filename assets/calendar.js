@@ -98,19 +98,14 @@ async function loadEvents(key) {
   const training = trainingRes.status === 'fulfilled' ? (trainingRes.value.events ?? []) : [];
   const events   = eventsRes.status   === 'fulfilled' ? (eventsRes.value.events   ?? []) : [];
   const personal = personalRes.status === 'fulfilled' ? (personalRes.value.events ?? []) : [];
-  const hasPersonalUrl = personalRes.status === 'fulfilled' ? (personalRes.value.has_url ?? false) : false;
   const bic      = bicRes.status       === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
 
-  // Update personal bar status text
-  const personalStatus = document.getElementById('cal-personal-status');
-  if (personalStatus) {
-    if (!hasPersonalUrl) {
-      personalStatus.textContent = 'No calendar synced yet.';
-    } else if (personal.length) {
-      personalStatus.textContent = personal.length + ' event' + (personal.length !== 1 ? 's' : '') + ' this month from your personal calendar.';
-    } else {
-      personalStatus.textContent = 'Calendar synced — no events this month.';
-    }
+  // has_url reflects account-level state (not month-specific) — sync it
+  // every time so "Connected"/"Connect" status is correct on first load,
+  // not just after a same-session save.
+  if (personalRes.status === 'fulfilled') {
+    hasPersonalCal = personalRes.value.has_url ?? false;
+    updateMyCalBar();
   }
 
   evCache[key] = [...company, ...training, ...events, ...personal, ...bic].sort((a, b) => a.date.localeCompare(b.date));
@@ -261,7 +256,6 @@ async function calDraw() {
   document.getElementById('cal-event-list-body').innerHTML = '';
   updateTrainingBar();
   updateEventsBar();
-  updatePersonalBar();
   const evs = await loadEvents(calKey());
   renderGrid(evs);
   updateTabCounts(evs);
@@ -288,11 +282,6 @@ function updateMyCalBar() {
   if (setup)     setup.style.display     = hasPersonalCal ? 'none'  : 'block';
 }
 
-function updatePersonalBar() {
-  const bar = document.getElementById('cal-personal-bar');
-  if (bar) bar.style.display = calFilter === 'personal' ? 'flex' : 'none';
-}
-
 document.querySelectorAll('.cal-tab').forEach(t => {
   t.addEventListener('click', () => {
     document.querySelectorAll('.cal-tab').forEach(x => x.classList.remove('cal-tab-active'));
@@ -300,7 +289,6 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     calFilter = t.dataset.filter;
     updateTrainingBar();
     updateEventsBar();
-    updatePersonalBar();
     updateMyCalBar();
     if (calFilter === 'mycal') loadCalFeedUrl();
     loadEvents(calKey()).then(evs => renderGrid(evs));
