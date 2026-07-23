@@ -487,8 +487,10 @@ $missingCount = count($missingAgents);
                 <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
                   <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
                   <div style="display:flex;gap:8px;margin-top:8px">
-                    <input type="text" id="bo-notes-input-<?= $idx ?>" placeholder="Add a note…"
-                           style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+                    <textarea id="bo-notes-input-<?= $idx ?>" placeholder="Add a note… (Enter to save, Shift+Enter for a new line)" rows="1"
+                              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addAgentNote(<?= $idx ?>);}"
+                              oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
+                              style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
                     <button type="button" class="btn-detail-link" onclick="addAgentNote(<?= $idx ?>)">Add Note</button>
                   </div>
                 </div>

@@ -306,6 +306,7 @@
             <div class="ob-notes-list" id="ob-notes-list-${entry.id}" style="font-size:12px;color:#aaa">Loading notes…</div>
             <div style="display:flex;gap:8px;margin-top:8px">
               <input type="text" id="ob-notes-input-${entry.id}" placeholder="Add a note (admin/BIC/ML only — not visible to the agent)…"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();addOnboardNote(${entry.id});}"
                      style="flex:1;padding:6px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px">
               <button class="ob-btn-sm ob-btn-done" onclick="addOnboardNote(${entry.id})">Add Note</button>
             </div>
