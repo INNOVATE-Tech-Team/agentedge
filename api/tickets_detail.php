@@ -18,6 +18,7 @@ if (!is_admin() && $tkt['agent_email'] !== $me['email']) { http_response_code(40
 
 $m = $db->prepare("SELECT * FROM support_ticket_messages WHERE ticket_id=? ORDER BY created_at");
 $m->execute([$id]);
+$messages = $m->fetchAll(PDO::FETCH_ASSOC);
 
 $cc = $db->prepare("SELECT email, added_by, created_at FROM support_ticket_cc WHERE ticket_id=? ORDER BY created_at");
 $cc->execute([$id]);
@@ -25,10 +26,21 @@ $cc->execute([$id]);
 $ev = $db->prepare("SELECT event_type, detail, actor_email, created_at FROM support_ticket_events WHERE ticket_id=? ORDER BY created_at");
 $ev->execute([$id]);
 
+$fl = $db->prepare("SELECT id, message_id, orig_name, mime_type, size_bytes FROM support_ticket_files WHERE ticket_id=? ORDER BY created_at");
+$fl->execute([$id]);
+$filesByMsg = [];
+foreach ($fl->fetchAll(PDO::FETCH_ASSOC) as $file) {
+    $filesByMsg[(int)$file['message_id']][] = $file;
+}
+foreach ($messages as &$msg) {
+    $msg['files'] = $filesByMsg[(int)$msg['id']] ?? [];
+}
+unset($msg);
+
 echo json_encode([
     'ok'       => true,
     'ticket'   => $tkt,
-    'messages' => $m->fetchAll(PDO::FETCH_ASSOC),
+    'messages' => $messages,
     'cc'       => $cc->fetchAll(PDO::FETCH_ASSOC),
     'events'   => $ev->fetchAll(PDO::FETCH_ASSOC),
 ]);

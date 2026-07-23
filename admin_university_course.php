@@ -38,6 +38,21 @@ foreach ($lessons as $lesson) {
     $lessonsByFolder[$fid][] = $lesson;
 }
 $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
+
+$allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
+$stateNames = ['FL'=>'Florida','GA'=>'Georgia','MD'=>'Maryland','MA'=>'Massachusetts','NC'=>'North Carolina','NJ'=>'New Jersey','NH'=>'New Hampshire','OH'=>'Ohio','PA'=>'Pennsylvania','RI'=>'Rhode Island','SC'=>'South Carolina','TN'=>'Tennessee','VA'=>'Virginia','DE'=>'Delaware'];
+$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','staff'=>'Staff','super_admin'=>'Super Admin'];
+
+$courseInviteOnly  = (int)($course['invite_only']  ?? 0);
+$courseStateFilter = json_decode($course['state_filter'] ?? '[]', true) ?: [];
+$courseRoleFilter  = json_decode($course['role_filter']  ?? '[]', true) ?: [];
+
+$currentInvites = [];
+if ($courseId) {
+    $invStmt = $db->prepare("SELECT agent_email, invited_by, invited_at FROM uni_course_invites WHERE course_id=? ORDER BY invited_at DESC");
+    $invStmt->execute([$courseId]);
+    $currentInvites = $invStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -70,6 +85,12 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
     .field input,.field select,.field textarea{width:100%;padding:9px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box}
     .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid #82C112}
     .field textarea{resize:vertical;min-height:80px}
+    .tag-input-box{display:flex;flex-wrap:wrap;align-items:center;gap:6px;width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:6px;background:#fff;box-sizing:border-box;cursor:text}
+    .tag-input-box input{border:none;outline:none;flex:1;min-width:100px;font-size:13px;padding:4px 2px;background:transparent}
+    .tag-chip{display:inline-flex;align-items:center;gap:6px;background:#eef7e0;color:#4c7a0a;border:1px solid #cfe6ad;border-radius:14px;padding:3px 10px;font-size:12px;font-weight:600}
+    .tag-chip button{border:none;background:none;cursor:pointer;color:#4c7a0a;font-size:12px;line-height:1;padding:0}
+    .related-chip{display:inline-flex;align-items:center;gap:6px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:14px;padding:3px 10px;font-size:12px}
+    .related-chip button{border:none;background:none;cursor:pointer;color:#999;font-size:12px;line-height:1;padding:0}
     .field-row{display:flex;align-items:center;gap:10px}
     .toggle-label{font-size:13px;font-weight:600;color:#333;cursor:pointer;display:flex;align-items:center;gap:8px}
     .toggle-label input[type=checkbox]{width:16px;height:16px;accent-color:#82C112;cursor:pointer}
@@ -159,6 +180,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       <div class="tabs">
         <button class="tab active" onclick="switchTab('info',this)">Course Info</button>
         <button class="tab" onclick="switchTab('lessons',this)">Lessons (<?= count($lessons) ?>)</button>
+        <button class="tab" onclick="switchTab('access',this)">Access <?= ($courseInviteOnly || !empty($courseStateFilter) || !empty($courseRoleFilter)) ? '🔒' : '' ?></button>
       </div>
       <?php endif; ?>
 
@@ -313,6 +335,76 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       </div>
       <?php endif; ?>
 
+      <!-- Tab: Access -->
+      <?php if (!$isNew && $courseId): ?>
+      <div class="tab-panel" id="tab-access">
+        <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:24px">
+
+          <!-- Invite Only -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:8px">Invite Only</div>
+            <label class="toggle-label">
+              <input type="checkbox" id="a-invite-only" <?= $courseInviteOnly ? 'checked' : '' ?> onchange="toggleInvitePanel()">
+              Hide this course from everyone — only invited agents can see it
+            </label>
+            <div id="invite-panel" style="margin-top:16px;<?= $courseInviteOnly ? '' : 'display:none' ?>">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">Add agents by name or email</div>
+              <div style="display:flex;gap:8px;margin-bottom:12px">
+                <input type="text" id="invite-search" placeholder="Search agents…" style="flex:1;padding:9px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px" oninput="searchAgents(this.value)">
+              </div>
+              <div id="invite-results" style="background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:180px;overflow-y:auto;display:none"></div>
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin:14px 0 8px">Currently invited</div>
+              <div id="invite-list">
+                <?php if (!$currentInvites): ?>
+                <div style="color:#bbb;font-size:13px;padding:8px 0">No invites yet — search for agents above to add them.</div>
+                <?php else: ?>
+                <?php foreach ($currentInvites as $inv): ?>
+                <div class="invite-chip" data-email="<?= htmlspecialchars($inv['agent_email']) ?>" style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f5f5f5;border-radius:6px;margin-bottom:6px;font-size:13px">
+                  <span style="flex:1"><?= htmlspecialchars($inv['agent_email']) ?></span>
+                  <span style="font-size:10px;color:#aaa"><?= substr($inv['invited_at'],0,10) ?></span>
+                  <button class="btn-sm btn-danger" onclick="removeInvite('<?= htmlspecialchars($inv['agent_email']) ?>', this.closest('.invite-chip'))" style="padding:3px 8px">✕</button>
+                </div>
+                <?php endforeach; ?>
+                <?php endif; ?>
+              </div>
+            </div>
+          </div>
+
+          <!-- State Filter -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">State Filter</div>
+            <div style="font-size:12px;color:#888;margin-bottom:12px">Only agents whose office is in a selected state can see this course. Leave all unchecked = visible in all states.</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
+              <?php foreach ($allStates as $sc): ?>
+              <label class="toggle-label" style="font-size:13px;background:#f9f9f9;border:1px solid #e5e5e5;border-radius:6px;padding:7px 10px">
+                <input type="checkbox" class="a-state" value="<?= $sc ?>" <?= in_array($sc, $courseStateFilter) ? 'checked' : '' ?>>
+                <?= $sc ?> — <?= $stateNames[$sc] ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          </div>
+
+          <!-- Role Filter -->
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">Role Filter</div>
+            <div style="font-size:12px;color:#888;margin-bottom:12px">Only agents with a selected role can see this course. Leave all unchecked = visible to all roles.</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">
+              <?php foreach ($allRoles as $roleKey => $roleLabel): ?>
+              <label class="toggle-label" style="font-size:13px;background:#f9f9f9;border:1px solid #e5e5e5;border-radius:6px;padding:7px 10px">
+                <input type="checkbox" class="a-role" value="<?= $roleKey ?>" <?= in_array($roleKey, $courseRoleFilter) ? 'checked' : '' ?>>
+                <?= htmlspecialchars($roleLabel) ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          </div>
+
+          <div>
+            <button class="btn-primary" onclick="saveAccess()">Save Access Settings</button>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
     </main>
   </div>
 </div>
@@ -392,6 +484,44 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
       <div class="editor-toolbar-extra"><button type="button" class="link-btn" onclick="toggleHtmlSource()" id="l-html-toggle">View HTML</button></div>
       <input type="hidden" id="l-content">
     </div>
+
+    <!-- Search & Discovery (admin-only metadata; not shown on the public lesson page) -->
+    <div style="margin-top:6px">
+      <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">Search &amp; Discovery</div>
+      <div style="font-size:12px;color:#888;margin-bottom:12px">Helps agents find and navigate related content. Not shown on the public lesson page.</div>
+
+      <div class="field">
+        <label>Tags</label>
+        <div class="tag-input-box" id="l-tags-box" onclick="document.getElementById('l-tag-input').focus()">
+          <div id="l-tags-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+          <input type="text" id="l-tag-input" placeholder="Type a tag and press Enter…" onkeydown="onTagInputKeydown(event)" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Learning Objective</label>
+        <textarea id="l-learning-objective" rows="2" placeholder="What will the agent be able to do after this lesson? (1-2 sentences)"></textarea>
+      </div>
+
+      <div class="field">
+        <label>Difficulty</label>
+        <select id="l-difficulty">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Related Lessons (optional)</label>
+        <div style="position:relative">
+          <input type="text" id="l-related-search" placeholder="Search lessons by title…" oninput="searchRelatedLessons(this.value)" autocomplete="off">
+          <div id="l-related-results" style="display:none;position:absolute;z-index:10;background:white;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:220px;overflow-y:auto;width:100%;margin-top:2px"></div>
+        </div>
+        <div id="l-related-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      </div>
+    </div>
+
     <div class="field" id="l-duration-field">
       <label>Duration (seconds, optional)</label>
       <input type="number" id="l-duration" value="0" min="0">
@@ -442,6 +572,12 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 </div>
 
 <div class="save-toast" id="save-toast">Saved ✓</div>
+
+<!-- Background upload progress bar -->
+<div id="bg-upload" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;z-index:9999;min-width:320px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+  <div id="bg-upload-text">Uploading…</div>
+  <progress id="bg-upload-bar" max="100" value="0" style="width:100%;margin-top:8px;height:5px;accent-color:#82C112"></progress>
+</div>
 
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script>
@@ -584,6 +720,62 @@ function onTypeChange() {
     : '';
 }
 
+// -- Tags / Learning Objective / Difficulty / Related Lessons ------------
+let lessonTags = [];
+let selectedRelatedLessons = []; // [{id,title}]
+
+function renderTags() {
+  document.getElementById('l-tags-list').innerHTML = lessonTags.map((t,i) =>
+    `<span class="tag-chip">${esc(t)}<button type="button" onclick="removeTag(${i})">✕</button></span>`
+  ).join('');
+}
+function onTagInputKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const val = e.target.value.trim();
+    if (val && !lessonTags.includes(val)) { lessonTags.push(val); renderTags(); }
+    e.target.value = '';
+  } else if (e.key === 'Backspace' && !e.target.value && lessonTags.length) {
+    lessonTags.pop();
+    renderTags();
+  }
+}
+function removeTag(i) { lessonTags.splice(i,1); renderTags(); }
+
+let relatedSearchTimer = null;
+function searchRelatedLessons(q) {
+  clearTimeout(relatedSearchTimer);
+  const res = document.getElementById('l-related-results');
+  if (q.trim().length < 2) { res.style.display='none'; return; }
+  relatedSearchTimer = setTimeout(() => {
+    const excludeId = parseInt(document.getElementById('l-id').value) || 0;
+    api({action:'search_lessons', q, exclude_id: excludeId}).then(d => {
+      if (!d.ok || !d.lessons.length) { res.style.display='none'; res.innerHTML=''; return; }
+      res.innerHTML = d.lessons.map(l =>
+        `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''" onclick='addRelatedLesson(${l.id}, ${JSON.stringify(l.title)})'>${esc(l.title)} <span style="color:#aaa;font-size:11px">${esc(l.course_title||'')}</span></div>`
+      ).join('');
+      res.style.display = '';
+    });
+  }, 300);
+}
+function addRelatedLesson(id, title) {
+  if (!selectedRelatedLessons.some(l => l.id === id)) {
+    selectedRelatedLessons.push({id, title});
+    renderRelatedLessons();
+  }
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
+}
+function removeRelatedLesson(id) {
+  selectedRelatedLessons = selectedRelatedLessons.filter(l => l.id !== id);
+  renderRelatedLessons();
+}
+function renderRelatedLessons() {
+  document.getElementById('l-related-list').innerHTML = selectedRelatedLessons.map(l =>
+    `<span class="related-chip">${esc(l.title)}<button type="button" onclick="removeRelatedLesson(${l.id})">✕</button></span>`
+  ).join('');
+}
+
 function resetLessonAttachUI() {
   document.getElementById('l-attach-list').innerHTML = '';
   const id = document.getElementById('l-id').value;
@@ -608,6 +800,15 @@ function openAddLesson() {
   document.getElementById('l-file-current').style.display = 'none';
   document.getElementById('l-upload-status').textContent = '';
   pendingLessonFile = null;
+  lessonTags = [];
+  renderTags();
+  document.getElementById('l-tag-input').value = '';
+  document.getElementById('l-learning-objective').value = '';
+  document.getElementById('l-difficulty').value = 'beginner';
+  selectedRelatedLessons = [];
+  renderRelatedLessons();
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
   resetLessonAttachUI();
   onTypeChange();
   document.getElementById('lesson-modal').classList.add('open');
@@ -639,6 +840,22 @@ function editLesson(lesson) {
   const cur = document.getElementById('l-file-current');
   cur.style.display = lesson.file_key ? '' : 'none';
   pendingLessonFile = null;
+  try { lessonTags = JSON.parse(lesson.tags || '[]'); } catch(e) { lessonTags = []; }
+  renderTags();
+  document.getElementById('l-tag-input').value = '';
+  document.getElementById('l-learning-objective').value = lesson.learning_objective || '';
+  document.getElementById('l-difficulty').value = lesson.difficulty || 'beginner';
+  selectedRelatedLessons = [];
+  renderRelatedLessons();
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
+  let relIds = [];
+  try { relIds = JSON.parse(lesson.related_lessons || '[]'); } catch(e) {}
+  if (relIds.length) {
+    api({action:'lessons_by_ids', ids: relIds}).then(d => {
+      if (d.ok) { selectedRelatedLessons = d.lessons; renderRelatedLessons(); }
+    });
+  }
   resetLessonAttachUI();
   onTypeChange();
   document.getElementById('lesson-modal').classList.add('open');
@@ -680,26 +897,54 @@ function deleteAttachment(id, lessonId) {
 function saveLesson() {
   const title = document.getElementById('l-title').value.trim();
   if (!title) { alert('Title required'); return; }
+  if (!lessonTags.length) { alert('At least one tag is required'); return; }
+  const learningObjective = document.getElementById('l-learning-objective').value.trim();
+  if (!learningObjective) { alert('Learning Objective required'); return; }
   const id = document.getElementById('l-id').value;
   const btn = document.getElementById('l-save-btn');
   btn.disabled = true; btn.textContent = 'Saving…';
 
   const afterSave = (lessonId) => {
+    btn.disabled = false; btn.textContent = 'Save Lesson';
+    closeModal('lesson-modal');
+
     if (pendingLessonFile) {
+      const file = pendingLessonFile;
+      pendingLessonFile = null;
+
+      const indicator = document.getElementById('bg-upload');
+      const text      = document.getElementById('bg-upload-text');
+      const bar       = document.getElementById('bg-upload-bar');
+      const fmtMB     = (b) => (b / 1048576).toFixed(1) + ' MB';
+      indicator.style.display = 'block';
+      text.textContent = `Uploading ${file.name}…`;
+      bar.value = 0;
+
       const fd = new FormData();
-      fd.append('action','upload_lesson_file');
+      fd.append('action', 'upload_lesson_file');
       fd.append('lesson_id', lessonId);
-      fd.append('file', pendingLessonFile);
-      document.getElementById('l-upload-status').textContent = 'Uploading file…';
-      fetch('api/uni_action.php',{method:'POST',credentials:'same-origin',body:fd})
-        .then(r=>r.json()).then(d=>{
-          btn.disabled=false; btn.textContent='Save Lesson';
-          if(d.ok){closeModal('lesson-modal');location.reload();}
-          else document.getElementById('l-upload-status').textContent='Error: '+(d.error||'upload failed');
-        });
+      fd.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'api/uni_action.php', true);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          bar.value = Math.round(e.loaded / e.total * 100);
+          text.textContent = `Uploading ${file.name} — ${fmtMB(e.loaded)} / ${fmtMB(e.total)}`;
+        }
+      };
+      xhr.onload = () => {
+        indicator.style.display = 'none';
+        try {
+          const d = JSON.parse(xhr.responseText);
+          if (d.ok) { toast('File uploaded ✓'); location.reload(); }
+          else toast('Upload failed: ' + (d.error || 'unknown'));
+        } catch(e) { toast('Upload error'); }
+      };
+      xhr.onerror = () => { indicator.style.display = 'none'; toast('Upload failed — network error'); };
+      xhr.send(fd);
     } else {
-      btn.disabled=false; btn.textContent='Save Lesson';
-      closeModal('lesson-modal');
       location.reload();
     }
   };
@@ -715,6 +960,10 @@ function saveLesson() {
     embed_url: document.getElementById('l-embed-url').value.trim(),
     content_html: contentHtml === '<p><br></p>' ? '' : contentHtml,
     duration_sec: parseInt(document.getElementById('l-duration').value)||0,
+    tags: lessonTags,
+    learning_objective: learningObjective,
+    difficulty: document.getElementById('l-difficulty').value,
+    related_lessons: selectedRelatedLessons.map(l => l.id),
   };
   if (id) { body.id = parseInt(id); }
   else { body.course_id = COURSE_ID; }
@@ -947,6 +1196,69 @@ function deleteQuestion(id) {
 }
 
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ── Access Tab ────────────────────────────────────────────────────────────
+function toggleInvitePanel() {
+  const on = document.getElementById('a-invite-only').checked;
+  document.getElementById('invite-panel').style.display = on ? '' : 'none';
+}
+
+function saveAccess() {
+  const inviteOnly  = document.getElementById('a-invite-only').checked ? 1 : 0;
+  const stateFilter = [...document.querySelectorAll('.a-state:checked')].map(el => el.value);
+  const roleFilter  = [...document.querySelectorAll('.a-role:checked')].map(el => el.value);
+  api({action:'update_course', id:COURSE_ID, invite_only:inviteOnly, state_filter:stateFilter, role_filter:roleFilter,
+       title:document.getElementById('c-title').value.trim(),
+       description:document.getElementById('c-desc').value.trim(),
+       is_required:document.getElementById('c-required').checked?1:0,
+       sort_ord:parseInt(document.getElementById('c-sort').value)||0,
+       published:document.getElementById('c-published')?.checked?1:0
+  }).then(d => { if (d.ok) toast('Access settings saved ✓'); else alert(d.error); });
+}
+
+let searchTimer = null;
+function searchAgents(q) {
+  clearTimeout(searchTimer);
+  const res = document.getElementById('invite-results');
+  if (q.length < 2) { res.style.display='none'; return; }
+  searchTimer = setTimeout(() => {
+    api({action:'search_agents', q}).then(d => {
+      if (!d.ok || !d.agents.length) { res.style.display='none'; return; }
+      res.innerHTML = d.agents.map(a =>
+        `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''" onclick="addInvite('${esc(a.email)}','${esc(a.name)}',this.parentElement)">${esc(a.name)} <span style="color:#aaa;font-size:11px">${esc(a.email)}</span></div>`
+      ).join('');
+      res.style.display = '';
+    });
+  }, 300);
+}
+
+function addInvite(email, name, resultsEl) {
+  api({action:'add_invite', course_id:COURSE_ID, agent_email:email}).then(d => {
+    if (!d.ok) { alert(d.error); return; }
+    resultsEl.style.display = 'none';
+    document.getElementById('invite-search').value = '';
+    const list = document.getElementById('invite-list');
+    if (list.querySelector('[style*="color:#bbb"]')) list.innerHTML = '';
+    const chip = document.createElement('div');
+    chip.className = 'invite-chip';
+    chip.dataset.email = email;
+    chip.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f5f5f5;border-radius:6px;margin-bottom:6px;font-size:13px';
+    chip.innerHTML = `<span style="flex:1">${esc(email)}</span><span style="font-size:10px;color:#aaa">today</span><button class="btn-sm btn-danger" style="padding:3px 8px" onclick="removeInvite('${esc(email)}',this.closest('.invite-chip'))">✕</button>`;
+    list.prepend(chip);
+    toast(`${name || email} invited ✓`);
+  });
+}
+
+function removeInvite(email, chipEl) {
+  api({action:'remove_invite', course_id:COURSE_ID, agent_email:email}).then(d => {
+    if (!d.ok) { alert(d.error); return; }
+    chipEl.remove();
+    if (!document.querySelectorAll('.invite-chip').length) {
+      document.getElementById('invite-list').innerHTML = '<div style="color:#bbb;font-size:13px;padding:8px 0">No invites yet — search for agents above to add them.</div>';
+    }
+    toast('Invite removed');
+  });
+}
 </script>
 </body>
 </html>

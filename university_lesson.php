@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $db    = local_db();
@@ -11,6 +12,7 @@ if (!$lessonId) { header('Location: university.php'); exit; }
 
 $ls = $db->prepare(
     "SELECT l.*, c.id as course_id, c.title as course_title, c.published as course_published,
+     c.invite_only, c.state_filter, c.role_filter,
      COALESCE(cat.name,'Uncategorized') as cat_name
      FROM uni_lessons l
      JOIN uni_courses c ON c.id=l.course_id
@@ -20,6 +22,25 @@ $ls = $db->prepare(
 $ls->execute([$lessonId]);
 $lesson = $ls->fetch(PDO::FETCH_ASSOC);
 if (!$lesson || (!$lesson['course_published'] && !is_admin())) { header('Location: university.php'); exit; }
+
+// Enforce access control for non-admins
+if (!is_admin()) {
+    $cid = (int)$lesson['course_id'];
+    if (!empty($lesson['invite_only'])) {
+        $inv = $db->prepare("SELECT 1 FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?");
+        $inv->execute([$cid, strtolower($email)]);
+        if (!$inv->fetchColumn()) { header('Location: university.php'); exit; }
+    }
+    $sf = json_decode($lesson['state_filter'] ?? '[]', true);
+    if (!empty($sf)) {
+        $aiRow = $db->prepare("SELECT mc.state_code FROM agent_intake ai LEFT JOIN market_centers mc ON mc.slug=ai.office_location OR LOWER(mc.name)=LOWER(ai.office_location) WHERE LOWER(ai.email)=? LIMIT 1");
+        $aiRow->execute([strtolower($email)]);
+        $stateCode = ($aiRow->fetch(PDO::FETCH_ASSOC))['state_code'] ?? null;
+        if (!$stateCode || !in_array($stateCode, $sf, true)) { header('Location: university.php'); exit; }
+    }
+    $rf = json_decode($lesson['role_filter'] ?? '[]', true);
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
+}
 
 $courseId = (int)$lesson['course_id'];
 

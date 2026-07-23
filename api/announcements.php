@@ -221,7 +221,8 @@ if ($action === 'create' || $action === 'update') {
     $newId = local_db()->lastInsertId();
 
     $queued = queue_announcement_notifications(
-        (int)$newId, $title, $body, $audience, $targetMcSlug, $targetBicEmail
+        (int)$newId, $title, $body, $audience, $targetMcSlug, $targetBicEmail,
+        $me['email'], $me['name'] ?? ''
     );
     echo json_encode(['ok'=>true,'id'=>(int)$newId,'notified'=>$queued]);
     dispatch_notification_queue();

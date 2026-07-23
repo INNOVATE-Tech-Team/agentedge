@@ -156,7 +156,7 @@ $lines[] = "Submitted: " . date('F j, Y \a\t g:i A');
 $lines[] = "";
 $lines[] = "Submission ID #{$submissionId}";
 
-$emailQueued = queue_email_to(['michele@innovateonline.com'], $subject, implode("\n", $lines)) > 0;
+$emailQueued = queue_email_to(['michele@innovateonline.com'], $subject, implode("\n", $lines), $agent['email'], $agent['name'] ?? '') > 0;
 
 local_db()->prepare("UPDATE commission_check_submissions SET email_sent=? WHERE id=?")
     ->execute([$emailQueued ? 1 : 0, $submissionId]);

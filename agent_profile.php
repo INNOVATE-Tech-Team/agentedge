@@ -31,6 +31,7 @@ $TABS = [
     'billing_log'    => 'Billing Log',
     'commission_log' => 'Commission Log',
     'notes'          => 'Notes',
+    'comms'          => 'Communications',
     'checklist'      => 'Task Checklist',
     'other_income'   => 'Other Income',
     'network'        => 'Network Tree',
@@ -53,6 +54,13 @@ if ($targetEmail !== '') {
     $nst = local_db()->prepare("SELECT id, note, created_by, created_at FROM agent_notes WHERE email=? ORDER BY created_at DESC, id DESC");
     $nst->execute([$targetEmail]);
     $notes = $nst->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$commsLog = [];
+if ($targetEmail !== '') {
+    $cst = local_db()->prepare("SELECT sender_email, subject, snippet, sent_at FROM agent_comms_log WHERE agent_email=? ORDER BY sent_at DESC, id DESC LIMIT 100");
+    $cst->execute([$targetEmail]);
+    $commsLog = $cst->fetchAll(PDO::FETCH_ASSOC);
 }
 
 $displayName = $profileData['full_name'] ?? $targetEmail;
@@ -103,6 +111,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .ap-header-row{display:flex;align-items:center;gap:14px}
 .ap-avatar-img{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border)}
 .ap-avatar-fallback{width:52px;height:52px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hs-grid{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.hs-thumb{position:relative;width:90px;height:90px;border-radius:6px;overflow:hidden;border:1px solid var(--border)}
+.hs-thumb img{width:100%;height:100%;object-fit:cover}
+.hs-del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+.hs-del:hover{background:rgba(200,0,0,.8)}
+.hs-upload-label{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f5e8;border:1px dashed #82C112;border-radius:7px;font-size:13px;font-weight:700;color:#5b8e0d;cursor:pointer}
+.hs-upload-label:hover{background:#e4f0d8}
+.hs-upload-label.disabled{opacity:.5;cursor:not-allowed}
+#hs-file{display:none}
+.hs-note{font-size:11px;color:var(--faint);margin-top:6px}
+.hs-msg{font-size:12px;color:var(--faint);margin-top:6px;min-height:16px}
 .doc-list{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .doc-card{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:#fafbfa}
 .doc-icon{font-size:18px;flex-shrink:0}
@@ -223,7 +242,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
-          <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday']) ?></div>
+          <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
             $addrParts = array_filter([$a['address_line1'] ?? '', $a['address_line2'] ?? '']);
             $cityStZip = array_filter([$a['city'] ?? '', $a['state'] ?? '', $a['zip'] ?? '']);
@@ -323,18 +342,25 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <?php endif; ?>
           </div>
 
-          <?php if ($headshotCount > 0): ?>
           <div class="dg-section">Headshots</div>
           <div class="dg-field" style="grid-column:1/-1">
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="hs-grid" id="hs-grid">
               <?php foreach ($headshots as $hsFile): ?>
-                <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                  <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:90px;height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
-                </a>
+                <div class="hs-thumb" data-key="<?= h($hsFile['file_key']) ?>">
+                  <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                    <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>">
+                  </a>
+                  <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>', this.parentElement)">&#10005;</button>
+                </div>
               <?php endforeach; ?>
             </div>
+            <label class="hs-upload-label<?= $headshotCount >= 5 ? ' disabled' : '' ?>" id="hs-upload-label" for="hs-file">
+              <span>&#43; Add Headshot</span>
+            </label>
+            <input type="file" id="hs-file" accept="image/*" <?= $headshotCount >= 5 ? 'disabled' : '' ?>>
+            <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
+            <div class="hs-msg" id="hs-msg"></div>
           </div>
-          <?php endif; ?>
 
           <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
           <div class="dg-field">
@@ -375,6 +401,20 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field" style="grid-column:1/-1">
             <button type="button" class="btn-detail-link" onclick="saveAdminFields()">Save Staff-Managed Fields</button>
             <span id="admin-save-msg" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
+          </div>
+
+          <div class="dg-section">Reset Agent Password</div>
+          <div class="dg-field">
+            <span class="dg-label">New Password</span>
+            <input type="password" id="admin-reset-pw-new" autocomplete="new-password" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+          </div>
+          <div class="dg-field">
+            <span class="dg-label">Confirm New Password</span>
+            <input type="password" id="admin-reset-pw-confirm" autocomplete="new-password" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+          </div>
+          <div class="dg-field" style="grid-column:1/-1">
+            <button type="button" class="btn-detail-link" onclick="resetAgentPassword()">Reset Password</button>
+            <span id="admin-reset-pw-msg" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
           </div>
 
           <div class="detail-actions">
@@ -458,6 +498,23 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="note-card">
               <div class="note-meta"><?= h($n['created_by']) ?> — <?= h(date('M j, Y g:ia', strtotime($n['created_at']))) ?></div>
               <div class="note-body"><?= h($n['note']) ?></div>
+            </div>
+          <?php endforeach; endif; ?>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── COMMUNICATIONS ────────────────────────────────────────────────── -->
+    <div id="ap-tab-comms" class="ap-tab-pane<?= $tab === 'comms' ? ' active' : '' ?>">
+      <div class="card" style="padding:20px 24px">
+        <p style="font-size:12px;color:var(--faint);margin:0 0 14px">Every Company Email this agent has received, pulled onto their record automatically — sent from <a href="backoffice_email.php">Company Email</a>.</p>
+        <div class="notes-list">
+          <?php if (!$commsLog): ?>
+            <div class="stub-pane" style="padding:20px">No communications logged yet.</div>
+          <?php else: foreach ($commsLog as $c): ?>
+            <div class="note-card">
+              <div class="note-meta"><?= h($c['sender_email']) ?> — <?= h(date('M j, Y g:ia', strtotime($c['sent_at']))) ?></div>
+              <div class="note-body"><strong><?= h($c['subject']) ?></strong><br><?= h($c['snippet']) ?></div>
             </div>
           <?php endforeach; endif; ?>
         </div>
@@ -645,6 +702,79 @@ window.switchApTab = function (t) {
   if (t === 'documents' && !documentsLoaded) { documentsLoaded = true; loadDocuments(); }
 };
 
+// ── Headshots ────────────────────────────────────────────────────────────────
+function hsCount() { return document.getElementById('hs-grid').querySelectorAll('.hs-thumb').length; }
+
+function hsSyncUploadState(count) {
+  var lbl = document.getElementById('hs-upload-label');
+  var inp = document.getElementById('hs-file');
+  lbl.classList.toggle('disabled', count >= 5);
+  inp.disabled = count >= 5;
+}
+
+function hsAddThumb(key, origName) {
+  var grid = document.getElementById('hs-grid');
+  var wrap = document.createElement('div');
+  wrap.className = 'hs-thumb';
+  wrap.dataset.key = key;
+  wrap.innerHTML =
+    '<a href="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" target="_blank" title="' + esc(origName || '') + '">' +
+      '<img src="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" alt="' + esc(origName || '') + '">' +
+    '</a>' +
+    '<button type="button" class="hs-del">&#10005;</button>';
+  wrap.querySelector('.hs-del').addEventListener('click', function () { deleteHeadshot(key, wrap); });
+  grid.appendChild(wrap);
+}
+
+window.deleteHeadshot = function (key, wrap) {
+  if (!confirm('Delete this headshot?')) return;
+  var msg = document.getElementById('hs-msg');
+  msg.textContent = 'Deleting…';
+  fetch('api/intake.php?action=delete_file', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: key })
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    if (res.ok) {
+      wrap.remove();
+      hsSyncUploadState(hsCount());
+      msg.textContent = 'Deleted.';
+      setTimeout(function () { msg.textContent = ''; }, 2000);
+    } else {
+      msg.textContent = res.error || 'Delete failed.';
+    }
+  }).catch(function () { msg.textContent = 'Network error.'; });
+};
+
+var hsFileInput = document.getElementById('hs-file');
+if (hsFileInput) hsFileInput.addEventListener('change', function () {
+  var file = this.files[0];
+  var msg = document.getElementById('hs-msg');
+  if (!file) return;
+  if (hsCount() >= 5) { msg.textContent = 'Maximum 5 headshots reached.'; return; }
+  if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
+
+  msg.textContent = 'Uploading…';
+  var fd = new FormData();
+  fd.append('headshot', file);
+  fd.append('email', PROFILE_EMAIL);
+
+  fetch('api/intake.php?action=upload', {
+    method: 'POST', credentials: 'same-origin', body: fd
+  }).then(function (r) { return r.json(); }).then(function (res) {
+    if (res.ok && res.file_key) {
+      hsAddThumb(res.file_key, res.orig_name);
+      hsSyncUploadState(hsCount());
+      msg.textContent = 'Uploaded.';
+      setTimeout(function () { msg.textContent = ''; }, 2000);
+    } else {
+      msg.textContent = res.error || 'Upload failed.';
+    }
+  }).catch(function () { msg.textContent = 'Network error.'; });
+
+  this.value = '';
+});
+
 // ── Documents tab ────────────────────────────────────────────────────────────
 function fmtBytes(n) {
   n = parseInt(n || 0, 10);
@@ -794,6 +924,35 @@ window.saveAdminFields = function () {
       if (res.ok) setTimeout(function () { msg.textContent = ''; }, 3000);
     })
     .catch(function () { msg.textContent = 'Network error.'; });
+};
+
+window.resetAgentPassword = function () {
+  var next = document.getElementById('admin-reset-pw-new').value;
+  var confirm = document.getElementById('admin-reset-pw-confirm').value;
+  var msg = document.getElementById('admin-reset-pw-msg');
+  if (!next || !confirm) { msg.textContent = 'Enter and confirm a new password.'; msg.style.color = '#c00'; return; }
+  if (next !== confirm) { msg.textContent = "Passwords don't match."; msg.style.color = '#c00'; return; }
+  if (next.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; msg.style.color = '#c00'; return; }
+  if (!window.confirm('Reset the login password for ' + PROFILE_EMAIL + '?')) return;
+
+  msg.textContent = 'Saving…'; msg.style.color = 'var(--faint)';
+  fetch('api/admin_change_password.php', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: PROFILE_EMAIL, new_password: next })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (res.ok) {
+        msg.textContent = 'Password reset ✓'; msg.style.color = '#5b8e0d';
+        document.getElementById('admin-reset-pw-new').value = '';
+        document.getElementById('admin-reset-pw-confirm').value = '';
+        setTimeout(function () { msg.textContent = ''; }, 3000);
+      } else {
+        msg.textContent = res.error || 'Reset failed.'; msg.style.color = '#c00';
+      }
+    })
+    .catch(function () { msg.textContent = 'Network error.'; msg.style.color = '#c00'; });
 };
 
 // ── Edit Profile modal ──────────────────────────────────────────────────────

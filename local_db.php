@@ -443,6 +443,14 @@ function local_db(): PDO {
     $hsHt  = $hsDir . '/.htaccess';
     if (!file_exists($hsHt)) @file_put_contents($hsHt, "Deny from all\n");
 
+    // Company Email attachments — served only through api/email_attachment.php
+    // (auth-gated, unlike email_images which are public for email-client fetches),
+    // so this is web-protected the same as headshots.
+    $eaDir = $dir . '/email_attachments';
+    if (!is_dir($eaDir)) @mkdir($eaDir, 0750, true);
+    $eaHt  = $eaDir . '/.htaccess';
+    if (!file_exists($eaHt)) @file_put_contents($eaHt, "Deny from all\n");
+
     // Per-agent documents — Documents tab on agent_profile.php. Populated
     // automatically by the PandaDoc signing webhook (source='pandadoc') and/or
     // manually by an admin (source='manual').
@@ -552,6 +560,25 @@ function local_db(): PDO {
         sent_at    TEXT
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_notifq_status ON notification_queue(status)");
+    // attachment_ids: comma-separated email_attachments.id list, only ever set
+    // by Company Email sends — every other notification_queue writer omits it
+    // and gets the '' default (no attachments).
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // from_email/from_name: the AgentEdge user whose action triggered this
+    // email, so it sends from them instead of the system default. Blank
+    // means no specific actor (system/cron/webhook-triggered) — falls back
+    // to cfg()'s sendgrid_from at send time.
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_name  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // is_html: Company Email sends pre-rendered HTML bodies; everything else
+    // (announcements, ticket notifications) is plain text and gets the 0 default.
+    // Already live on production ahead of this migration (see cron/process_email_queue.php,
+    // api/company_email_action.php) — added here so a fresh install's schema matches.
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN is_html INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // reply_to: per-ticket Reply-To address (reply+{id}-{token}@...) so a reply
+    // typed in the recipient's mail client routes back into the ticket thread.
+    // Only ticket notifications set this; everything else gets '' (no Reply-To header).
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Company Email (Back Office) ───────────────────────────────────────────
     // These three tables existed live on Lightsail long before this migration
@@ -594,6 +621,45 @@ function local_db(): PDO {
     // when audience='leaders'; lets a sender pick MC Leaders, BICs, or both.
     try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN leader_types TEXT NOT NULL DEFAULT 'mc_leader,bic'"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE company_emails   ADD COLUMN leader_types TEXT NOT NULL DEFAULT 'mc_leader,bic'"); } catch (\Exception $e) {}
+    // Lets a sender write a fully custom rich-text signature instead of the
+    // structured title/phone/calendar/website fields — when use_custom=1 and
+    // custom_html is non-empty, ce_signature_html() returns it as-is and skips
+    // the auto photo/phone/links entirely.
+    try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN use_custom  INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN custom_html TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Reusable Company Email templates — personal by default, is_shared=1 makes
+    // one visible/loadable by anyone with Company Email access, not just the owner.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_templates (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_email TEXT    NOT NULL,
+        name        TEXT    NOT NULL,
+        subject     TEXT    NOT NULL DEFAULT '',
+        body_html   TEXT    NOT NULL DEFAULT '',
+        is_shared   INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_email_templates_owner ON email_templates(owner_email)");
+
+    // Files uploaded for a Company Email send (multi-select in the compose
+    // form). Uploaded and given a random token immediately on file-pick, before
+    // the parent send/schedule row exists — send/schedule then link the tokens'
+    // ids (comma-separated) onto scheduled_emails/company_emails/notification_queue.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_attachments (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        token       TEXT    NOT NULL UNIQUE,
+        owner_email TEXT    NOT NULL,
+        orig_name   TEXT    NOT NULL DEFAULT '',
+        mime_type   TEXT    NOT NULL DEFAULT '',
+        size_bytes  INTEGER NOT NULL DEFAULT 0,
+        storage_key TEXT    NOT NULL,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_email_attachments_token ON email_attachments(token)");
+    // attachment_ids: comma-separated email_attachments.id list for the send.
+    try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE company_emails   ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // General-purpose "do Y at future time X" scheduling engine, drained by
     // cron/process_scheduled_tasks.php. task_type is dispatched in a switch
@@ -807,6 +873,27 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktevt_tid ON support_ticket_events(ticket_id)");
 
+    // Attachments — screenshots/documents attached to a ticket message (the
+    // initial description or a reply), uploaded by either the agent or staff.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_ticket_files (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id   INTEGER NOT NULL,
+        message_id  INTEGER NOT NULL,
+        orig_name   TEXT    NOT NULL,
+        mime_type   TEXT    NOT NULL DEFAULT '',
+        size_bytes  INTEGER NOT NULL DEFAULT 0,
+        storage_key TEXT    NOT NULL,
+        uploaded_by TEXT    NOT NULL,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktfiles_msg ON support_ticket_files(message_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tktfiles_tid ON support_ticket_files(ticket_id)");
+
+    $tktUploadsDir = $dir . '/ticket_uploads';
+    if (!is_dir($tktUploadsDir)) @mkdir($tktUploadsDir, 0750, true);
+    $tktUploadsHt = $tktUploadsDir . '/.htaccess';
+    if (!file_exists($tktUploadsHt)) @file_put_contents($tktUploadsHt, "Deny from all\n");
+
     // Predefined replies — quick canned responses staff can insert into a reply.
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_canned_replies (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -917,6 +1004,10 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN embed_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN folder_id INTEGER"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_folder ON uni_lessons(folder_id)");
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN learning_objective TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'beginner'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN related_lessons TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lesson_files (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1125,6 +1216,53 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_period ON budget_lines(period_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_dept   ON budget_lines(department)");
+
+    // ── Finance: Accounting Checklists (recurring projects / task follower) ───
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_templates (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        description TEXT    NOT NULL DEFAULT '',
+        recurrence  TEXT    NOT NULL DEFAULT 'monthly',  -- monthly | quarterly | annual | one_time
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_template_items (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id             INTEGER NOT NULL,
+        title                   TEXT    NOT NULL,
+        description             TEXT    NOT NULL DEFAULT '',
+        default_assignee_email  TEXT    NOT NULL DEFAULT '',
+        sort_ord                INTEGER NOT NULL DEFAULT 0
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcti_template ON finance_checklist_template_items(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_runs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        period_label TEXT   NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'open',  -- open | closed
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcr_template ON finance_checklist_runs(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_run_items (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id            INTEGER NOT NULL,
+        title             TEXT    NOT NULL,
+        description       TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'todo',  -- todo | done
+        assigned_to_email TEXT    NOT NULL DEFAULT '',
+        due_date          TEXT    NOT NULL DEFAULT '',
+        notes             TEXT    NOT NULL DEFAULT '',
+        sort_ord          INTEGER NOT NULL DEFAULT 0,
+        completed_at      TEXT    NOT NULL DEFAULT '',
+        completed_by      TEXT    NOT NULL DEFAULT '',
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcri_run ON finance_checklist_run_items(run_id)");
 
     // ── MLS Integrations tracker ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (
@@ -1341,6 +1479,25 @@ function local_db(): PDO {
             ['NC','MLS','Doorify | Raleigh','MLS','','','','','','','','','','','','','','',''],
         ];
         foreach ($memberships as $m) { $mm->execute($m); }
+    }
+
+    // Backfill: rows present in Carrie's MLS spreadsheet but not captured in the
+    // original seed above. Runs on every boot; INSERT is skipped once a row with
+    // the same state+name+username already exists, so it's safe to re-run.
+    $mmBackfillCheck = $pdo->prepare("SELECT COUNT(*) FROM mls_memberships WHERE state=? AND name=? AND username=?");
+    $mmBackfillIns = $pdo->prepare("INSERT INTO mls_memberships
+        (state,board_or_mls,name,membership_type,address,phone,office_id,broker_of_record,
+         username,password,login_link,notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    $mmBackfill = [
+        ['NC','MLS','Triad','','','','','Carrie Kinney','283428','Innovate25!','https://triadmls.com/','$63/month (WSAR)'],
+        ['SC | HH','MLS','Lowcountry','Flex','','','','Carrie Kinney','bmls.kinneyc','Innovate2025!!','https://bmls.flexmls.com/',''],
+        ['SC | CHS','MLS','Charleston Trident Association of Realtors (CTAR)','Matrix','','','4132','Carrie Kinney','4132','4620','https://ims.charlestonrealtors.com/',''],
+        ['SC | HV','MLS','Pee Dee Realtor Association','Paragon','','','','Carrie Kinney','554031769','Innovate26!!','https://peedeemls.paragonrels.com/ParagonLS/Default.mvc/Login','carrie@innovateonline.com login; $100/qtr'],
+    ];
+    foreach ($mmBackfill as $b) {
+        $mmBackfillCheck->execute([$b[0], $b[2], $b[8]]);
+        if ($mmBackfillCheck->fetchColumn() == 0) { $mmBackfillIns->execute($b); }
     }
 
     // ── Listing Intelligence ──────────────────────────────────────────────────
@@ -1794,6 +1951,123 @@ function local_db(): PDO {
         submitted_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ccs_agent ON commission_check_submissions(agent_email)");
+
+    // ── Agent OS: cohorts / KPIs / weekly activity ──────────────────────────────
+    // Program-agnostic accountability model — LAUNCH is the first consumer
+    // (program='launch') but nothing here is LAUNCH-specific by name.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cohorts (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        program       TEXT    NOT NULL DEFAULT 'launch',
+        name          TEXT    NOT NULL,
+        start_date    TEXT    NOT NULL DEFAULT '',
+        cadence_weeks INTEGER NOT NULL DEFAULT 1,
+        status        TEXT    NOT NULL DEFAULT 'active',  -- active | graduated | archived
+        created_by    TEXT    NOT NULL DEFAULT '',
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Coach is assigned per member (not per cohort) so one cohort can span
+    // multiple coaches' rosters.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cohort_members (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        cohort_id   INTEGER NOT NULL,
+        agent_email TEXT    NOT NULL,
+        coach_email TEXT    NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'active',  -- active | graduated | dropped
+        joined_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(cohort_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cm_agent ON cohort_members(agent_email)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cm_coach ON cohort_members(coach_email)");
+
+    // KPI catalog kept as data (not hardcoded) so a future non-LAUNCH program
+    // can define its own weekly targets without a code change.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS kpi_definitions (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        program       TEXT    NOT NULL DEFAULT 'launch',
+        kpi_key       TEXT    NOT NULL,
+        label         TEXT    NOT NULL,
+        unit          TEXT    NOT NULL DEFAULT 'count',
+        weekly_target INTEGER NOT NULL DEFAULT 0,
+        sort_ord      INTEGER NOT NULL DEFAULT 0,
+        active        INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(program, kpi_key)
+    )");
+    if ($pdo->query("SELECT COUNT(*) FROM kpi_definitions WHERE program='launch'")->fetchColumn() == 0) {
+        $ins = $pdo->prepare("INSERT INTO kpi_definitions (program,kpi_key,label,unit,weekly_target,sort_ord) VALUES ('launch',?,?,?,?,?)");
+        foreach ([
+            ['conversations',     'Conversations',      'count', 20, 10],
+            ['appointments',      'Appointments Set',   'count', 4,  20],
+            ['signed_agreements', 'Signed Agreements',  'count', 1,  30],
+            ['transactions',      'Transactions',       'count', 0,  40],
+        ] as $r) { $ins->execute($r); }
+    }
+
+    // One row per agent per KPI per ISO week (week_start = that week's Monday).
+    // Resubmitting the same week updates in place via ON CONFLICT DO UPDATE.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS weekly_activity (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email TEXT    NOT NULL,
+        cohort_id   INTEGER,
+        kpi_key     TEXT    NOT NULL,
+        week_start  TEXT    NOT NULL,
+        value       INTEGER NOT NULL DEFAULT 0,
+        source      TEXT    NOT NULL DEFAULT 'self',  -- self | auto (auto unused until a call/text log integration exists)
+        logged_by   TEXT    NOT NULL DEFAULT '',
+        logged_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(agent_email, kpi_key, week_start)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wa_agent_week ON weekly_activity(agent_email, week_start)");
+
+    // Visible-wins log — two rows are system-triggered (first_signed_agreement,
+    // week_complete) by api/weekly_activity.php; graduated fires when a coach/admin
+    // flips cohort_members.status to 'graduated' via api/cohort_members_action.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS milestones (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        cohort_id     INTEGER,
+        agent_email   TEXT    NOT NULL,
+        milestone_key TEXT    NOT NULL,  -- week_complete | first_signed_agreement | graduated
+        label         TEXT    NOT NULL DEFAULT '',
+        achieved_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        note          TEXT    NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ms_agent ON milestones(agent_email)");
+
+    // Written by cron/flag_missed_targets.php — one open (unresolved) row per
+    // agent+kpi miss-streak, so a coach is notified once per streak instead of
+    // once per cron run.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS activity_flags (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email        TEXT    NOT NULL,
+        cohort_id          INTEGER,
+        kpi_key            TEXT    NOT NULL,
+        week_start         TEXT    NOT NULL,
+        consecutive_misses INTEGER NOT NULL DEFAULT 0,
+        flagged_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+        coach_email        TEXT    NOT NULL DEFAULT '',
+        resolved           INTEGER NOT NULL DEFAULT 0,
+        resolved_at        TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_af_agent ON activity_flags(agent_email, kpi_key, resolved)");
+
+    // Per-recipient log of Company Email sends, so a coach/leader's outreach to
+    // an agent shows up on that agent's own record (agent_profile.php's
+    // Communications tab) instead of only existing in the sender's mail client.
+    // Written by lib/company_email.php's ce_log_to_agent_records(), called from
+    // both the immediate-send path (api/company_email_action.php) and the
+    // scheduled-send worker (cron/process_email_queue.php).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_comms_log (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email   TEXT    NOT NULL,
+        sender_email  TEXT    NOT NULL DEFAULT '',
+        subject       TEXT    NOT NULL DEFAULT '',
+        snippet       TEXT    NOT NULL DEFAULT '',
+        source_type   TEXT    NOT NULL DEFAULT 'company_email',
+        source_id     INTEGER,
+        sent_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_acl_agent ON agent_comms_log(agent_email)");
 
     return $pdo;
 }

@@ -17,8 +17,27 @@ if (!is_leader()) {
     exit;
 }
 
+// Admin/staff still see every market center (matches announcements.php's
+// scoping convention); BIC/MC leaders only see the market center(s) they lead.
+$mcFilterSlugs = null;
+if (!is_admin()) {
+    $mcFilterSlugs = my_mc_slugs();
+    if (empty($mcFilterSlugs)) {
+        echo json_encode(['events' => []]);
+        exit;
+    }
+}
+
 $month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
 [$year, $mon] = array_map('intval', explode('-', $month));
+
+$mcByEmail = [];
+if ($mcFilterSlugs !== null) {
+    $rosterRows = local_db()->query("SELECT email, market_center FROM innovate_roster WHERE market_center != ''")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rosterRows as $r) {
+        $mcByEmail[strtolower(trim($r['email']))] = slugify_mc($r['market_center']);
+    }
+}
 
 $extraRows = local_db()->query("SELECT email, birthday, hire_date FROM agent_extra")->fetchAll(PDO::FETCH_ASSOC);
 $rowsByEmail = [];
@@ -42,6 +61,10 @@ foreach ($intakeRows as $r) {
 $events = [];
 
 foreach ($rowsByEmail as $email => $r) {
+    if ($mcFilterSlugs !== null) {
+        $slug = $mcByEmail[$email] ?? null;
+        if ($slug === null || !in_array($slug, $mcFilterSlugs, true)) continue;
+    }
     $r['email'] = $email;
     // Birthday — stored as MM-DD, recurs annually
     if (!empty($r['birthday']) && preg_match('/^(\d{2})-(\d{2})$/', $r['birthday'], $m)) {

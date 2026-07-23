@@ -5,6 +5,7 @@
 // insert + step-seeding + notification logic.
 
 require_once __DIR__ . '/../onboard_tools.php';
+require_once __DIR__ . '/roster.php';
 
 const ONBOARD_VALID_STATES = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
 
@@ -25,10 +26,15 @@ function queue_onboarding_agent(
     string $startDate = '',
     string $sponsor = '',
     string $role = 'agent',
-    string $notes = ''
+    string $notes = '',
+    string $addedByName = ''
 ): array {
     $email = trim($email);
     $name  = trim($name);
+    // Normalized against the canonical market_centers list — an unrecognized
+    // value (typo, stale office name) lands as blank rather than riding
+    // through untouched, same as the old free-text field used to allow.
+    $marketCenter = normalize_market_center($pdo, $marketCenter);
 
     $existing = $pdo->prepare(
         "SELECT id FROM onboard_queue WHERE agent_email = ? AND status = 'active' LIMIT 1"
@@ -42,7 +48,7 @@ function queue_onboarding_agent(
             "UPDATE onboard_queue
                 SET agent_name = ?, market_center = ?, state_code = ?, canonical_agent_id = ?
               WHERE id = ?"
-        )->execute([$name, trim($marketCenter), trim($stateCode) ?: null, $canonicalAgentId, $queueId]);
+        )->execute([$name, $marketCenter, trim($stateCode) ?: null, $canonicalAgentId, $queueId]);
         return ['id' => $queueId, 'wasNew' => false];
     }
 
@@ -53,7 +59,7 @@ function queue_onboarding_agent(
          VALUES (?,?,?,?,?,?,?,?,?,?,?)"
     );
     $ins->execute([
-        $email, $name, trim($marketCenter), trim($startDate), trim($sponsor),
+        $email, $name, $marketCenter, trim($startDate), trim($sponsor),
         trim($role) ?: 'agent', $addedBy, $now, trim($notes),
         trim($stateCode) ?: null, $canonicalAgentId,
     ]);
@@ -76,10 +82,14 @@ function queue_onboarding_agent(
 
     try {
         require_once __DIR__ . '/notifications.php';
-        notify_onboard_added($name, $email, trim($marketCenter), trim($startDate), trim($sponsor), trim($role) ?: 'agent', $addedBy);
+        // $addedBy is usually the acting admin's own email, but the external
+        // intake webhook (api/onboard_push.php) can pass a non-email label —
+        // only use it as a From address when it's actually a real address.
+        $fromEmail = filter_var($addedBy, FILTER_VALIDATE_EMAIL) ? $addedBy : '';
+        notify_onboard_added($name, $email, trim($marketCenter), trim($startDate), trim($sponsor), trim($role) ?: 'agent', $addedBy, $addedByName);
         $stepList = array_filter(onboard_tools(), fn($t) => $t['key'] !== 'agentedge');
-        notify_step_assignees_on_create('onboard', $name, $email, $stepList);
-        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
+        notify_step_assignees_on_create('onboard', $name, $email, $stepList, $fromEmail, $addedByName);
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $fromEmail, $addedByName);
     } catch (\Throwable $e) {}
 
     return ['id' => $queueId, 'wasNew' => true];

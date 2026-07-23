@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $db    = local_db();
@@ -16,6 +17,27 @@ $cs = $db->prepare(
 $cs->execute([$courseId]);
 $course = $cs->fetch(PDO::FETCH_ASSOC);
 if (!$course || (!$course['published'] && !is_admin())) { header('Location: university.php'); exit; }
+
+// Enforce access control for non-admins
+if (!is_admin()) {
+    // Invite-only check
+    if (!empty($course['invite_only'])) {
+        $inv = $db->prepare("SELECT 1 FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?");
+        $inv->execute([$courseId, strtolower($email)]);
+        if (!$inv->fetchColumn()) { header('Location: university.php'); exit; }
+    }
+    // State filter check
+    $sf = json_decode($course['state_filter'] ?? '[]', true);
+    if (!empty($sf)) {
+        $aiRow = $db->prepare("SELECT mc.state_code FROM agent_intake ai LEFT JOIN market_centers mc ON mc.slug=ai.office_location OR LOWER(mc.name)=LOWER(ai.office_location) WHERE LOWER(ai.email)=? LIMIT 1");
+        $aiRow->execute([strtolower($email)]);
+        $stateCode = ($aiRow->fetch(PDO::FETCH_ASSOC))['state_code'] ?? null;
+        if (!$stateCode || !in_array($stateCode, $sf, true)) { header('Location: university.php'); exit; }
+    }
+    // Role filter check
+    $rf = json_decode($course['role_filter'] ?? '[]', true);
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
+}
 
 // Lessons
 $ls = $db->prepare("SELECT * FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
@@ -87,7 +109,7 @@ foreach ($gradableLessons as $lesson) {
     .lesson-row{display:flex;align-items:center;gap:14px;padding:14px 18px;background:white;border:1px solid #e5e5e5;border-radius:8px;text-decoration:none;color:inherit;transition:border-color 100ms,box-shadow 100ms}
     .lesson-row:hover{border-color:#c3dfa8;box-shadow:0 2px 8px rgba(0,0,0,.06)}
     .lesson-row.completed{border-left:3px solid #82C112}
-    .lesson-row.placeholder{opacity:.55;cursor:default}
+    .lesson-row.placeholder{cursor:default}
     .lesson-row.placeholder:hover{border-color:#e5e5e5;box-shadow:none}
     .lesson-num{font-size:12px;font-weight:800;color:#bbb;width:24px;flex-shrink:0;text-align:right}
     .lesson-type-icon{font-size:18px;flex-shrink:0}
@@ -164,7 +186,7 @@ foreach ($gradableLessons as $lesson) {
         <?php
           $lessonNum = 0;
           $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
-          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => 'Coming Soon', 'upload' => 'Upload'];
+          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => '', 'upload' => 'Upload'];
           function render_learner_lesson_row($lesson, &$lessonNum, $progressMap, $typeIcons, $typeLabels) {
             $isPlaceholder = $lesson['type'] === 'placeholder';
             $prog   = $progressMap[$lesson['id']] ?? null;
@@ -187,7 +209,6 @@ foreach ($gradableLessons as $lesson) {
               </div>
               <div class="lesson-status">
                 <?php if ($isPlaceholder): ?>
-                <span class="status-todo" style="font-size:11px;color:#ccc;font-weight:700">Coming Soon</span>
                 <?php elseif ($isDone && $lesson['type'] === 'quiz' && $prog['score'] !== null): ?>
                 <span class="status-quiz-score"><?= $prog['score'] ?>%</span>
                 <?php elseif ($isDone): ?>

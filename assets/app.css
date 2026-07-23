@@ -175,7 +175,8 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-today{background:#edf7dc;outline:2px solid var(--green)}
 .cal-cell-num{font-size:12px;font-weight:700;color:var(--faint);margin-bottom:5px}
 .cal-today .cal-cell-num{color:var(--green-d);font-size:13px}
-.cal-chip{border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;cursor:default;display:block}
+.cal-chip{border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;cursor:pointer;display:block}
+.cal-chip:hover{filter:brightness(0.92)}
 .cal-chip-more{font-size:10px;color:var(--faint);font-weight:700;padding:1px 4px}
 @media(max-width:640px){.cal-cell{min-height:64px}.cal-chip{display:none}.cal-chip-more{display:none}}
 .cal-list-header{margin-bottom:14px}
@@ -188,8 +189,11 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-list-date{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
 .cal-list-ev-title{font-size:14px;font-weight:700;line-height:1.3}
 .cal-list-meta{font-size:12px;color:var(--faint);margin-top:4px}
+.cal-list-meta a{color:var(--green-d,#4a7a0a);word-break:break-all}
 .cal-list-desc{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.45}
 .cal-scope-badge{font-size:10px;font-weight:800;border-radius:12px;padding:3px 9px;white-space:nowrap;letter-spacing:.3px;flex:none}
+.cal-list-ev-flash{animation:calListFlash 1.4s ease}
+@keyframes calListFlash{0%{background:#fff6d6}100%{background:transparent}}
 
 /* Calendar — extra scopes */
 .cal-tab[data-filter="dotloop"] { /* Transactions tab always visible */ }
@@ -306,6 +310,12 @@ textarea.cal-field-input{resize:vertical;min-height:70px}
 .support-msg{font-size:13px;font-weight:700}
 .support-msg.ok{color:var(--green-d)}.support-msg.err{color:var(--red)}
 .support-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;line-height:1;color:#888}
+.support-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.file-chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.file-chip{display:inline-flex;align-items:center;gap:4px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:14px;padding:3px 10px;font-size:11px;color:#374151}
+.file-chip a{color:#1d4ed8;text-decoration:none;font-weight:600}
+.file-chip a:hover{text-decoration:underline}
+.file-x{background:none;border:none;color:#b91c1c;font-size:14px;line-height:1;cursor:pointer;padding:0 0 0 2px}
 .sb-support{display:block;width:100%;text-align:left;padding:10px 18px;background:none;border:none;border-top:1px solid #222;color:#82C112;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:2px}
 .sb-support:hover{background:#111}
 .btn-loginas{padding:4px 10px;border:1px solid #c9a8f5;background:#f3e8ff;color:#6b21a8;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em}

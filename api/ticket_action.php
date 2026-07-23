@@ -34,24 +34,8 @@ function log_ticket_event(PDO $db, int $id, string $type, string $detail, string
 if ($action === 'reply') {
     $body = trim($in['body'] ?? '');
     if (!$body) { http_response_code(400); echo json_encode(['error'=>'body required']); exit; }
-    $isStaff = is_admin() ? 1 : 0;
-    $db->prepare("INSERT INTO support_ticket_messages (ticket_id,author,is_staff,body) VALUES (?,?,?,?)")
-       ->execute([$id, $me['email'], $isStaff, $body]);
-
-    // Staff replying moves the ticket to "answered" (agent's turn); the agent
-    // replying moves it back to "open" (needs staff attention) — unless the
-    // ticket is on hold or closed, which only an explicit status change lifts.
-    $newStatus = $tkt['status'];
-    if (!in_array($tkt['status'], ['on_hold', 'closed'], true)) {
-        $newStatus = $isStaff ? 'answered' : 'open';
-    }
-    $db->prepare("UPDATE support_tickets SET status=?,updated_at=datetime('now') WHERE id=?")->execute([$newStatus, $id]);
-    if ($newStatus !== $tkt['status']) {
-        log_ticket_event($db, $id, 'status_change', "{$tkt['status']} -> {$newStatus}", $me['email']);
-    }
-
-    echo json_encode(['ok'=>true]);
-    notify_ticket_reply($id, $tkt['title'], $body, (bool)$isStaff, $tkt['dept_slug'] ?? '', $tkt['agent_email']);
+    $messageId = record_ticket_reply($db, $tkt, $me['email'], is_admin(), $body, $me['name'] ?? '');
+    echo json_encode(['ok'=>true,'messageId'=>$messageId]);
     dispatch_notification_queue();
     exit;
 }
@@ -87,7 +71,7 @@ if ($action === 'cc_add') {
         log_ticket_event($db, $id, 'cc_added', $email, $me['email']);
     }
     echo json_encode(['ok'=>true]);
-    notify_ticket_cc_added($id, $tkt['title'], $email);
+    notify_ticket_cc_added($id, $tkt['title'], $email, $me['email'], $me['name'] ?? '');
     dispatch_notification_queue();
     exit;
 }

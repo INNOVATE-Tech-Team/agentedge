@@ -1,18 +1,53 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $db    = local_db();
 $email = $agent['email'];
 
+// Resolve this agent's state code via their office location in agent_intake → market_centers
+$agentStateCode = null;
+$aiRow = $db->prepare("SELECT mc.state_code FROM agent_intake ai LEFT JOIN market_centers mc ON mc.slug=ai.office_location OR LOWER(mc.name)=LOWER(ai.office_location) WHERE LOWER(ai.email)=? LIMIT 1");
+$aiRow->execute([strtolower($email)]);
+$aiResult = $aiRow->fetch(PDO::FETCH_ASSOC);
+if ($aiResult) $agentStateCode = $aiResult['state_code'] ?? null;
+
+$agentRole  = my_role();
+$agentRoles = my_roles();
+$isAdminUser = is_admin();
+
 // Load published courses with category info + lesson counts
-$courses = $db->query(
+$allCourses = $db->query(
     "SELECT c.*, COALESCE(cat.name,'Uncategorized') as cat_name, COALESCE(cat.icon,'📚') as cat_icon,
      (SELECT COUNT(*) FROM uni_lessons WHERE course_id=c.id) as lesson_count
      FROM uni_courses c LEFT JOIN uni_categories cat ON cat.id=c.category_id
      WHERE c.published=1 ORDER BY c.sort_ord,c.id"
 )->fetchAll(PDO::FETCH_ASSOC);
+
+// Filter courses by access rules (admins bypass all filters)
+if ($isAdminUser) {
+    $courses = $allCourses;
+} else {
+    $courses = array_values(array_filter($allCourses, function($c) use ($db, $email, $agentStateCode, $agentRoles) {
+        // Invite-only: must be on invite list
+        if (!empty($c['invite_only'])) {
+            $inv = $db->prepare("SELECT 1 FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?");
+            $inv->execute([$c['id'], strtolower($email)]);
+            if (!$inv->fetchColumn()) return false;
+        }
+        // State filter: if set, agent's state must be in the list
+        $sf = json_decode($c['state_filter'] ?? '[]', true);
+        if (!empty($sf)) {
+            if (!$agentStateCode || !in_array($agentStateCode, $sf, true)) return false;
+        }
+        // Role filter: if set, agent's role must be in the list
+        $rf = json_decode($c['role_filter'] ?? '[]', true);
+        if (!empty($rf) && !array_intersect($agentRoles, $rf)) return false;
+        return true;
+    }));
+}
 
 $categories = $db->query("SELECT * FROM uni_categories ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
 

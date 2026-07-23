@@ -13,9 +13,11 @@ const ROLE_LABELS = [
     'recruiter'            => 'Recruiter',
     'bic'                  => 'Broker in Charge',
     'mc_leader'            => 'Market Center Leader',
+    'team_leader'          => 'Team Leader',
     'launch_coach'         => 'Launch Coach',
     'director_of_coaching' => 'Director of Coaching',
     'launch_facilitator'   => 'Launch Facilitator',
+    'launch_agent'         => 'Launch Agent',
     'agent'                => 'Agent',
 ];
 
@@ -54,7 +56,7 @@ function default_perms(string $role = 'agent'): array {
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
     if (!function_exists('local_db')) return null;
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email FROM agent_roles WHERE email=?");
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
@@ -65,6 +67,12 @@ function fetch_perms_local(string $email): ?array {
     $perms['mc_slugs']    = $mcs;
     $perms['own_mc_slug'] = $row['own_mc_slug'] ?? '';
     $perms['bic_email']   = $row['bic_email']   ?? '';
+    // Merge the optional "extra role" (e.g. Team Leader alongside a BIC's
+    // primary role) into the effective roles list so course role_filter
+    // checks recognize it, not just the primary role.
+    $extra = json_decode($row['extra_roles_json'] ?? '[]', true);
+    $extraRole = (is_array($extra) && !empty($extra[0]['role'])) ? canonical_role($extra[0]['role']) : '';
+    $perms['roles'] = array_values(array_unique(array_filter([$r, $extraRole])));
     return $perms;
 }
 
@@ -128,11 +136,29 @@ function is_leader(): bool         { return is_admin() || is_bic() || is_mc_lead
 // Can post announcements (any role except plain agent/recruiter)
 function can_post_announcements(): bool { return is_admin() || is_mc_leader() || is_bic(); }
 // Can send a Company Email — same tier as announcements: admin/staff (any audience),
-// mc_leader/bic (only the Market Centers in their own mc_slugs).
-function can_send_company_email(): bool { return can_post_announcements(); }
+// mc_leader/bic (only the Market Centers in their own mc_slugs), plus LAUNCH
+// coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
+function can_send_company_email(): bool { return can_post_announcements() || is_launch_coach(); }
+// LAUNCH coaching staff (coach or the director role above them).
+function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
+// Can create/edit cohorts and reassign coaches (admin or coaching leadership).
+function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }
+// All effective roles for the current agent (primary + optional extra role) --
+// use for role_filter-style checks so an extra role counts too.
+function my_roles(): array         { return current_perms()['roles'] ?? [my_role()]; }
+
+// Finance Accounting Checklists — scoped to specific named staff, not a role tier.
+// Same hardcoded-allowlist shape as reconciliation.php, centralized here since
+// both finance_checklists.php and its api/ counterpart need the same check.
+const FINANCE_CHECKLIST_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com', 'dominic@innovateonline.com'];
+function can_access_finance_checklists(): bool {
+    if (is_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, FINANCE_CHECKLIST_EMAILS, true);
+}
 
 function require_admin_page(): void {
     if (!is_admin()) { header('Location: index.php'); exit; }

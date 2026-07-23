@@ -4,7 +4,7 @@
 // GET action=list           → admin: all agents with intake status
 // GET action=headshot&key=  → serve a headshot image file
 // POST action=save (default)→ upsert intake data
-// POST action=upload        → upload a headshot (multipart/form-data, field: headshot)
+// POST action=upload        → upload a headshot (multipart/form-data, field: headshot; optional field email, admin only)
 // POST action=delete_file   → delete a headshot by key
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
@@ -119,6 +119,12 @@ $postAction = $_GET['action'] ?? ($_POST['action'] ?? '');
 
 // ── POST: upload headshot ─────────────────────────────────────────────────────
 if ($postAction === 'upload') {
+    $targetEmail = $myEmail;
+    if (!empty($_POST['email'])) {
+        $requested = strtolower(trim($_POST['email']));
+        if (!$isAdmin && $requested !== $myEmail) intake_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
+        $targetEmail = $requested;
+    }
     if (empty($_FILES['headshot']) || $_FILES['headshot']['error'] !== UPLOAD_ERR_OK) {
         intake_json_out(['ok' => false, 'error' => 'No valid file received'], 400);
     }
@@ -131,7 +137,7 @@ if ($postAction === 'upload') {
         intake_json_out(['ok' => false, 'error' => 'Only JPEG, PNG, GIF, or WebP images are allowed'], 400);
     }
     $cnt = $pdo->prepare("SELECT COUNT(*) FROM agent_intake_files WHERE agent_email=?");
-    $cnt->execute([$myEmail]);
+    $cnt->execute([$targetEmail]);
     if ((int)$cnt->fetchColumn() >= 5) {
         intake_json_out(['ok' => false, 'error' => 'Maximum 5 headshots allowed per agent'], 400);
     }
@@ -148,7 +154,7 @@ if ($postAction === 'upload') {
     $pdo->prepare(
         "INSERT INTO agent_intake_files (agent_email, file_key, orig_name, mime_type, size_bytes)
          VALUES (?, ?, ?, ?, ?)"
-    )->execute([$myEmail, $key, basename($f['name']), $mime, $f['size']]);
+    )->execute([$targetEmail, $key, basename($f['name']), $mime, $f['size']]);
 
     intake_json_out(['ok' => true, 'file_key' => $key, 'orig_name' => basename($f['name']), 'size_bytes' => $f['size']]);
 }
