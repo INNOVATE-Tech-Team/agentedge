@@ -43,7 +43,11 @@ if ($name === '' || $email === '') {
 $pdo  = local_db();
 $base = rtrim($c['agentedge_base_url'] ?? 'https://agentedge.innovateonline.com', '/');
 
-$mc                = trim($body['market_center']       ?? '');
+// Normalized against the canonical market_centers list — Advantage's payload
+// is free text and not guaranteed to match exactly (typo, renamed office,
+// etc.); an unrecognized value lands as blank here rather than silently
+// creating a mismatched/duplicate innovate_roster row below.
+$mc                = normalize_market_center($pdo, trim($body['market_center'] ?? ''));
 $role              = trim($body['role']                ?? 'agent');
 $sponsor           = trim($body['sponsor']              ?? '');
 $start             = trim($body['start_date']           ?? '');

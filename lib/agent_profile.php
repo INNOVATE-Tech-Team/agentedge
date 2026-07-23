@@ -71,7 +71,7 @@ function load_agent_headshots(string $email): array {
 
 function load_agent_documents(string $email): array {
     $st = local_db()->prepare(
-        "SELECT id, name, source, mime_type, size_bytes, storage_key, uploaded_by, created_at
+        "SELECT id, name, source, category, mime_type, size_bytes, storage_key, uploaded_by, created_at
          FROM agent_documents WHERE email=? ORDER BY created_at DESC"
     );
     $st->execute([$email]);

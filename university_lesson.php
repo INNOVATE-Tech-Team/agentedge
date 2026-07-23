@@ -39,7 +39,7 @@ if (!is_admin()) {
         if (!$stateCode || !in_array($stateCode, $sf, true)) { header('Location: university.php'); exit; }
     }
     $rf = json_decode($lesson['role_filter'] ?? '[]', true);
-    if (!empty($rf) && !in_array(my_role(), $rf, true)) { header('Location: university.php'); exit; }
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
 }
 
 $courseId = (int)$lesson['course_id'];

@@ -84,7 +84,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         // themselves scope their data to the leader's own Market Center(s).
         ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'standalone'=>true],
         ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations', 'leaderVisible'=>true],
-        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
+        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
@@ -116,6 +116,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
         ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
         ['key'=>'bo_commission_checks',      'label'=>'Commission Checks',   'href'=>'backoffice_commission_checks.php', 'dept'=>'Finance'],
+        ['key'=>'finance_checklists',        'label'=>'Accounting Checklists','href'=>'finance_checklists.php',        'dept'=>'Finance', 'financeChecklistItem'=>true],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
@@ -210,9 +211,14 @@ function render_sidebar(string $current, array $agent): void {
     // Back Office section — admins see everything; mc_leader/bic see it too, but with
     // Finance, Human Resources, and Technology departments hidden entirely, and
     // Operations filtered down to just the 'leaderVisible' items (Agent Profiles /
-    // Agent Roster — both scope their own data to the leader's MC). Launch coaches
-    // (the other non-admin group that reaches this block) see no Operations items.
-    $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach();
+    // Agent Roster / Onboarding Queue — all three scope their own data to the
+    // leader's MC). Launch coaches (the other non-admin group that reaches this
+    // block) see no Operations items.
+    // Finance Accounting Checklists is scoped to 3 named staff (see roles.php),
+    // narrower than any role tier — so it needs its own bypass into a section
+    // (Finance) that's otherwise hidden from non-admins entirely.
+    $financeChecklistAccess = can_access_finance_checklists();
+    $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach() || $financeChecklistAccess;
     $leaderHiddenDepts = ['Finance', 'Human Resources', 'Technology'];
     $isMcLeaderOrBic = is_mc_leader() || is_bic();
     if ($showBackOffice) {
@@ -257,12 +263,16 @@ function render_sidebar(string $current, array $agent): void {
                . htmlspecialchars($it['label']) . $arr . '</a>';
         }
         foreach ($deptOrder as $deptName) {
-            if (!$admin && in_array($deptName, $leaderHiddenDepts, true)) continue;
+            $financeChecklistBypass = $financeChecklistAccess && $deptName === 'Finance';
+            if (!$admin && in_array($deptName, $leaderHiddenDepts, true) && !$financeChecklistBypass) continue;
             if (!$admin && $deptName === 'Operations' && !$isMcLeaderOrBic) continue;
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
             if (!$admin && $deptName === 'Operations') {
                 $visible = array_values(array_filter($visible, fn($it) => !empty($it['leaderVisible'])));
+            }
+            if (!$admin && $financeChecklistBypass) {
+                $visible = array_values(array_filter($visible, fn($it) => !empty($it['financeChecklistItem'])));
             }
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';

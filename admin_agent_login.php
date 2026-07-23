@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
         $body = '<p>An INNOVATE admin has set up (or reset) your AgentEdge login.</p>'
               . '<p><a href="' . h($link) . '">Set your AgentEdge password</a></p>'
               . '<p>This link expires in 24 hours and can only be used once.</p>';
-        queue_email_to([$email], 'Set your AgentEdge password', $body);
+        queue_email_to([$email], 'Set your AgentEdge password', $body, $agent['email'], $agent['name'] ?? '');
         process_notification_queue();
 
         $msg = "Link generated and emailed to $email.";

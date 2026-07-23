@@ -23,21 +23,28 @@ $due = $db->query(
 foreach ($due as $row) {
     try {
         // Re-resolve recipients now, not at compose time — the roster may have changed.
-        $recipients = ce_resolve_recipients($row['audience'], $row['target_mc_slug'], $row['target_email']);
+        // audience/target_mc_slug are CSV-joined (one or more values each); leader_types
+        // only matters for the legacy 'leaders' audience (see lib/company_email.php).
+        $audiences   = array_values(array_filter(explode(',', $row['audience'] ?? '')));
+        $mcSlugs     = array_values(array_filter(explode(',', $row['target_mc_slug'] ?? '')));
+        $leaderTypes = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
+        $recipients  = ce_resolve_recipients($audiences, $mcSlugs, $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic']);
 
         // agent_roles has no display name column — fall back to the email itself,
         // matching what the immediate-send path does when $agent['name'] is empty.
         $sigHtml = ce_signature_html($row['sender_email'], $row['sender_email'], CRON_HOST);
-        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html) VALUES (?, 'email', ?, ?, '', 1)");
+        $attachIdsStr = $row['attachment_ids'] ?? '';
+        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
         foreach ($recipients as $r) {
-            $personalized = ce_apply_merge_vars($row['body'], $r['name']);
-            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml]);
+            $personalized = ce_apply_merge_vars($row['body'], $r);
+            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr, $row['sender_email'], $row['sender_email']]);
         }
 
         $db->prepare(
-            "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count)
-             VALUES (?,?,?,?,?,?,?)"
-        )->execute([$row['sender_email'], $row['sender_role'], $row['audience'], $row['target_mc_slug'], $row['subject'], $row['body'], count($recipients)]);
+            "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count, attachment_ids)
+             VALUES (?,?,?,?,?,?,?,?)"
+        )->execute([$row['sender_email'], $row['sender_role'], $row['audience'], $row['target_mc_slug'], $row['subject'], $row['body'], count($recipients), $attachIdsStr]);
+        ce_log_to_agent_records($recipients, $row['subject'], $row['body'], $row['sender_email'], (int)$db->lastInsertId());
 
         $db->prepare("UPDATE scheduled_emails SET status='sent', recipient_count=? WHERE id=?")
            ->execute([count($recipients), $row['id']]);

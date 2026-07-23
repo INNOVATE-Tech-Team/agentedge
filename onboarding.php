@@ -9,11 +9,20 @@ require_once __DIR__ . '/onboard_tools.php';
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 
 $agent = require_login();
-require_admin_page();
+$isAdmin  = is_admin();
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) { header('Location: index.php'); exit; }
 
 $tools = onboard_tools();
 // Build a map keyed by tool key for JS
 $toolsJson = json_encode(array_values($tools));
+
+// Market Center picker — sourced from the canonical master list (same as
+// roster.php/admin_roles.php), not free text. This used to be a plain text
+// input with no validation at all, which let typos/blanks ride straight
+// through to innovate_roster (see normalize_market_center() in lib/roster.php).
+$mcOpts     = local_db()->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")->fetchAll(PDO::FETCH_ASSOC);
+$mcOptsJson = json_encode($mcOpts);
 ?>
 <!doctype html>
 <html lang="en">
@@ -33,11 +42,14 @@ $toolsJson = json_encode(array_values($tools));
           <div class="content-title">Onboarding Queue</div>
           <div class="content-hello">Track every new agent through their provisioning checklist</div>
         </div>
+        <?php if ($isAdmin): ?>
         <button class="btn-save" id="btn-add-agent" onclick="toggleAddPanel()">+ Add Agent</button>
+        <?php endif; ?>
       </header>
       <main class="wrap">
 
         <!-- Add Agent Panel (hidden by default) -->
+        <?php if ($isAdmin): ?>
         <div class="ob-add-panel" id="ob-add-panel">
           <h2 style="margin:0 0 16px;font-size:15px">Add Agent to Onboarding Queue</h2>
 
@@ -64,8 +76,13 @@ $toolsJson = json_encode(array_values($tools));
                 <input type="email" id="ob-email" required placeholder="jane@example.com">
               </div>
               <div class="field">
-                <label>Market Center</label>
-                <input type="text" id="ob-mc" placeholder="Myrtle Beach">
+                <label>Market Center *</label>
+                <select id="ob-mc" required>
+                  <option value="">Select Market Center…</option>
+                  <?php foreach ($mcOpts as $opt): ?>
+                  <option value="<?= h($opt['name']) ?>"><?= h(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
               </div>
               <div class="field">
                 <label>License State</label>
@@ -106,6 +123,7 @@ $toolsJson = json_encode(array_values($tools));
             </div>
           </form>
         </div>
+        <?php endif; ?>
 
         <!-- Filter Tabs -->
         <div class="ob-tabs" id="ob-tabs">
@@ -124,8 +142,10 @@ $toolsJson = json_encode(array_values($tools));
   </div>
 
   <script>
-    window.ONBOARD_TOOLS  = <?= $toolsJson ?>;
+    window.ONBOARD_TOOLS   = <?= $toolsJson ?>;
+    window.ONBOARD_MC_OPTS = <?= $mcOptsJson ?>;
     window.ONBOARD_OPEN_ID = <?= (int)($_GET['open'] ?? 0) ?>;
+    window.IS_ADMIN         = <?= $isAdmin ? 'true' : 'false' ?>;
   </script>
   <script src="assets/onboard.js"></script>
 </body>

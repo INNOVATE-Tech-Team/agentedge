@@ -570,6 +570,15 @@ function local_db(): PDO {
     // to cfg()'s sendgrid_from at send time.
     try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_name  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // is_html: Company Email sends pre-rendered HTML bodies; everything else
+    // (announcements, ticket notifications) is plain text and gets the 0 default.
+    // Already live on production ahead of this migration (see cron/process_email_queue.php,
+    // api/company_email_action.php) — added here so a fresh install's schema matches.
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN is_html INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // reply_to: per-ticket Reply-To address (reply+{id}-{token}@...) so a reply
+    // typed in the recipient's mail client routes back into the ticket thread.
+    // Only ticket notifications set this; everything else gets '' (no Reply-To header).
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Company Email (Back Office) ───────────────────────────────────────────
     // These three tables existed live on Lightsail long before this migration
@@ -995,6 +1004,10 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN embed_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN folder_id INTEGER"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_folder ON uni_lessons(folder_id)");
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN learning_objective TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'beginner'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN related_lessons TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lesson_files (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1203,6 +1216,53 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_period ON budget_lines(period_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_dept   ON budget_lines(department)");
+
+    // ── Finance: Accounting Checklists (recurring projects / task follower) ───
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_templates (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        description TEXT    NOT NULL DEFAULT '',
+        recurrence  TEXT    NOT NULL DEFAULT 'monthly',  -- monthly | quarterly | annual | one_time
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_template_items (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id             INTEGER NOT NULL,
+        title                   TEXT    NOT NULL,
+        description             TEXT    NOT NULL DEFAULT '',
+        default_assignee_email  TEXT    NOT NULL DEFAULT '',
+        sort_ord                INTEGER NOT NULL DEFAULT 0
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcti_template ON finance_checklist_template_items(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_runs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        period_label TEXT   NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'open',  -- open | closed
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcr_template ON finance_checklist_runs(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_run_items (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id            INTEGER NOT NULL,
+        title             TEXT    NOT NULL,
+        description       TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'todo',  -- todo | done
+        assigned_to_email TEXT    NOT NULL DEFAULT '',
+        due_date          TEXT    NOT NULL DEFAULT '',
+        notes             TEXT    NOT NULL DEFAULT '',
+        sort_ord          INTEGER NOT NULL DEFAULT 0,
+        completed_at      TEXT    NOT NULL DEFAULT '',
+        completed_by      TEXT    NOT NULL DEFAULT '',
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcri_run ON finance_checklist_run_items(run_id)");
 
     // ── MLS Integrations tracker ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (

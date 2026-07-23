@@ -14,7 +14,8 @@ $aiRow->execute([strtolower($email)]);
 $aiResult = $aiRow->fetch(PDO::FETCH_ASSOC);
 if ($aiResult) $agentStateCode = $aiResult['state_code'] ?? null;
 
-$agentRole = my_role();
+$agentRole  = my_role();
+$agentRoles = my_roles();
 $isAdminUser = is_admin();
 
 // Load published courses with category info + lesson counts
@@ -29,7 +30,7 @@ $allCourses = $db->query(
 if ($isAdminUser) {
     $courses = $allCourses;
 } else {
-    $courses = array_values(array_filter($allCourses, function($c) use ($db, $email, $agentStateCode, $agentRole) {
+    $courses = array_values(array_filter($allCourses, function($c) use ($db, $email, $agentStateCode, $agentRoles) {
         // Invite-only: must be on invite list
         if (!empty($c['invite_only'])) {
             $inv = $db->prepare("SELECT 1 FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?");
@@ -43,7 +44,7 @@ if ($isAdminUser) {
         }
         // Role filter: if set, agent's role must be in the list
         $rf = json_decode($c['role_filter'] ?? '[]', true);
-        if (!empty($rf) && !in_array($agentRole, $rf, true)) return false;
+        if (!empty($rf) && !array_intersect($agentRoles, $rf)) return false;
         return true;
     }));
 }

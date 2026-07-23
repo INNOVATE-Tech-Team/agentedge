@@ -83,6 +83,11 @@ function openSupportModal() {
           <label for="sup-body">Describe the issue</label>
           <textarea id="sup-body" placeholder="What's happening? When did it start?" maxlength="4000"></textarea>
         </div>
+        <div class="support-field">
+          <label for="sup-file">Attach a screenshot or document (optional)</label>
+          <input id="sup-file" type="file" multiple onchange="onPickSupportFiles(this)">
+          <div class="support-files" id="sup-files-preview"></div>
+        </div>
         <div class="support-actions">
           <button class="support-submit" id="sup-submit" onclick="submitSupportTicket()">Submit ticket</button>
           <button class="support-cancel" onclick="closeSupportModal()">Cancel</button>
@@ -117,10 +122,47 @@ function openSupportModal() {
   const ti = document.getElementById('sup-title'); if (ti) ti.value = '';
   const bo = document.getElementById('sup-body');  if (bo) bo.value = '';
   const sb = document.getElementById('sup-submit'); if (sb) sb.disabled = false;
+  _supportPendingFiles = [];
+  renderSupportFiles();
 }
 
 function closeSupportModal() {
   if (_supportOverlay) _supportOverlay.classList.remove('open');
+}
+
+let _supportPendingFiles = [];
+
+function onPickSupportFiles(input) {
+  _supportPendingFiles = _supportPendingFiles.concat(Array.from(input.files));
+  input.value = '';
+  renderSupportFiles();
+}
+
+function removeSupportFile(idx) {
+  _supportPendingFiles.splice(idx, 1);
+  renderSupportFiles();
+}
+
+function renderSupportFiles() {
+  const el = document.getElementById('sup-files-preview');
+  if (!el) return;
+  el.innerHTML = _supportPendingFiles.map((f, i) =>
+    `<span class="file-chip">${f.name.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))} `
+    + `<button type="button" class="file-x" onclick="removeSupportFile(${i})" title="Remove">&times;</button></span>`
+  ).join('');
+}
+
+function uploadSupportFile(messageId, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('message_id', messageId);
+  fd.append('csrf', window.AE_CSRF || '');
+  return fetch('api/ticket_file_action.php', { method: 'POST', credentials: 'same-origin', body: fd })
+    .then(r => r.json());
+}
+
+function uploadSupportFilesSequential(messageId, files) {
+  return files.reduce((p, file) => p.then(() => uploadSupportFile(messageId, file)), Promise.resolve());
 }
 
 function submitSupportTicket() {
@@ -145,9 +187,13 @@ function submitSupportTicket() {
     .then(r => r.json())
     .then(d => {
       if (d.ok) {
-        msg.textContent = 'Ticket submitted! The team will follow up at everythinginnovate.com/tickets.';
-        msg.className = 'support-msg ok';
-        setTimeout(closeSupportModal, 3000);
+        const pending = _supportPendingFiles.slice();
+        (pending.length ? uploadSupportFilesSequential(d.messageId, pending) : Promise.resolve())
+          .then(() => {
+            msg.textContent = 'Ticket submitted! The team will follow up at everythinginnovate.com/tickets.';
+            msg.className = 'support-msg ok';
+            setTimeout(closeSupportModal, 3000);
+          });
       } else {
         msg.textContent = d.error || 'Submit failed — please try again.';
         msg.className = 'support-msg err';

@@ -93,7 +93,39 @@ function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt
 function fmtDate(s){if(!s)return'—';return new Date(s.replace(' ','T')+'Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})}
 function statusLabel(s){return String(s||'').replace('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}
 
-let tickets=[], curFilter='all', openId=null, cannedReplies=[], kbLinks=[];
+let tickets=[], curFilter='all', openId=null, cannedReplies=[], kbLinks=[], replyPendingFiles=[];
+
+function fileChipsHtml(files){
+  if(!files||!files.length)return'';
+  return '<div class="file-chip-row">'+files.map(f=>
+    `<span class="file-chip"><a href="api/ticket_file_download.php?id=${f.id}" target="_blank">${esc(f.orig_name)}</a></span>`
+  ).join('')+'</div>';
+}
+
+function onPickReplyFiles(input){
+  replyPendingFiles=replyPendingFiles.concat(Array.from(input.files));
+  input.value='';
+  renderReplyFiles();
+}
+function removeReplyFile(idx){ replyPendingFiles.splice(idx,1); renderReplyFiles(); }
+function renderReplyFiles(){
+  const el=document.getElementById('reply-files-preview');
+  if(!el)return;
+  el.innerHTML=replyPendingFiles.map((f,i)=>
+    `<span class="file-chip">${esc(f.name)} <button type="button" class="file-x" onclick="removeReplyFile(${i})" title="Remove">&times;</button></span>`
+  ).join('');
+}
+
+function uploadTicketFile(messageId,file){
+  const fd=new FormData();
+  fd.append('file',file);
+  fd.append('message_id',messageId);
+  fd.append('csrf',window.AE_CSRF||'');
+  return fetch('api/ticket_file_action.php',{method:'POST',credentials:'same-origin',body:fd}).then(r=>r.json());
+}
+function uploadTicketFilesSequential(messageId,files){
+  return files.reduce((p,file)=>p.then(()=>uploadTicketFile(messageId,file)),Promise.resolve());
+}
 
 fetch('api/support_meta.php',{credentials:'same-origin'})
   .then(r=>r.json())
@@ -136,6 +168,7 @@ function render(){
 
 function openTicket(id){
   openId=id;
+  replyPendingFiles=[];
   fetch('api/tickets_detail.php?id='+id,{credentials:'same-origin'})
     .then(r=>r.json())
     .then(d=>{
@@ -161,6 +194,7 @@ function renderDetail(d){
       return `<div class="msg${m.is_staff?' staff':''}">
         <div class="msg-meta"><strong>${esc(m.author)}</strong>${m.is_staff?' (staff)':''} · ${fmtDate(m.created_at)}</div>
         <div>${esc(m.body).replace(/\n/g,'<br>')}</div>
+        ${fileChipsHtml(m.files)}
       </div>`;
     }
     const e=item.e;
@@ -205,8 +239,13 @@ function renderDetail(d){
     <div class="reply-row">
       <div class="reply-toolbar">${replySelect}${kbSelect}</div>
       <textarea id="reply-body" placeholder="Write a reply…" oninput="updateCharCount()"></textarea>
+      <div class="field">
+        <input type="file" id="reply-file" multiple onchange="onPickReplyFiles(this)">
+        <div class="support-files" id="reply-files-preview"></div>
+      </div>
       <div class="reply-foot">
         <button class="btn-primary" onclick="sendReply(${t.id})">Reply</button>
+        <button class="btn-sm" style="background:#f0f0f0;color:#555" onclick="closeTicket(${t.id})">Close Ticket</button>
         <span class="char-count" id="char-count">0 characters</span>
       </div>
     </div>` : '<p style="color:#888;font-size:12px">This ticket is closed.</p>'}`;
@@ -252,16 +291,25 @@ function setStatus(id,status){
     .catch(()=>alert('Network error — status not updated.'));
 }
 
+function closeTicket(id){
+  if(!confirm('Close this ticket?')) return;
+  setStatus(id,'closed');
+}
+
 function sendReply(id){
   const ta=document.getElementById('reply-body');
   const body=ta.value.trim();
   if(!body)return;
+  const files=replyPendingFiles.slice();
   fetch('api/ticket_action.php',{
     method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'reply',id,body}),
   }).then(r=>r.json()).then(d=>{
-    if(d.ok){ load(); } else { alert(d.error||'Reply failed — please try again.'); }
+    if(d.ok){
+      replyPendingFiles=[];
+      (files.length?uploadTicketFilesSequential(d.messageId,files):Promise.resolve()).then(load);
+    } else { alert(d.error||'Reply failed — please try again.'); }
   }).catch(()=>alert('Network error — reply was not sent.'));
 }
 

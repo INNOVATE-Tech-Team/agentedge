@@ -39,24 +39,45 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid #82C112;border-color:#82C112}
 
 /* Rich text editor */
-.rte-wrap{border:1px solid #ccc;border-radius:8px;overflow:hidden;background:#fff}
+.rte-wrap{border:1px solid #ccc;border-radius:8px;background:#fff}
 .rte-wrap:focus-within{outline:2px solid #82C112;border-color:#82C112}
-.rte-toolbar{display:flex;align-items:center;gap:1px;padding:5px 8px;background:#f7f7f7;border-bottom:1px solid #e0e0e0;flex-wrap:wrap}
-.rte-group{display:flex;align-items:center;gap:1px}
-.rte-group+.rte-group{margin-left:4px;padding-left:5px;border-left:1px solid #ddd}
-.rte-btn{display:inline-flex;align-items:center;justify-content:center;padding:4px 7px;border:none;background:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;color:#333;line-height:1;min-width:26px;height:26px;gap:3px;flex-shrink:0;white-space:nowrap}
-.rte-btn:hover{background:#e8e8e8}
-.rte-btn-text{padding:4px 9px;font-weight:600}
-.rte-select{padding:3px 4px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;height:26px;outline:none;color:#333;flex-shrink:0}
-.rte-select:focus{border-color:#82C112}
-.rte-select.rte-select-style{min-width:88px}
-.rte-select.rte-select-font{min-width:104px}
-.rte-select.rte-select-size{min-width:68px}
-.rte-select.rte-select-align{min-width:76px}
-.rte-select.rte-select-var{min-width:110px}
-.rte-color{width:26px;height:26px;padding:2px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;flex-shrink:0}
-.rte-color-lbl{font-size:12px;font-weight:800;color:#555;padding:0 2px;flex-shrink:0}
-.rte-body{min-height:160px;padding:10px 12px;font-size:13px;line-height:1.6;outline:none;background:#fff;cursor:text}
+.rte-toolbar{display:flex;align-items:center;gap:2px;padding:7px 10px;background:#f7f7f7;border-bottom:1px solid #e0e0e0;flex-wrap:wrap;row-gap:6px;border-radius:7px 7px 0 0}
+.rte-group{display:flex;align-items:center;gap:2px}
+.rte-group+.rte-group{margin-left:6px;padding-left:8px;border-left:1px solid #dcdcdc}
+.rte-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid transparent;background:none;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;color:#333;line-height:1;width:30px;height:30px;flex-shrink:0}
+.rte-btn:hover{background:#fff;border-color:#ddd}
+.rte-btn:active,.rte-btn.rte-active{background:#eef5e8;border-color:#c7e2a3;color:#5b8e0d}
+.rte-btn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+/* Custom dropdown — plain divs, not a native <select>, so the box always
+   sizes to fit its own label text exactly (no OS/browser-dependent native
+   arrow-width or vertical-centering quirks to fight). */
+.cdd{position:relative;flex-shrink:0}
+.cdd-toggle{display:flex;align-items:center;gap:5px;height:30px;padding:0 9px;border:1px solid #ccc;border-radius:5px;
+  background:#fff;font-size:12px;font-family:inherit;color:#333;cursor:pointer;white-space:nowrap}
+.cdd-toggle:hover{border-color:#aaa}
+.cdd.open .cdd-toggle{border-color:#82C112}
+.cdd-arrow{font-size:8px;color:#888;line-height:1}
+.cdd-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #ccc;border-radius:6px;
+  box-shadow:0 4px 14px rgba(0,0,0,.15);min-width:150px;z-index:50;padding:4px;white-space:nowrap}
+.cdd.open .cdd-menu{display:block}
+.cdd-item{padding:7px 10px;font-size:13px;color:#333;border-radius:4px;cursor:pointer}
+.cdd-item:hover{background:#eef5e8;color:#5b8e0d}
+.img-toolbar{display:none;align-items:center;gap:8px;padding:6px 10px;background:#eef5e8;border-bottom:1px solid #d4edab;font-size:12px}
+.img-toolbar.show{display:flex}
+.img-toolbar-label{font-weight:700;color:#5b8e0d}
+.img-size-btn{padding:5px 10px;border:1px solid #ccc;border-radius:5px;background:#fff;font-size:12px;cursor:pointer}
+.img-size-btn:hover{background:#f0f5e8}
+.img-size-btn.active{background:#82C112;color:#000;border-color:#82C112;font-weight:700}
+.img-remove-btn{padding:5px 10px;border:1px solid #f3c6c6;border-radius:5px;background:#fff;font-size:12px;cursor:pointer;color:#c0392b;margin-left:auto}
+.img-remove-btn:hover{background:#fee2e2}
+.cdd-swatch-menu{display:grid;grid-template-columns:repeat(6,20px);gap:6px;padding:6px}
+.cdd-swatch{width:20px;height:20px;padding:0;border:1px solid rgba(0,0,0,.18);border-radius:4px;cursor:pointer}
+.cdd-swatch:hover{transform:scale(1.15)}
+.cdd-swatch-clear{display:flex;align-items:center;justify-content:center;font-size:10px;color:#999;background:#fff}
+.cdd-swatch-custom-row{display:flex;align-items:center;gap:7px;padding:7px 6px 3px;margin-top:2px;border-top:1px solid #eee;white-space:nowrap}
+.cdd-swatch-custom-row label{font-size:12px;color:#666}
+.cdd-swatch-custom-row input[type=color]{width:24px;height:20px;padding:0;border:1px solid #bbb;border-radius:3px;cursor:pointer;background:none}
+.rte-body{min-height:160px;padding:10px 12px;font-size:13px;line-height:1.6;outline:none;background:#fff;cursor:text;border-radius:0 0 7px 7px}
 .rte-body:empty:before{content:attr(data-placeholder);color:#aaa;pointer-events:none;display:block}
 .rte-body h2{font-size:18px;font-weight:800;color:#111;margin:0 0 6px;line-height:1.3}
 .rte-body h3{font-size:15px;font-weight:700;color:#333;margin:0 0 4px;line-height:1.3}
@@ -66,10 +87,16 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .rte-body blockquote{margin:0 0 6px;padding:6px 12px;border-left:3px solid #82C112;background:#f9fdf5;font-style:italic;color:#555}
 .rte-body table{border-collapse:collapse}
 .reach-note{font-size:12px;color:var(--faint);margin:-4px 0 14px}
+.aud-checks{display:flex;flex-wrap:wrap;gap:10px 18px;padding-top:4px}
+.aud-check{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer}
+.mc-check-list{display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;background:#fff}
+.mc-check{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer}
 .form-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .btn-primary{padding:9px 20px;background:#82C112;color:#000;border:none;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer}
 .btn-primary:hover{background:#5b8e0d;color:#fff}
 .btn-primary:disabled{opacity:.5;cursor:default}
+.btn-secondary{padding:9px 20px;background:#fff;color:#333;border:1px solid #ccc;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer}
+.btn-secondary:hover{background:#f5f5f5;border-color:#aaa}
 .send-status{font-size:12px;font-weight:700}
 .send-status.ok{color:#2e7d32}
 .send-status.err{color:#c0392b}
@@ -93,10 +120,25 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .aud-chip.admin{background:#fff4e0;color:#a07221}
 .aud-chip.mc{background:#e8f0fe;color:#1a56c4}
 .aud-chip.person{background:#f3e8fe;color:#7a1ac4}
+.aud-chip.leaders{background:#fce8f0;color:#c41a6a}
+.aud-chip.mc_leader{background:#fce8f0;color:#c41a6a}
+.aud-chip.bic{background:#fde8e0;color:#c46a1a}
+.aud-chip.launch{background:#eef5e8;color:#3a6b1a}
 .empty-note{color:var(--faint);font-style:italic;text-align:center;padding:20px}
 .btn-cancel-sched{padding:4px 10px;background:#fee2e2;color:#c00;border:none;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer}
 .btn-cancel-sched:hover{background:#fecaca}
 .section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:0 0 8px}
+
+/* Preview modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px}
+.modal-box{background:#fff;border-radius:10px;max-width:680px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.modal-header strong{font-size:14px}
+.modal-close{background:none;border:none;font-size:22px;line-height:1;cursor:pointer;color:#888;padding:0 4px}
+.modal-close:hover{color:#333}
+.modal-subject{padding:12px 18px;font-size:14px;font-weight:700;color:#111;border-bottom:1px solid #eee;background:#fafafa;word-break:break-word}
+#preview-frame{width:100%;flex:1;min-height:420px;border:none}
+.modal-note{padding:10px 18px;font-size:11px;color:var(--faint);border-top:1px solid #eee;margin:0}
 </style>
 </head>
 <body>
@@ -114,39 +156,50 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
     <div class="email-form">
       <h3>Compose</h3>
 
-      <div class="field-row">
-        <div class="field">
-          <label>Audience</label>
-          <select id="em-audience" onchange="onAudienceChange()">
-            <?php if (is_admin()): ?>
-            <option value="all">Entire Company</option>
-            <option value="admin">Admin &amp; Staff Only</option>
-            <option value="mc">Specific Market Center</option>
-            <?php else: ?>
-            <option value="mc"><?= $isBicOnly ? "Market Center(s) I'm BIC Over" : "Market Center(s) I Lead" ?></option>
-            <?php endif; ?>
-            <option value="person">Specific Person</option>
-          </select>
-        </div>
-        <div class="field" id="mc-target-row" style="display:none">
-          <label>Market Center</label>
+      <div class="field-full field">
+        <label>Audience <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:#aaa">(pick one or more)</span></label>
+        <div class="aud-checks">
           <?php if (is_admin()): ?>
-            <select id="em-mc-slug">
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="all" onchange="onAudienceChange()"> Entire Company</label>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="admin" onchange="onAudienceChange()"> Admin &amp; Staff Only</label>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="mc_leader" onchange="onAudienceChange()"> Market Center Leaders</label>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="bic" onchange="onAudienceChange()"> BICs</label>
+          <?php endif; ?>
+          <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="mc" onchange="onAudienceChange()">
+            <?= $isBicOnly ? "Market Center(s) I'm BIC Over" : ($isMcOnly ? "Market Center(s) I Lead" : "Specific Market Center(s)") ?>
+          </label>
+          <?php endif; ?>
+          <?php if (can_manage_cohorts()): ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="launch_agents" onchange="onAudienceChange()"> LAUNCH Agents</label>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="launch_coaches" onchange="onAudienceChange()"> LAUNCH Coaches</label>
+          <?php endif; ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="person" onchange="onAudienceChange()"> Specific Person</label>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field" id="mc-target-row" style="display:none">
+          <label>Market Center(s)</label>
+          <?php if (is_admin()): ?>
+            <div class="mc-check-list" id="mc-check-list">
               <?php foreach ($mcOptsAll as $opt): ?>
-              <option value="<?= htmlspecialchars($opt['slug']) ?>">
+              <label class="mc-check">
+                <input type="checkbox" class="em-mc" value="<?= htmlspecialchars($opt['slug']) ?>" onchange="onAudienceChange()">
                 <?= htmlspecialchars(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?>
-              </option>
+              </label>
               <?php endforeach; ?>
-            </select>
-          <?php elseif (count($myMcSlugs) > 1): ?>
-            <select id="em-mc-slug">
+            </div>
+          <?php elseif (count($myMcSlugs) > 0): ?>
+            <div class="mc-check-list" id="mc-check-list">
               <?php foreach ($myMcSlugs as $slug): ?>
-              <option value="<?= htmlspecialchars($slug) ?>"><?= htmlspecialchars($mcNameMap[$slug] ?? $slug) ?></option>
+              <label class="mc-check">
+                <input type="checkbox" class="em-mc" value="<?= htmlspecialchars($slug) ?>" checked
+                  <?= count($myMcSlugs) === 1 ? 'disabled' : '' ?> onchange="onAudienceChange()">
+                <?= htmlspecialchars($mcNameMap[$slug] ?? $slug) ?>
+              </label>
               <?php endforeach; ?>
-            </select>
-          <?php else: ?>
-            <input type="text" value="<?= htmlspecialchars($mcNameMap[$myMcSlugs[0] ?? ''] ?? 'My Market Center') ?>" disabled style="background:#f5f5f5;color:#888">
-            <input type="hidden" id="em-mc-slug" value="<?= htmlspecialchars($myMcSlugs[0] ?? '') ?>">
+            </div>
           <?php endif; ?>
         </div>
         <div class="field" id="person-target-row" style="display:none">
@@ -156,11 +209,19 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
         </div>
       </div>
 
-      <p class="reach-note" id="reach-note">
-        <?= $isBicOnly ? 'Sends to every agent in the Market Center(s) you\'re BIC over.'
-           : ($isMcOnly ? 'Sends to every agent in the Market Center(s) you lead.'
-           : 'Sends to every agent in the company, pulled from the live agent roster.') ?>
-      </p>
+      <p class="reach-note" id="reach-note">Pick at least one audience above.</p>
+
+      <div class="field-full field">
+        <label>Templates</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="tpl-select" onchange="onTemplateSelect()" style="min-width:220px;width:auto;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px">
+            <option value="">— Load a saved template —</option>
+          </select>
+          <button type="button" class="btn-secondary" onclick="loadTemplate()" style="padding:7px 14px">Load</button>
+          <button type="button" class="btn-secondary" onclick="saveAsTemplate()" style="padding:7px 14px">Save as Template</button>
+          <button type="button" class="btn-secondary" id="btn-delete-tpl" onclick="deleteTemplate()" style="padding:7px 14px;display:none;color:#c0392b;border-color:#f3c6c6">Delete</button>
+        </div>
+      </div>
 
       <div class="field-full field">
         <label>Subject</label>
@@ -172,85 +233,190 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
         <div class="rte-wrap">
           <div class="rte-toolbar">
             <div class="rte-group">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('undo')" title="Undo">Undo</button>
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('redo')" title="Redo">Redo</button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('undo')" title="Undo">
+                <svg viewBox="0 0 20 20"><path d="M4.5 8h7.5a4 4 0 1 1 0 8H9"/><path d="M7.5 5 4.5 8l3 3"/></svg>
+              </button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('redo')" title="Redo">
+                <svg viewBox="0 0 20 20"><path d="M15.5 8H8a4 4 0 1 0 0 8h2.5"/><path d="M12.5 5l3 3-3 3"/></svg>
+              </button>
             </div>
             <div class="rte-group">
-              <select class="rte-select rte-select-style" title="Paragraph style"
-                onchange="rteFormat(this.value);this.selectedIndex=0;focusBody()">
-                <option value="">Style</option>
-                <option value="p">Paragraph</option>
-                <option value="h2">Heading 1</option>
-                <option value="h3">Heading 2</option>
-                <option value="blockquote">Quote</option>
-              </select>
+              <div class="cdd" id="cdd-style">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('style')" title="Paragraph style">
+                  <span>Style</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('p');closeDropdowns();focusBody()">Paragraph</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('h2');closeDropdowns();focusBody()">Heading 1</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('h3');closeDropdowns();focusBody()">Heading 2</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFormat('blockquote');closeDropdowns();focusBody()">Quote</div>
+                </div>
+              </div>
             </div>
             <div class="rte-group">
-              <select class="rte-select rte-select-font" title="Font family" onchange="if(this.value){rteCmd('fontName', this.value);}this.selectedIndex=0;focusBody()">
-                <option value="">Font</option>
-                <option value="Arial">Arial</option>
-                <option value="Georgia">Georgia</option>
-                <option value="Verdana">Verdana</option>
-                <option value="'Courier New'">Courier New</option>
-                <option value="'Times New Roman'">Times New Roman</option>
-              </select>
-              <select class="rte-select rte-select-size" title="Font size" onchange="rteFontSize(this.value);this.selectedIndex=0;focusBody()">
-                <option value="">Size</option>
-                <option value="12">12px</option>
-                <option value="14">14px</option>
-                <option value="16">16px</option>
-                <option value="18">18px</option>
-                <option value="24">24px</option>
-                <option value="32">32px</option>
-              </select>
+              <div class="cdd" id="cdd-font">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('font')" title="Font family">
+                  <span>Font</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteCmd('fontName','Arial');closeDropdowns();focusBody()">Arial</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteCmd('fontName','Georgia');closeDropdowns();focusBody()">Georgia</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteCmd('fontName','Verdana');closeDropdowns();focusBody()">Verdana</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteCmd('fontName',&quot;'Courier New'&quot;);closeDropdowns();focusBody()">Courier New</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteCmd('fontName',&quot;'Times New Roman'&quot;);closeDropdowns();focusBody()">Times New Roman</div>
+                </div>
+              </div>
+              <div class="cdd" id="cdd-size">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('size')" title="Font size">
+                  <span>Size</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('12');closeDropdowns();focusBody()">12px</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('14');closeDropdowns();focusBody()">14px</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('16');closeDropdowns();focusBody()">16px</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('18');closeDropdowns();focusBody()">18px</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('24');closeDropdowns();focusBody()">24px</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();rteFontSize('32');closeDropdowns();focusBody()">32px</div>
+                </div>
+              </div>
             </div>
             <div class="rte-group">
-              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('bold')" title="Bold"><b>B</b></button>
-              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('italic')" title="Italic"><i>I</i></button>
-              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline"><u>U</u></button>
+              <button type="button" class="rte-btn" data-cmd="bold" onmousedown="event.preventDefault();rteCmd('bold')" title="Bold" style="font-size:15px"><b>B</b></button>
+              <button type="button" class="rte-btn" data-cmd="italic" onmousedown="event.preventDefault();rteCmd('italic')" title="Italic" style="font-size:15px"><i>I</i></button>
+              <button type="button" class="rte-btn" data-cmd="underline" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline" style="font-size:15px"><u>U</u></button>
             </div>
             <div class="rte-group">
-              <select class="rte-select rte-select-align" title="Text alignment" onchange="rteCmd(this.value);this.selectedIndex=0;focusBody()">
-                <option value="">Align</option>
-                <option value="justifyLeft">Left</option>
-                <option value="justifyCenter">Center</option>
-                <option value="justifyRight">Right</option>
-                <option value="justifyFull">Justify</option>
-              </select>
+              <button type="button" class="rte-btn" data-cmd="justifyLeft" onmousedown="event.preventDefault();rteCmd('justifyLeft')" title="Align left">
+                <svg viewBox="0 0 20 20"><line x1="3" y1="5" x2="17" y2="5"/><line x1="3" y1="9" x2="12" y2="9"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="3" y1="17" x2="12" y2="17"/></svg>
+              </button>
+              <button type="button" class="rte-btn" data-cmd="justifyCenter" onmousedown="event.preventDefault();rteCmd('justifyCenter')" title="Align center">
+                <svg viewBox="0 0 20 20"><line x1="3" y1="5" x2="17" y2="5"/><line x1="6" y1="9" x2="14" y2="9"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="6" y1="17" x2="14" y2="17"/></svg>
+              </button>
+              <button type="button" class="rte-btn" data-cmd="justifyRight" onmousedown="event.preventDefault();rteCmd('justifyRight')" title="Align right">
+                <svg viewBox="0 0 20 20"><line x1="3" y1="5" x2="17" y2="5"/><line x1="8" y1="9" x2="17" y2="9"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="8" y1="17" x2="17" y2="17"/></svg>
+              </button>
+              <button type="button" class="rte-btn" data-cmd="justifyFull" onmousedown="event.preventDefault();rteCmd('justifyFull')" title="Justify">
+                <svg viewBox="0 0 20 20"><line x1="3" y1="5" x2="17" y2="5"/><line x1="3" y1="9" x2="17" y2="9"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="3" y1="17" x2="17" y2="17"/></svg>
+              </button>
             </div>
             <div class="rte-group">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('outdent')" title="Decrease indent">Outdent</button>
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('indent')" title="Increase indent">Indent</button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('outdent')" title="Decrease indent">
+                <svg viewBox="0 0 20 20"><line x1="8" y1="4" x2="17" y2="4"/><line x1="8" y1="10" x2="17" y2="10"/><line x1="8" y1="16" x2="17" y2="16"/><path d="M5.5 7 3 10l2.5 3"/></svg>
+              </button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('indent')" title="Increase indent">
+                <svg viewBox="0 0 20 20"><line x1="8" y1="4" x2="17" y2="4"/><line x1="8" y1="10" x2="17" y2="10"/><line x1="8" y1="16" x2="17" y2="16"/><path d="M3 7l2.5 3L3 13"/></svg>
+              </button>
             </div>
             <div class="rte-group">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('insertUnorderedList')" title="Bullet list">&bull; List</button>
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('insertOrderedList')" title="Numbered list">1. List</button>
+              <button type="button" class="rte-btn" data-cmd="insertUnorderedList" onmousedown="event.preventDefault();rteCmd('insertUnorderedList')" title="Bullet list">
+                <svg viewBox="0 0 20 20"><circle cx="4" cy="5" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="5" x2="17" y2="5"/><circle cx="4" cy="10" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="10" x2="17" y2="10"/><circle cx="4" cy="15" r="1.3" fill="currentColor" stroke="none"/><line x1="8" y1="15" x2="17" y2="15"/></svg>
+              </button>
+              <button type="button" class="rte-btn" data-cmd="insertOrderedList" onmousedown="event.preventDefault();rteCmd('insertOrderedList')" title="Numbered list">
+                <svg viewBox="0 0 20 20"><text x="1.5" y="6.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">1</text><line x1="8" y1="5" x2="17" y2="5"/><text x="1.5" y="11.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">2</text><line x1="8" y1="10" x2="17" y2="10"/><text x="1.5" y="16.5" font-size="6" font-weight="700" fill="currentColor" stroke="none">3</text><line x1="8" y1="15" x2="17" y2="15"/></svg>
+              </button>
             </div>
             <div class="rte-group">
-              <span class="rte-color-lbl">A</span>
-              <input type="color" class="rte-color" title="Text color" value="#000000" onchange="rteCmd('foreColor', this.value);focusBody()">
-              <span class="rte-color-lbl">H</span>
-              <input type="color" class="rte-color" title="Highlight color" value="#ffff00" onchange="rteHighlight(this.value);focusBody()">
+              <div class="cdd" id="cdd-color">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('color')" title="Text color">
+                  <span>A</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-swatch-menu">
+                    <button type="button" class="cdd-swatch" style="background:#000000" title="Black" onmousedown="event.preventDefault();rteCmd('foreColor','#000000');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#434343" title="Dark gray" onmousedown="event.preventDefault();rteCmd('foreColor','#434343');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#999999" title="Gray" onmousedown="event.preventDefault();rteCmd('foreColor','#999999');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#cc0000" title="Red" onmousedown="event.preventDefault();rteCmd('foreColor','#cc0000');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#e69138" title="Orange" onmousedown="event.preventDefault();rteCmd('foreColor','#e69138');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#f1c232" title="Gold" onmousedown="event.preventDefault();rteCmd('foreColor','#f1c232');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#38761d" title="Green" onmousedown="event.preventDefault();rteCmd('foreColor','#38761d');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#0b5394" title="Blue" onmousedown="event.preventDefault();rteCmd('foreColor','#0b5394');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#674ea7" title="Purple" onmousedown="event.preventDefault();rteCmd('foreColor','#674ea7');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#a64d79" title="Magenta" onmousedown="event.preventDefault();rteCmd('foreColor','#a64d79');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#82C112" title="INNOVATE green" onmousedown="event.preventDefault();rteCmd('foreColor','#82C112');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#ffffff" title="White" onmousedown="event.preventDefault();rteCmd('foreColor','#ffffff');closeDropdowns();focusBody()"></button>
+                  </div>
+                  <div class="cdd-swatch-custom-row">
+                    <label for="em-color-custom">Custom</label>
+                    <input type="color" id="em-color-custom" value="#000000" onmousedown="saveColorSelection('em-body')" onchange="restoreColorSelection();rteCmd('foreColor', this.value);closeDropdowns();focusBody()">
+                  </div>
+                </div>
+              </div>
+              <div class="cdd" id="cdd-highlight">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('highlight')" title="Highlight color">
+                  <span>H</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-swatch-menu">
+                    <button type="button" class="cdd-swatch" style="background:#fff2cc" title="Yellow" onmousedown="event.preventDefault();rteHighlight('#fff2cc');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#d9ead3" title="Green" onmousedown="event.preventDefault();rteHighlight('#d9ead3');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#cfe2f3" title="Blue" onmousedown="event.preventDefault();rteHighlight('#cfe2f3');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#f4cccc" title="Red" onmousedown="event.preventDefault();rteHighlight('#f4cccc');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch" style="background:#e6d9f2" title="Purple" onmousedown="event.preventDefault();rteHighlight('#e6d9f2');closeDropdowns();focusBody()"></button>
+                    <button type="button" class="cdd-swatch cdd-swatch-clear" title="Clear highlight" onmousedown="event.preventDefault();rteHighlight('transparent');closeDropdowns();focusBody()">&#10005;</button>
+                  </div>
+                  <div class="cdd-swatch-custom-row">
+                    <label for="em-highlight-custom">Custom</label>
+                    <input type="color" id="em-highlight-custom" value="#ffff00" onmousedown="saveColorSelection('em-body')" onchange="restoreColorSelection();rteHighlight(this.value);closeDropdowns();focusBody()">
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="rte-group">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault()" onclick="document.getElementById('em-img-file').click()" title="Insert image">Image</button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="document.getElementById('em-img-file').click()" title="Insert image">
+                <svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="1.5"/><circle cx="7" cy="8" r="1.2" fill="currentColor" stroke="none"/><path d="M4 14l4-4 3 3 3-4 3 5"/></svg>
+              </button>
               <input type="file" id="em-img-file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" onchange="uploadEmailImage(this.files[0])">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();insertTable()" title="Insert table">Table</button>
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteInsertLink()" title="Insert link">Link</button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();insertTable()" title="Insert table">
+                <svg viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="1"/><line x1="3" y1="8" x2="17" y2="8"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="8.3" y1="3" x2="8.3" y2="17"/><line x1="12.7" y1="3" x2="12.7" y2="17"/></svg>
+              </button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteInsertLink()" title="Insert link">
+                <svg viewBox="0 0 20 20"><path d="M8.7 12.3l2.6-2.6"/><path d="M9.3 6.3H8a3 3 0 0 0 0 6h1.3"/><path d="M10.7 13.7H12a3 3 0 0 0 0-6h-1.3"/></svg>
+              </button>
             </div>
             <div class="rte-group">
-              <select class="rte-select rte-select-var" title="Insert merge variable" onchange="insertVariable(this.value);this.selectedIndex=0">
-                <option value="">Insert variable</option>
-                <option value="{{first_name}}">First Name</option>
-                <option value="{{full_name}}">Full Name</option>
-              </select>
+              <div class="cdd" id="cdd-var">
+                <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('var')" title="Insert merge variable">
+                  <span>Insert variable</span><span class="cdd-arrow">&#9662;</span>
+                </button>
+                <div class="cdd-menu">
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{first_name}}');closeDropdowns()">First Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{full_name}}');closeDropdowns()">Full Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{market_center}}');closeDropdowns()">Market Center</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{brokerage}}');closeDropdowns()">Brokerage</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{phone}}');closeDropdowns()">Phone</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_number}}');closeDropdowns()">License #</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_state}}');closeDropdowns()">License State</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{office}}');closeDropdowns()">Office Location</div>
+                </div>
+              </div>
             </div>
             <div class="rte-group">
-              <button type="button" class="rte-btn rte-btn-text" onmousedown="event.preventDefault();rteCmd('removeFormat');rteFormat('p')" title="Clear formatting" style="color:#888">Clear</button>
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('removeFormat');rteFormat('p')" title="Clear formatting" style="color:#999">
+                <svg viewBox="0 0 20 20"><path d="M5 4h7l3 12H8z"/><line x1="7" y1="4" x2="10" y2="16"/><line x1="4" y1="17" x2="16" y2="17" stroke-width="2"/></svg>
+              </button>
             </div>
+          </div>
+          <div class="img-toolbar" id="img-toolbar">
+            <span class="img-toolbar-label">Image</span>
+            <button type="button" class="img-size-btn" data-pct="25" onmousedown="event.preventDefault();resizeSelectedImage(25)">Small</button>
+            <button type="button" class="img-size-btn" data-pct="50" onmousedown="event.preventDefault();resizeSelectedImage(50)">Medium</button>
+            <button type="button" class="img-size-btn" data-pct="75" onmousedown="event.preventDefault();resizeSelectedImage(75)">Large</button>
+            <button type="button" class="img-size-btn" data-pct="100" onmousedown="event.preventDefault();resizeSelectedImage(100)">Full width</button>
+            <button type="button" class="img-remove-btn" onmousedown="event.preventDefault();removeSelectedImage()">Remove</button>
           </div>
           <div id="em-body" class="rte-body" contenteditable="true" data-placeholder="Write your message…"></div>
         </div>
+      </div>
+
+      <div class="field-full field">
+        <label>Attachments</label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button type="button" class="btn-secondary" onclick="document.getElementById('em-attach-file').click()" style="padding:7px 14px">+ Add File</button>
+          <input type="file" id="em-attach-file" style="display:none" onchange="uploadAttachment(this.files[0])"
+                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.jpg,.jpeg,.png,.gif">
+          <span id="attach-status" style="font-size:12px;color:var(--faint)"></span>
+        </div>
+        <div id="attach-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
       </div>
 
       <div class="form-actions">
@@ -258,6 +424,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <input type="checkbox" id="em-schedule-toggle" onchange="toggleSchedule()"> Schedule for later
         </label>
         <input type="datetime-local" id="em-send-at" style="display:none;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px">
+        <button type="button" class="btn-secondary" onclick="previewEmail()">Preview</button>
         <button class="btn-primary" id="btn-send" onclick="sendEmail()">Send</button>
         <span class="send-status" id="send-status"></span>
       </div>
@@ -265,20 +432,78 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
       <div class="sig-panel">
         <button type="button" class="sig-toggle" onclick="toggleSigPanel()">&#9998; My Signature <span id="sig-arrow">&#9660;</span></button>
         <div class="sig-fields" id="sig-fields" style="display:none">
-          <div class="field-row">
-            <div class="field"><label>Title</label><input type="text" id="sig-title" placeholder="e.g. Co-Founder"></div>
-            <div class="field"><label>Phone</label><input type="text" id="sig-phone" placeholder="e.g. 843-267-4627"></div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#333;cursor:pointer;margin-bottom:12px">
+            <input type="checkbox" id="sig-use-custom" onchange="toggleSigMode()"> Write a custom signature instead
+          </label>
+
+          <div id="sig-simple-mode">
+            <div class="field-row">
+              <div class="field"><label>Title</label><input type="text" id="sig-title" placeholder="e.g. Co-Founder"></div>
+              <div class="field"><label>Phone</label><input type="text" id="sig-phone" placeholder="e.g. 843-267-4627"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Calendar Link</label><input type="text" id="sig-cal" placeholder="https://calendly.com/..."></div>
+              <div class="field"><label>Website Link</label><input type="text" id="sig-web" placeholder="https://..."></div>
+            </div>
+            <p style="font-size:11px;color:var(--faint);margin:4px 0 0">
+              Your headshot (if uploaded via the Intake Form) and phone (if not set here) are pulled in automatically.
+              Leave everything blank to just sign off with your name.
+            </p>
           </div>
-          <div class="field-row">
-            <div class="field"><label>Calendar Link</label><input type="text" id="sig-cal" placeholder="https://calendly.com/..."></div>
-            <div class="field"><label>Website Link</label><input type="text" id="sig-web" placeholder="https://..."></div>
+
+          <div id="sig-custom-mode" style="display:none">
+            <div class="rte-wrap">
+              <div class="rte-toolbar">
+                <div class="rte-group">
+                  <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('bold')" title="Bold" style="font-size:15px"><b>B</b></button>
+                  <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('italic')" title="Italic" style="font-size:15px"><i>I</i></button>
+                  <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('underline')" title="Underline" style="font-size:15px"><u>U</u></button>
+                </div>
+                <div class="rte-group">
+                  <div class="cdd" id="cdd-sigcolor">
+                    <button type="button" class="cdd-toggle" onmousedown="event.preventDefault();toggleDropdown('sigcolor')" title="Text color">
+                      <span>A</span><span class="cdd-arrow">&#9662;</span>
+                    </button>
+                    <div class="cdd-menu">
+                      <div class="cdd-swatch-menu">
+                        <button type="button" class="cdd-swatch" style="background:#000000" title="Black" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#000000');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#434343" title="Dark gray" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#434343');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#999999" title="Gray" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#999999');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#cc0000" title="Red" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#cc0000');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#e69138" title="Orange" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#e69138');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#f1c232" title="Gold" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#f1c232');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#38761d" title="Green" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#38761d');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#0b5394" title="Blue" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#0b5394');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#674ea7" title="Purple" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#674ea7');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#a64d79" title="Magenta" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#a64d79');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#82C112" title="INNOVATE green" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#82C112');closeDropdowns()"></button>
+                        <button type="button" class="cdd-swatch" style="background:#ffffff" title="White" onmousedown="event.preventDefault();document.getElementById('sig-custom-body').focus();rteCmd('foreColor','#ffffff');closeDropdowns()"></button>
+                      </div>
+                      <div class="cdd-swatch-custom-row">
+                        <label for="sig-color-custom">Custom</label>
+                        <input type="color" id="sig-color-custom" value="#000000" onmousedown="saveColorSelection('sig-custom-body')" onchange="restoreColorSelection();document.getElementById('sig-custom-body').focus();rteCmd('foreColor', this.value);closeDropdowns()">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="rte-group">
+                  <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteInsertLink('sig-custom-body')" title="Insert link">
+                    <svg viewBox="0 0 20 20"><path d="M8.7 12.3l2.6-2.6"/><path d="M9.3 6.3H8a3 3 0 0 0 0 6h1.3"/><path d="M10.7 13.7H12a3 3 0 0 0 0-6h-1.3"/></svg>
+                  </button>
+                  <button type="button" class="rte-btn" onmousedown="event.preventDefault();rteCmd('removeFormat')" title="Clear formatting" style="color:#999">
+                    <svg viewBox="0 0 20 20"><path d="M5 4h7l3 12H8z"/><line x1="7" y1="4" x2="10" y2="16"/><line x1="4" y1="17" x2="16" y2="17" stroke-width="2"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="sig-custom-body" class="rte-body" contenteditable="true" data-placeholder="Write your signature…" style="min-height:90px"></div>
+            </div>
+            <p style="font-size:11px;color:var(--faint);margin:8px 0 0">
+              This replaces the automatic signature entirely — the headshot, phone, and links above won't be added.
+            </p>
           </div>
-          <button type="button" class="btn-sm-save" onclick="saveSignature()">Save Signature</button>
+
+          <button type="button" class="btn-sm-save" onclick="saveSignature()" style="margin-top:12px">Save Signature</button>
           <span id="sig-status" style="font-size:12px;margin-left:8px;font-weight:700"></span>
-          <p style="font-size:11px;color:var(--faint);margin:8px 0 0">
-            Your headshot (if uploaded via the Intake Form) and phone (if not set here) are pulled in automatically.
-            Leave everything blank to just sign off with your name.
-          </p>
         </div>
       </div>
     </div>
@@ -314,23 +539,56 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
   </div>
 </div>
 </div>
+
+<div id="preview-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this) closePreview()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <strong>Email Preview</strong>
+      <button type="button" class="modal-close" onclick="closePreview()">&times;</button>
+    </div>
+    <div class="modal-subject" id="preview-subject-line"></div>
+    <iframe id="preview-frame" title="Email preview"></iframe>
+    <p class="modal-note">Personalized using your own info as a stand-in for the recipient's name, Market Center, etc. — the real send fills these in per recipient.</p>
+  </div>
+</div>
+
 <script>
 const IS_ADMIN     = <?= is_admin() ? 'true' : 'false' ?>;
+const ME_EMAIL     = <?= json_encode(strtolower(trim($agent['email'] ?? ''))) ?>;
 const MC_NAME_MAP  = <?= json_encode($mcNameMap) ?>;
 let PERSON_LIST_LOADED = false;
 
 function focusBody(){ document.getElementById('em-body').focus(); }
 
+const AUD_LABELS = {
+  all: 'Entire Company', admin: 'Admin & Staff', mc_leader: 'Market Center Leaders',
+  bic: 'BICs', person: 'Specific Person', launch_agents: 'LAUNCH Agents', launch_coaches: 'LAUNCH Coaches',
+};
+
+function selectedAudiences() {
+  return Array.from(document.querySelectorAll('.em-aud:checked')).map(el => el.value);
+}
+
+function selectedMcSlugs() {
+  return Array.from(document.querySelectorAll('.em-mc:checked')).map(el => el.value);
+}
+
 function onAudienceChange() {
-  const val = document.getElementById('em-audience').value;
-  document.getElementById('mc-target-row').style.display = (val === 'mc') ? '' : 'none';
-  document.getElementById('person-target-row').style.display = (val === 'person') ? '' : 'none';
-  if (val === 'person' && !PERSON_LIST_LOADED) loadPersonList();
+  const auds = selectedAudiences();
+  document.getElementById('mc-target-row').style.display     = auds.includes('mc')     ? '' : 'none';
+  document.getElementById('person-target-row').style.display = auds.includes('person') ? '' : 'none';
+  if (auds.includes('person') && !PERSON_LIST_LOADED) loadPersonList();
+
   const note = document.getElementById('reach-note');
-  note.textContent = val === 'all'    ? 'Sends to every agent in the company, pulled from the live agent roster.'
-                    : val === 'admin' ? 'Sends only to Super Admin and Staff accounts.'
-                    : val === 'person'? 'Sends to just the one person you pick.'
-                    : 'Sends to every agent in the selected Market Center.';
+  if (!auds.length) { note.textContent = 'Pick at least one audience above.'; return; }
+  const parts = auds.map(a => {
+    if (a === 'mc') {
+      const names = selectedMcSlugs().map(s => MC_NAME_MAP[s] || s);
+      return names.length ? names.join(', ') : 'Market Center(s) — none selected yet';
+    }
+    return AUD_LABELS[a] || a;
+  });
+  note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.';
 }
 
 function loadPersonList() {
@@ -348,20 +606,76 @@ function loadPersonList() {
   });
 }
 
-function audLabel(audience, mcSlug) {
-  if (audience === 'all')    return '<span class="aud-chip all">Entire Company</span>';
-  if (audience === 'admin')  return '<span class="aud-chip admin">Admin &amp; Staff</span>';
+// audience/mcSlug are CSV-joined when a send targeted more than one audience
+// and/or more than one Market Center — render one chip per component.
+function audLabel(audience, mcSlug, leaderTypes) {
+  const auds = String(audience || '').split(',').filter(Boolean);
+  if (!auds.length) return '—';
+  return auds.map(a => singleAudChip(a, mcSlug, leaderTypes)).join(' ');
+}
+
+function singleAudChip(audience, mcSlug, leaderTypes) {
+  if (audience === 'all')       return '<span class="aud-chip all">Entire Company</span>';
+  if (audience === 'admin')     return '<span class="aud-chip admin">Admin &amp; Staff</span>';
+  if (audience === 'mc_leader') return '<span class="aud-chip mc_leader">Market Center Leaders</span>';
+  if (audience === 'bic')       return '<span class="aud-chip bic">BICs</span>';
+  if (audience === 'leaders') {
+    // Legacy combined audience — no longer produced by new sends, kept for history rows sent before this split.
+    const types = (leaderTypes || 'mc_leader,bic').split(',').filter(Boolean);
+    const label = types.length === 2 ? 'Leaders &amp; BICs'
+                : types.includes('mc_leader') ? 'Leaders Only'
+                : types.includes('bic') ? 'BICs Only' : 'Leaders &amp; BICs';
+    return '<span class="aud-chip leaders">' + label + '</span>';
+  }
   if (audience === 'person') return '<span class="aud-chip person">1 Person</span>';
-  const name = MC_NAME_MAP[mcSlug] || mcSlug || '—';
-  return '<span class="aud-chip mc">' + escapeHtml(name) + '</span>';
+  if (audience === 'launch_agents')  return '<span class="aud-chip launch">LAUNCH Agents</span>';
+  if (audience === 'launch_coaches') return '<span class="aud-chip launch">LAUNCH Coaches</span>';
+  if (audience === 'mc') {
+    const names = String(mcSlug || '').split(',').filter(Boolean).map(s => MC_NAME_MAP[s] || s);
+    return '<span class="aud-chip mc">' + escapeHtml(names.join(', ') || '—') + '</span>';
+  }
+  return '<span class="aud-chip mc">' + escapeHtml(audience) + '</span>';
 }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+// ── Custom toolbar dropdowns (Style/Font/Size/Insert variable) ────────────────
+function toggleDropdown(name){
+  const cdd = document.getElementById('cdd-' + name);
+  const wasOpen = cdd.classList.contains('open');
+  closeDropdowns();
+  if (!wasOpen) cdd.classList.add('open');
+}
+
+function closeDropdowns(){
+  document.querySelectorAll('.cdd.open').forEach(el => el.classList.remove('open'));
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.cdd')) closeDropdowns();
+});
+
 // ── Rich text editor ──────────────────────────────────────────────────────────
-function rteCmd(cmd, val){ document.execCommand(cmd, false, val ?? null); }
+function rteCmd(cmd, val){ document.execCommand(cmd, false, val ?? null); syncToolbarState(); }
+
+function syncToolbarState(){
+  document.querySelectorAll('.rte-btn[data-cmd]').forEach(btn => {
+    let active = false;
+    try { active = document.queryCommandState(btn.dataset.cmd); } catch (e) {}
+    btn.classList.toggle('rte-active', active);
+  });
+}
+
+(function(){
+  const body = document.getElementById('em-body');
+  body.addEventListener('keyup', syncToolbarState);
+  body.addEventListener('mouseup', syncToolbarState);
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement === body) syncToolbarState();
+  });
+})();
 
 function rteFormat(val){
   if(!val) return;
@@ -383,7 +697,30 @@ function rteHighlight(color){
   }
 }
 
-function rteInsertLink(){
+// The preset color swatches never lose the editor's text selection (their
+// onmousedown handlers call preventDefault, so focus never leaves the body).
+// A native <input type="color"> can't do that — opening its OS picker steals
+// focus and the browser drops the contentEditable selection — so the "Custom"
+// swatch saves the range on mousedown (before focus moves) and restores it
+// once onchange fires, right before applying the color.
+let savedColorRange = null;
+
+function saveColorSelection(bodyId){
+  const sel = window.getSelection();
+  const body = document.getElementById(bodyId);
+  savedColorRange = (sel && sel.rangeCount && body.contains(sel.anchorNode))
+    ? sel.getRangeAt(0).cloneRange() : null;
+}
+
+function restoreColorSelection(){
+  if (!savedColorRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(savedColorRange);
+}
+
+function rteInsertLink(bodyId){
+  bodyId = bodyId || 'em-body';
   const sel=window.getSelection();
   const hasText=sel&&!sel.isCollapsed;
   const url=prompt('Link URL:');
@@ -399,10 +736,10 @@ function rteInsertLink(){
     sel.collapseToEnd();
   } else {
     document.execCommand('createLink',false,safeUrl);
-    document.getElementById('em-body').querySelectorAll('a[href="'+safeUrl+'"]')
+    document.getElementById(bodyId).querySelectorAll('a[href="'+safeUrl+'"]')
       .forEach(el=>{el.target='_blank';el.rel='noopener noreferrer';});
   }
-  focusBody();
+  document.getElementById(bodyId).focus();
 }
 
 function insertTable(){
@@ -428,11 +765,63 @@ function uploadEmailImage(file){
     .then(r => r.json())
     .then(d => {
       if (!d.ok) { alert('Image upload failed: ' + (d.error || 'Unknown')); return; }
-      document.execCommand('insertHTML', false, '<img src="'+d.url+'" style="max-width:100%;display:block;margin:8px 0">');
+      document.execCommand('insertHTML', false, '<img src="'+d.url+'" style="width:100%;max-width:100%;display:block;margin:8px 0">');
       focusBody();
     })
     .catch(() => alert('Network error uploading image.'));
   document.getElementById('em-img-file').value = '';
+}
+
+// ── Resize/remove an inserted image ─────────────────────────────────────────
+let SELECTED_IMG = null;
+
+document.getElementById('em-body').addEventListener('click', (e) => {
+  if (e.target.tagName === 'IMG') {
+    SELECTED_IMG = e.target;
+    showImageToolbar();
+  } else {
+    SELECTED_IMG = null;
+    hideImageToolbar();
+  }
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('#em-body') && !e.target.closest('#img-toolbar')) {
+    SELECTED_IMG = null;
+    hideImageToolbar();
+  }
+});
+
+function showImageToolbar(){
+  document.getElementById('img-toolbar').classList.add('show');
+  syncImageSizeButtons();
+}
+
+function hideImageToolbar(){
+  document.getElementById('img-toolbar').classList.remove('show');
+}
+
+function syncImageSizeButtons(){
+  if (!SELECTED_IMG) return;
+  const pct = parseInt(SELECTED_IMG.style.width, 10) || 100;
+  document.querySelectorAll('.img-size-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.pct, 10) === pct);
+  });
+}
+
+function resizeSelectedImage(pct){
+  if (!SELECTED_IMG) return;
+  SELECTED_IMG.style.width = pct + '%';
+  SELECTED_IMG.style.maxWidth = '100%';
+  SELECTED_IMG.style.height = 'auto';
+  syncImageSizeButtons();
+}
+
+function removeSelectedImage(){
+  if (!SELECTED_IMG) return;
+  SELECTED_IMG.remove();
+  SELECTED_IMG = null;
+  hideImageToolbar();
 }
 
 function insertVariable(v){
@@ -449,6 +838,12 @@ function toggleSigPanel(){
   document.getElementById('sig-arrow').innerHTML = open ? '&#9660;' : '&#9650;';
 }
 
+function toggleSigMode(){
+  const custom = document.getElementById('sig-use-custom').checked;
+  document.getElementById('sig-simple-mode').style.display = custom ? 'none' : '';
+  document.getElementById('sig-custom-mode').style.display = custom ? '' : 'none';
+}
+
 function loadSignature(){
   fetch('api/company_email_action.php', {
     method:'POST', credentials:'same-origin',
@@ -462,6 +857,9 @@ function loadSignature(){
     document.getElementById('sig-phone').value = d.phone || '';
     document.getElementById('sig-cal').value   = d.calendar_url || '';
     document.getElementById('sig-web').value   = d.website_url || '';
+    document.getElementById('sig-use-custom').checked = !!d.use_custom;
+    document.getElementById('sig-custom-body').innerHTML = d.custom_html || '';
+    toggleSigMode();
   });
 }
 
@@ -477,6 +875,8 @@ function saveSignature(){
       phone: document.getElementById('sig-phone').value.trim(),
       calendar_url: document.getElementById('sig-cal').value.trim(),
       website_url: document.getElementById('sig-web').value.trim(),
+      use_custom: document.getElementById('sig-use-custom').checked,
+      custom_html: document.getElementById('sig-custom-body').innerHTML.trim(),
     })
   })
   .then(r => r.json())
@@ -514,7 +914,7 @@ function loadScheduled(){
       <tr>
         <td>${fmtDt(r.send_at)}</td>
         <td>${escapeHtml(r.subject)}</td>
-        <td>${audLabel(r.audience, r.target_mc_slug)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
         <td>${r.recipient_count}</td>
         <td><button class="btn-cancel-sched" onclick="cancelScheduled(${r.id})">Cancel</button></td>
       </tr>`).join('');
@@ -547,7 +947,7 @@ function loadHistory() {
       <tr>
         <td>${fmtDt(r.sent_at)}</td>
         <td>${escapeHtml(r.subject)}</td>
-        <td>${audLabel(r.audience, r.target_mc_slug)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
         <td>${r.recipient_count}</td>
         <td>${escapeHtml(r.sender_email)}</td>
       </tr>`).join('');
@@ -555,13 +955,163 @@ function loadHistory() {
   .catch(() => { document.getElementById('email-tbody').innerHTML = '<tr><td colspan="5" class="empty-note">Failed to load.</td></tr>'; });
 }
 
+// ── Attachments ────────────────────────────────────────────────────────────────
+let ATTACHMENTS = [];
+
+function uploadAttachment(file){
+  if (!file) return;
+  const status = document.getElementById('attach-status');
+  status.textContent = 'Uploading ' + file.name + '…';
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('api/email_attachment.php', { method:'POST', credentials:'same-origin', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      status.textContent = '';
+      if (!d.ok) { alert('Attachment failed: ' + (d.error || 'Unknown')); return; }
+      ATTACHMENTS.push({ token: d.token, name: d.name, size: d.size });
+      renderAttachments();
+    })
+    .catch(() => { status.textContent = ''; alert('Network error uploading attachment.'); });
+  document.getElementById('em-attach-file').value = '';
+}
+
+function fmtSize(bytes){
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+function renderAttachments(){
+  const wrap = document.getElementById('attach-list');
+  wrap.innerHTML = ATTACHMENTS.map((a, i) => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;background:#f7f7f7;border:1px solid #e0e0e0;border-radius:6px;padding:6px 10px">
+      <span style="flex:1">${escapeHtml(a.name)} <span style="color:#999">(${fmtSize(a.size)})</span></span>
+      <button type="button" onclick="removeAttachment(${i})" style="background:none;border:none;color:#c0392b;cursor:pointer;font-weight:700;font-size:14px;line-height:1">&times;</button>
+    </div>`).join('');
+}
+
+function removeAttachment(i){
+  const a = ATTACHMENTS[i];
+  fetch('api/email_attachment.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'delete', token: a.token})
+  }).catch(() => {});
+  ATTACHMENTS.splice(i, 1);
+  renderAttachments();
+}
+
+// ── Templates ──────────────────────────────────────────────────────────────────
+let TEMPLATES = [];
+
+function loadTemplateList(){
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'template_list'})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) return;
+    TEMPLATES = d.templates;
+    const sel = document.getElementById('tpl-select');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Load a saved template —</option>' +
+      TEMPLATES.map(t => `<option value="${t.id}">${escapeHtml(t.name)}${t.is_shared && t.owner_email !== ME_EMAIL ? ' (shared)' : ''}</option>`).join('');
+    sel.value = prev;
+    onTemplateSelect();
+  });
+}
+
+function onTemplateSelect(){
+  document.getElementById('btn-delete-tpl').style.display = document.getElementById('tpl-select').value ? '' : 'none';
+}
+
+function loadTemplate(){
+  const id = document.getElementById('tpl-select').value;
+  if (!id) { alert('Pick a template first.'); return; }
+  const tpl = TEMPLATES.find(t => String(t.id) === id);
+  if (!tpl) return;
+  const bodyEl = document.getElementById('em-body');
+  const hasContent = document.getElementById('em-subject').value.trim() || bodyEl.textContent.trim();
+  if (hasContent && !confirm('Load this template? It will replace your current subject and message.')) return;
+  document.getElementById('em-subject').value = tpl.subject;
+  bodyEl.innerHTML = tpl.body_html;
+}
+
+function saveAsTemplate(){
+  const subject  = document.getElementById('em-subject').value.trim();
+  const bodyHtml = document.getElementById('em-body').innerHTML.trim();
+  const hasText  = document.getElementById('em-body').textContent.trim() !== '';
+  if (!subject || !hasText) { alert('Write a subject and message first.'); return; }
+  const name = prompt('Template name:');
+  if (!name || !name.trim()) return;
+  const shareAll = confirm('Share this template with everyone who has Company Email access?\n\nOK = share with everyone. Cancel = keep it just for me.');
+
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'template_save', name: name.trim(), subject, body_html: bodyHtml, is_shared: shareAll})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) { alert('Save failed: ' + (d.error || 'Unknown')); return; }
+    loadTemplateList();
+  })
+  .catch(() => alert('Network error saving template.'));
+}
+
+function deleteTemplate(){
+  const id = document.getElementById('tpl-select').value;
+  if (!id) return;
+  if (!confirm('Delete this template? This cannot be undone.')) return;
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'template_delete', id: parseInt(id, 10)})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) { alert('Delete failed: ' + (d.error || 'Unknown')); return; }
+    loadTemplateList();
+  });
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────────
+function previewEmail() {
+  const subject  = document.getElementById('em-subject').value.trim();
+  const bodyEl   = document.getElementById('em-body');
+  const bodyHtml = bodyEl.innerHTML.trim();
+  const hasText  = bodyEl.textContent.trim() !== '';
+  if (!subject || !hasText) { alert('Write a subject and message first.'); return; }
+
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'preview', subject, body: bodyHtml})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) { alert('Preview failed: ' + (d.error || 'Unknown')); return; }
+    document.getElementById('preview-subject-line').textContent = 'Subject: ' + d.subject;
+    document.getElementById('preview-frame').srcdoc =
+      '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6;padding:16px">' + d.html + '</div>';
+    document.getElementById('preview-modal').style.display = 'flex';
+  })
+  .catch(() => alert('Network error generating preview.'));
+}
+
+function closePreview() {
+  document.getElementById('preview-modal').style.display = 'none';
+}
+
 function sendEmail() {
-  const audience = document.getElementById('em-audience').value;
-  const mcSlugEl = document.getElementById('em-mc-slug');
-  const mcSlug   = (audience === 'mc' && mcSlugEl) ? mcSlugEl.value : '';
+  const audiences = selectedAudiences();
+  const mcSlugs    = audiences.includes('mc') ? selectedMcSlugs() : [];
 
   let targetEmail = '';
-  if (audience === 'person') {
+  if (audiences.includes('person')) {
     const raw = document.getElementById('em-person').value.trim();
     const m   = raw.match(/\(([^()]+)\)\s*$/);
     targetEmail = (m ? m[1] : raw).trim().toLowerCase();
@@ -576,8 +1126,9 @@ function sendEmail() {
   const isSchedule = document.getElementById('em-schedule-toggle').checked;
 
   if (!subject || !hasText) { status.textContent = 'Subject and message are required.'; status.className = 'send-status err'; return; }
-  if (audience === 'mc' && !mcSlug) { status.textContent = 'Pick a Market Center.'; status.className = 'send-status err'; return; }
-  if (audience === 'person' && !targetEmail) { status.textContent = 'Pick a recipient.'; status.className = 'send-status err'; return; }
+  if (!audiences.length) { status.textContent = 'Pick at least one audience.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('mc') && !mcSlugs.length) { status.textContent = 'Pick at least one Market Center.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('person') && !targetEmail) { status.textContent = 'Pick a recipient.'; status.className = 'send-status err'; return; }
 
   let sendAtIso = '';
   if (isSchedule) {
@@ -599,8 +1150,9 @@ function sendEmail() {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
-      audience, target_mc_slug: mcSlug, target_email: targetEmail,
+      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmail,
       subject, body: bodyHtml, send_at: sendAtIso,
+      attachment_tokens: ATTACHMENTS.map(a => a.token),
     })
   })
   .then(r => r.json())
@@ -614,6 +1166,8 @@ function sendEmail() {
     document.getElementById('em-subject').value = '';
     document.getElementById('em-person').value = '';
     bodyEl.innerHTML = '';
+    ATTACHMENTS = [];
+    renderAttachments();
     if (isSchedule) {
       document.getElementById('em-schedule-toggle').checked = false;
       toggleSchedule();
@@ -624,8 +1178,9 @@ function sendEmail() {
   .catch(() => { btn.disabled = false; btn.textContent = isSchedule ? 'Schedule' : 'Send'; status.textContent = 'Network error.'; status.className = 'send-status err'; });
 }
 
-if (document.getElementById('em-audience')) onAudienceChange();
+onAudienceChange();
 loadSignature();
+loadTemplateList();
 loadScheduled();
 loadHistory();
 </script>

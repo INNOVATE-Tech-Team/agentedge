@@ -5,9 +5,15 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 $perms = current_perms();
-if (empty($perms['isAdmin'])) {
+$isAdmin  = !empty($perms['isAdmin']);
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) {
     header('Location: index.php'); exit;
 }
+// mc_leader/bic get a view scoped to the Market Center(s) they lead, plus a
+// "Send to Offboarding" action; every add/remove/edit/move/rename/bulk
+// control below stays admin-only.
+$myMcSlugs = $isAdmin ? null : my_mc_slugs();
 
 $today  = date('Y-m-d');
 $warn60 = date('Y-m-d', strtotime('+60 days'));
@@ -16,6 +22,9 @@ $warn60 = date('Y-m-d', strtotime('+60 days'));
 $rows = local_db()
     ->query("SELECT * FROM innovate_roster WHERE active=1 ORDER BY state_code, market_center, agent_name")
     ->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $rows = array_values(array_filter($rows, fn($r) => in_array(slugify_mc($r['market_center'] ?: ''), $myMcSlugs, true)));
+}
 
 define('MC_UNASSIGNED', '__unassigned__');
 
@@ -26,10 +35,12 @@ foreach ($rows as $r) {
     $byState[$st][$mc][] = $r;
 }
 
-// Unique agent count (agents in multiple states count once).
-$uniqueTotal = (int)local_db()
-    ->query("SELECT COUNT(DISTINCT agent_name) FROM innovate_roster WHERE active=1")
-    ->fetchColumn();
+// Unique agent count (agents in multiple states count once) — computed from
+// $rows (already MC-scoped above for leaders) rather than a separate
+// company-wide query, so it stays correct for both roles.
+$uniqueSeen = [];
+foreach ($rows as $r) { $uniqueSeen[strtolower(trim($r['agent_name']))] = true; }
+$uniqueTotal = count($uniqueSeen);
 
 // Summary counts per state (unique within each state). MC count excludes the unassigned bucket.
 $stateMeta = [];
@@ -214,6 +225,10 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
 .btn-remove{background:none;border:none;color:var(--faint);font-size:14px;cursor:pointer;
             padding:2px 6px;border-radius:4px;line-height:1;opacity:.5;transition:opacity .15s}
 .btn-remove:hover{opacity:1;color:var(--red,#c0392b);background:#fdecea}
+/* Send to Offboarding button */
+.btn-offboard{background:none;border:none;color:#c87800;font-size:11px;font-weight:700;cursor:pointer;
+              padding:3px 7px;border-radius:4px;opacity:.7;transition:opacity .15s;white-space:nowrap}
+.btn-offboard:hover{opacity:1;background:#fff3e0}
 /* Edit button */
 .btn-edit-agent{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
                 padding:2px 7px;border-radius:4px;opacity:.5;transition:opacity .15s;white-space:nowrap}
@@ -336,9 +351,11 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
     </div>
     <div class="content-hello" style="display:flex;align-items:center;gap:12px">
       <?= $uniqueTotal ?> unique agents across <?= count($byState) ?> states
+      <?php if ($isAdmin): ?>
       <a href="backoffice_roster_changes.php" class="btn-add-agent" style="background:#f0f0f0;color:#555">
         Weekly Changes →
       </a>
+      <?php endif; ?>
     </div>
   </div>
   <div class="wrap">
@@ -369,11 +386,11 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
       <span id="prod-loading">Loading production…</span>
       <div class="rs-tile green" id="prod-vol-tile" style="display:none">
         <div class="rs-num" id="prod-vol-num">—</div>
-        <div class="rs-lbl">LTM Volume</div>
+        <div class="rs-lbl">YTD Volume</div>
       </div>
       <div class="rs-tile" id="prod-deals-tile" style="display:none">
         <div class="rs-num" id="prod-deals-num">—</div>
-        <div class="rs-lbl">LTM Deals</div>
+        <div class="rs-lbl">YTD Deals</div>
       </div>
     </div>
 
@@ -384,7 +401,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
       <a class="state-card<?= $st===$activeState?' active':'' ?>" href="?state=<?= urlencode($st) ?>">
         <div style="display:flex;align-items:flex-start;justify-content:space-between">
           <div class="sc-code"><?= htmlspecialchars($st) ?></div>
-          <?php if ($tier): ?>
+          <?php if ($tier && is_super_admin()): ?>
           <span class="tier-badge <?= $tierClass[$tier] ?>"><?= $tierLabel[$tier] ?></span>
           <?php endif; ?>
         </div>
@@ -409,7 +426,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
     <div class="detail-panel">
       <div class="detail-header">
         <div class="detail-title"><?= htmlspecialchars($stateNames[$activeState] ?? $activeState) ?> (<?= htmlspecialchars($activeState) ?>)</div>
-        <?php if ($tier): ?>
+        <?php if ($tier && is_super_admin()): ?>
         <span class="tier-badge <?= $tierClass[$tier] ?>"><?= $tierLabel[$tier] ?> Commission Data</span>
         <?php endif; ?>
         <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
@@ -423,7 +440,9 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                   id="btn-import-mc" onclick="importMCsFromRoster()">↓ Import MCs from CRM</button>
           <button class="btn-add-agent" style="background:#f0f5e8;color:#5b8e0d;border:1px solid #c3dfa8" onclick="openAddMCModal()">+ Add MC</button>
           <?php endif; ?>
+          <?php if ($isAdmin): ?>
           <button class="btn-add-agent" onclick="openAddModal()">+ Add Agent</button>
+          <?php endif; ?>
         </div>
       </div>
 
@@ -457,8 +476,10 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
       <div>
         <div class="mc-heading<?= $isUnassigned ? ' mc-heading-unassigned' : '' ?>"
              data-content-id="mc-content-<?= $mcEditId ?>">
+          <?php if ($isAdmin): ?>
           <input type="checkbox" class="mc-sel-all" title="Select all in this group"
                  onchange="toggleMcAll(this, <?= $mcJson ?>)">
+          <?php endif; ?>
           <i class="mc-chevron">&#9654;</i>
           <span class="mc-name-label"><?= htmlspecialchars($mcLabel) ?> &mdash; <?= count($agents) ?> agent<?= count($agents)!==1?'s':'' ?></span>
           <?php if (!$isUnassigned && $mcBic): ?>
@@ -467,7 +488,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
           <?php if (!$isUnassigned && $mcLeader): ?>
           <span class="mc-role-chip mc-leader-chip">Leader: <?= htmlspecialchars(mc_name_for_email($nameByEmail, $mcLeader)) ?></span>
           <?php endif; ?>
-          <?php if (!$isUnassigned): ?>
+          <?php if (!$isUnassigned && is_super_admin()): ?>
           <span class="mc-role-chip mc-retain-chip <?= $mcRetainTier ?>">Retention: <?= $mcRetainPct ?>%</span>
           <?php endif; ?>
           <?php if (!$isUnassigned && is_super_admin()): ?>
@@ -543,7 +564,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
               <th>Volume</th>
               <th>Deals</th>
               <?php if ($activeState==='SC'): ?><th>License Expires</th><?php endif; ?>
-              <th>Retention</th>
+              <?php if (is_super_admin()): ?><th>Retention</th><?php endif; ?>
               <th style="width:40px"></th>
             </tr>
           </thead>
@@ -551,7 +572,9 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
             <?php foreach ($agents as $a): ?>
             <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-email="<?= htmlspecialchars(strtolower($a['email'] ?? '')) ?>" data-mc="<?= htmlspecialchars($mc) ?>" data-roster-id="<?= $a['id'] ?>">
               <td class="cb-cell">
+                <?php if ($isAdmin): ?>
                 <input type="checkbox" class="agent-cb" data-name="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>">
+                <?php endif; ?>
               </td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -559,6 +582,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                   <?php if (!empty($a['email'])): ?>
                   <span style="font-size:11px;color:var(--faint)"><?= htmlspecialchars($a['email']) ?></span>
                   <?php endif; ?>
+                  <?php if ($isAdmin): ?>
                   <button class="btn-edit-agent" title="Edit agent details"
                           onclick="openEditAgentModal(<?= htmlspecialchars(json_encode([
                               'id'           => $a['id'],
@@ -583,6 +607,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                     <button class="btn-move-save" onclick="saveMoveMC(<?= $a['id'] ?>)">Save</button>
                     <button class="btn-move-cancel" onclick="closeMoveMC(<?= $a['id'] ?>)">✕</button>
                   </div>
+                  <?php endif; ?>
                 </div>
               </td>
               <td class="prod-cell-vol"><span class="prod-none">—</span></td>
@@ -598,6 +623,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                 ?>
               </td>
               <?php endif; ?>
+              <?php if (is_super_admin()): ?>
               <td>
                 <?php
                 $rStatus = $a['retention_status'] ?? 'secure';
@@ -618,9 +644,14 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                   <button class="btn-retain-cancel" onclick="closeRetentionEdit(<?= $a['id'] ?>)">✕</button>
                 </div>
               </td>
-              <td>
+              <?php endif; ?>
+              <td style="display:flex;gap:4px;align-items:center">
+                <?php if ($isAdmin): ?>
                 <button class="btn-remove" title="Remove from roster"
                         onclick="removeAgent(<?= $a['id'] ?>, <?= htmlspecialchars(json_encode($a['agent_name']), ENT_QUOTES) ?>)">✕</button>
+                <?php endif; ?>
+                <button class="btn-offboard" title="Send this agent to the Offboarding Queue"
+                        onclick="openOffboardModal(<?= $a['id'] ?>, <?= htmlspecialchars(json_encode($a['agent_name']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($a['email'] ?? ''), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($mc === MC_UNASSIGNED ? '' : $mc), ENT_QUOTES) ?>)">→ Offboard</button>
               </td>
             </tr>
             <?php endforeach; ?>
@@ -721,6 +752,33 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
   </div>
 </div>
 
+<!-- Send to Offboarding Modal -->
+<div class="modal-overlay" id="offboardModalOverlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeOffboardModal()">×</button>
+    <h3>Send to Offboarding</h3>
+    <div class="modal-sub" id="ob-sub"></div>
+    <label class="mf-label">Agent Email</label>
+    <input id="ob-email" class="mf-input" type="email" placeholder="agent@example.com" autocomplete="off">
+    <label class="mf-label">Last Day <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+    <input id="ob-last-day" class="mf-input" type="date">
+    <label class="mf-label">Departure Reason</label>
+    <select id="ob-reason" class="mf-input">
+      <option value="voluntary">Voluntary Resignation</option>
+      <option value="termination">Termination</option>
+      <option value="transfer">Transfer to Another Brokerage</option>
+      <option value="other">Other</option>
+    </select>
+    <label class="mf-label">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+    <input id="ob-notes" class="mf-input" type="text" placeholder="Any additional context…" maxlength="200" autocomplete="off">
+    <div class="mf-err" id="ob-err"></div>
+    <div class="mf-btns">
+      <button class="mf-save" id="ob-save" onclick="saveOffboard()">Send to Offboarding</button>
+      <button class="mf-cancel" onclick="closeOffboardModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add MC Modal -->
 <div class="modal-overlay" id="addMCModalOverlay">
   <div class="modal">
@@ -774,6 +832,59 @@ function closeAddModal() {
 document.getElementById('addModalOverlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeAddModal();
 });
+
+// ── Send to Offboarding modal ────────────────────────────────────────────────
+let obRosterId = null, obName = '', obMc = '';
+function openOffboardModal(rosterId, name, email, mc) {
+    obRosterId = rosterId;
+    obName = name;
+    obMc = mc || '';
+    document.getElementById('ob-sub').textContent = 'Queue ' + name + (mc ? ' (' + mc + ')' : '') + ' for offboarding.';
+    document.getElementById('ob-email').value = email || '';
+    document.getElementById('ob-last-day').value = '';
+    document.getElementById('ob-reason').value = 'voluntary';
+    document.getElementById('ob-notes').value = '';
+    document.getElementById('ob-err').style.display = 'none';
+    document.getElementById('offboardModalOverlay').classList.add('open');
+}
+function closeOffboardModal() {
+    document.getElementById('offboardModalOverlay').classList.remove('open');
+}
+document.getElementById('offboardModalOverlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeOffboardModal();
+});
+
+function saveOffboard() {
+    const email = document.getElementById('ob-email').value.trim();
+    const err   = document.getElementById('ob-err');
+    err.style.display = 'none';
+    if (!email) { err.textContent = 'Agent email is required.'; err.style.display = ''; return; }
+
+    const btn = document.getElementById('ob-save');
+    btn.disabled = true; btn.textContent = 'Sending…';
+
+    fetch('api/offboard_action.php?action=add_to_queue', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+            roster_id: obRosterId,
+            agent_name: obName,
+            agent_email: email,
+            market_center: obMc,
+            last_day: document.getElementById('ob-last-day').value,
+            reason: document.getElementById('ob-reason').value,
+            reason_notes: document.getElementById('ob-notes').value,
+        })
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        btn.disabled = false; btn.textContent = 'Send to Offboarding';
+        if (!d.ok) { err.textContent = d.error || 'Error sending.'; err.style.display = ''; return; }
+        closeOffboardModal();
+        alert(obName + ' has been sent to the Offboarding Queue.');
+    })
+    .catch(()=>{ btn.disabled = false; btn.textContent = 'Send to Offboarding'; err.textContent = 'Network error.'; err.style.display = ''; });
+}
 
 // Update MC datalist when state changes
 document.getElementById('mf-state').addEventListener('change', function() {

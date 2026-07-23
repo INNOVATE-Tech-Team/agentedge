@@ -81,7 +81,7 @@ if ($action === 'remove') {
             }
 
             require_once __DIR__ . '/../lib/notifications.php';
-            notify_offboard_added($row['agent_name'], $obEmail, $row['market_center'] ?? '', '', 'voluntary', 'Started automatically when removed from the roster.', $by);
+            notify_offboard_added($row['agent_name'], $obEmail, $row['market_center'] ?? '', '', 'voluntary', 'Started automatically when removed from the roster.', $by, $agent['name'] ?? '');
             dispatch_notification_queue();
         }
     } catch (\Throwable $e) {}

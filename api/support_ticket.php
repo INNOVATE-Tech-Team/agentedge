@@ -40,11 +40,12 @@ $m = $db->prepare(
     "INSERT INTO support_ticket_messages (ticket_id,author,is_staff,body) VALUES (?,?,0,?)"
 );
 $m->execute([$ticketId, $me['email'], $body]);
+$messageId = (int)$db->lastInsertId();
 
 $db->prepare("INSERT INTO support_ticket_events (ticket_id,event_type,detail,actor_email) VALUES (?,?,?,?)")
    ->execute([$ticketId, 'created', $deptName ?: 'General', $me['email']]);
 
 notify_ticket_created($ticketId, $title, $body, $dept ?? '', $deptName, $me['name'] ?? $me['email'], $me['email']);
 
-echo json_encode(['ok'=>true,'id'=>$ticketId]);
+echo json_encode(['ok'=>true,'id'=>$ticketId,'messageId'=>$messageId]);
 dispatch_notification_queue();

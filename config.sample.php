@@ -106,6 +106,16 @@ return [
     'sendgrid_from' => 'noreply@innovateonline.com',    // must be on verified domain
     'sendgrid_name' => 'INNOVATE Real Estate',          // display name
 
+    // Reply-by-email for support tickets — dedicated subdomain (NOT innovateonline.com
+    // itself) receiving mail via SendGrid Inbound Parse, so it never touches real
+    // company mailboxes. Setup: 1) add an MX record for this subdomain pointing to
+    // mx.sendgrid.net (priority 10); 2) app.sendgrid.com → Settings → Inbound Parse →
+    // Add Host & URL, host = ticket_reply_domain below, URL = https://agents.innovateonline.com/api/ticket_email_inbound.php.
+    // ticket_reply_secret signs the per-ticket reply token; leave blank to derive it
+    // from sendgrid_key instead of provisioning a separate secret.
+    'ticket_reply_domain' => 'reply.innovateonline.com',
+    'ticket_reply_secret' => '',
+
     // Twilio — SMS notifications for announcements.
     // Find credentials at: console.twilio.com → Account Info
     'twilio_sid'   => '',    // ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -148,4 +158,16 @@ return [
     // Never reuse the same key across dev/staging/production, and never commit
     // a real key — config.php is git-ignored, this sample file is not.
     'tax_id_encryption_key' => '',
+
+    // Darwin Cloud custom API (lib/darwin.php, cron/sync_darwin.php) — pulls cap
+    // progress, revenue share, and sales volume from INNOVATE's finance/commission
+    // system into the cap wheel + growth network. Request credentials from
+    // support@accounttech.com. These are only the INITIAL seed values — once
+    // synced, the live pair is tracked in the darwin_auth table and rotates on
+    // every refresh, so don't expect this file to reflect the current token.
+    // Geo-restricted to US IPs (dev + prod) — see the AccountTECH developer guide.
+    'darwin_username'      => '',
+    'darwin_access_token'  => '',
+    'darwin_refresh_token' => '',
+    'darwin_token_expires' => '',  // format: MM/DD/YYYY HH:MM:SS, as issued by AccountTECH
 ];

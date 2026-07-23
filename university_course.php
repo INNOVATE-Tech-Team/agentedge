@@ -36,7 +36,7 @@ if (!is_admin()) {
     }
     // Role filter check
     $rf = json_decode($course['role_filter'] ?? '[]', true);
-    if (!empty($rf) && !in_array(my_role(), $rf, true)) { header('Location: university.php'); exit; }
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
 }
 
 // Lessons
@@ -109,7 +109,7 @@ foreach ($gradableLessons as $lesson) {
     .lesson-row{display:flex;align-items:center;gap:14px;padding:14px 18px;background:white;border:1px solid #e5e5e5;border-radius:8px;text-decoration:none;color:inherit;transition:border-color 100ms,box-shadow 100ms}
     .lesson-row:hover{border-color:#c3dfa8;box-shadow:0 2px 8px rgba(0,0,0,.06)}
     .lesson-row.completed{border-left:3px solid #82C112}
-    .lesson-row.placeholder{opacity:.55;cursor:default}
+    .lesson-row.placeholder{cursor:default}
     .lesson-row.placeholder:hover{border-color:#e5e5e5;box-shadow:none}
     .lesson-num{font-size:12px;font-weight:800;color:#bbb;width:24px;flex-shrink:0;text-align:right}
     .lesson-type-icon{font-size:18px;flex-shrink:0}
@@ -186,7 +186,7 @@ foreach ($gradableLessons as $lesson) {
         <?php
           $lessonNum = 0;
           $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
-          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => 'Coming Soon', 'upload' => 'Upload'];
+          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => '', 'upload' => 'Upload'];
           function render_learner_lesson_row($lesson, &$lessonNum, $progressMap, $typeIcons, $typeLabels) {
             $isPlaceholder = $lesson['type'] === 'placeholder';
             $prog   = $progressMap[$lesson['id']] ?? null;
@@ -209,7 +209,6 @@ foreach ($gradableLessons as $lesson) {
               </div>
               <div class="lesson-status">
                 <?php if ($isPlaceholder): ?>
-                <span class="status-todo" style="font-size:11px;color:#ccc;font-weight:700">Coming Soon</span>
                 <?php elseif ($isDone && $lesson['type'] === 'quiz' && $prog['score'] !== null): ?>
                 <span class="status-quiz-score"><?= $prog['score'] ?>%</span>
                 <?php elseif ($isDone): ?>

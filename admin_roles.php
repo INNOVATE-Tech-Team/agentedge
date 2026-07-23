@@ -54,7 +54,7 @@ ksort($mc_opts);
 $roleRows = local_db()->query(
     "SELECT email, role, mc_slugs, own_mc_slug, bic_email, extra_roles_json, updated_at
      FROM agent_roles
-     WHERE role != 'agent' OR own_mc_slug != '' OR bic_email != '' OR extra_roles_json != '[]'
+     WHERE role != 'agent' OR extra_roles_json != '[]'
      ORDER BY email"
 )->fetchAll(PDO::FETCH_ASSOC);
 $assigned = [];
@@ -158,6 +158,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
 // Roles available for the extra-role dropdown (agent excluded; super_admin reserved)
 $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 'super_admin'], true), ARRAY_FILTER_USE_KEY);
+
+// Sort priority for the Roles column — follows ROLE_LABELS order (most senior first)
+$roleOrderMap = array_flip(array_keys(ROLE_LABELS));
 ?>
 <!doctype html>
 <html lang="en">
@@ -340,7 +343,7 @@ $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 
         <?php else: ?>
         <table class="assign-table">
           <thead>
-            <tr><th>Name</th><th class="th-sort" onclick="sortByState()" title="Click to sort by state">State ⇅</th><th>Roles</th><th>Own MC / BIC</th><th>MC Assignments</th><th></th></tr>
+            <tr><th>Name</th><th class="th-sort" onclick="sortByState()" title="Click to sort by state">State ⇅</th><th class="th-sort" onclick="sortByRole()" title="Click to sort by role">Roles ⇅</th><th>Own MC / BIC</th><th>MC Assignments</th><th></th></tr>
           </thead>
           <tbody>
           <?php foreach ($assigned as $lcemail => $r):
@@ -371,8 +374,14 @@ $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 
             $rowStates = array_values(array_unique($rowStates));
             sort($rowStates);
             $stateDisplay = $rowStates ? implode(', ', $rowStates) : '';
+
+            // Sort priority = most senior of primary/extra role (lower = more senior)
+            $rowRoleOrder = $roleOrderMap[$role] ?? 999;
+            if ($curExtraRole && isset($roleOrderMap[canonical_role($curExtraRole)])) {
+                $rowRoleOrder = min($rowRoleOrder, $roleOrderMap[canonical_role($curExtraRole)]);
+            }
           ?>
-            <tr class="agent-row" data-state="<?= h($rowStates[0] ?? '') ?>">
+            <tr class="agent-row" data-state="<?= h($rowStates[0] ?? '') ?>" data-role="<?= h((string)$rowRoleOrder) ?>">
               <td>
                 <div style="font-weight:600"><?= h($info['name'] ?? $lcemail) ?></div>
                 <div style="font-size:11px;color:#888"><?= h($lcemail) ?></div>
@@ -525,17 +534,37 @@ const STAFF_ROLES  = ['super_admin','staff','mc_leader','bic','recruiter'];
 
 function searchAgents(q) {
   const res = document.getElementById('search-results');
-  q = q.trim().toLowerCase();
+  const raw = q.trim();
+  q = raw.toLowerCase();
   if (!q) { res.style.display='none'; res.innerHTML=''; return; }
   const hits = ROSTER.filter(a =>
     a.name.toLowerCase().includes(q) || a.email.includes(q) || (a.mc||'').toLowerCase().includes(q)
   ).slice(0, 12);
-  if (!hits.length) { res.style.display='none'; return; }
-  res.innerHTML = hits.map(a => `
+
+  // Staff (accountants, etc.) aren't real estate agents, so they're never in
+  // the roster this list is built from. If what's typed looks like an email
+  // and isn't already a hit, offer to assign that email directly — the save
+  // path already accepts any email, roster or not (see admin_roles.php POST
+  // handler / the "may not be in innovate_roster" comment near $rosterByEmail).
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw);
+  const alreadyHit = hits.some(a => a.email.toLowerCase() === raw.toLowerCase());
+  const newEntry = (looksLikeEmail && !alreadyHit) ? { name: raw, email: raw.toLowerCase(), mc: '', isNew: true } : null;
+
+  if (!hits.length && !newEntry) { res.style.display='none'; return; }
+
+  const hitsHtml = hits.map(a => `
     <div class="search-result-row" data-a="${encodeURIComponent(JSON.stringify(a))}" onclick="selectAgent(JSON.parse(decodeURIComponent(this.dataset.a)))">
       <div><div class="sr-name">${esc(a.name)}</div><div class="sr-meta">${esc(a.email)} · ${esc(a.mc)}</div></div>
       <button class="sr-assign" type="button">Assign</button>
     </div>`).join('');
+
+  const newEntryHtml = newEntry ? `
+    <div class="search-result-row" data-a="${encodeURIComponent(JSON.stringify(newEntry))}" onclick="selectAgent(JSON.parse(decodeURIComponent(this.dataset.a)))">
+      <div><div class="sr-name">Assign staff not on the agent roster</div><div class="sr-meta">${esc(newEntry.email)} · e.g. an accountant or other back-office staff</div></div>
+      <button class="sr-assign" type="button">+ Add</button>
+    </div>` : '';
+
+  res.innerHTML = hitsHtml + newEntryHtml;
   res.style.display='block';
 }
 
@@ -603,6 +632,20 @@ function sortByState() {
     return stateSortAsc ? sa.localeCompare(sb) : sb.localeCompare(sa);
   });
   stateSortAsc = !stateSortAsc;
+  pairs.forEach(([agentRow, editRow]) => { tbody.appendChild(agentRow); tbody.appendChild(editRow); });
+}
+
+let roleSortAsc = true;
+function sortByRole() {
+  const tbody = document.querySelector('.assign-table tbody');
+  if (!tbody) return;
+  const pairs = Array.from(tbody.querySelectorAll('tr.agent-row')).map(r => [r, r.nextElementSibling]);
+  pairs.sort((a, b) => {
+    const ra = Number(a[0].dataset.role ?? 999);
+    const rb = Number(b[0].dataset.role ?? 999);
+    return roleSortAsc ? ra - rb : rb - ra;
+  });
+  roleSortAsc = !roleSortAsc;
   pairs.forEach(([agentRow, editRow]) => { tbody.appendChild(agentRow); tbody.appendChild(editRow); });
 }
 
