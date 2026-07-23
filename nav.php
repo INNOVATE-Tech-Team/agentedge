@@ -44,6 +44,7 @@ function nav_items(): array {
         '__assets__'       => ['key' => '__assets__',       'label' => '',                    'href' => ''],
         'industry_events'  => ['key' => 'industry_events',  'label' => 'Industry Events',     'href' => 'industry_events.php'],
         'university'       => ['key' => 'university',       'label' => 'INNOVATE University', 'href' => 'university.php'],
+        'leaderboard'      => ['key' => 'leaderboard',      'label' => 'LAUNCH Leaderboard',  'href' => 'leaderboard.php'],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -57,6 +58,7 @@ function nav_items(): array {
     // mc_leader/bic now see the Back Office section directly (department-filtered
     // in render_sidebar()), so no separate Agent Communications shortcut is needed here.
     return array_merge($core, $ext, [
+        ['key' => 'coach_dashboard', 'label' => 'Coach Dashboard', 'href' => 'coach_dashboard.php', 'launchCoachOnly' => true],
         ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
     ]);
 }
@@ -65,8 +67,10 @@ function nav_items(): array {
 // Add more entries here to grow the section.
 function agent_assets_items(): array {
     return [
-        ['key' => 'network',       'label' => 'My Network',    'href' => 'network.php'],
-        ['key' => 'profile',       'label' => 'My Profile',    'href' => 'profile.php'],
+        ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
+        ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
+        ['key' => 'commission_submit',  'label' => 'Submit Commission Check', 'href' => 'commission_submit.php'],
+        ['key' => 'my_activity',        'label' => 'My Weekly Activity',      'href' => 'my_activity.php'],
     ];
 }
 
@@ -75,20 +79,25 @@ function agent_assets_items(): array {
 function backoffice_nav_items(bool $superAdmin): array {
     $items = [
         // ── Operations ──────────────────────────────────────────────────────────
+        // 'leaderVisible' items are the only Operations items mc_leader/bic see
+        // (render_sidebar() filters to these for that role) — the pages
+        // themselves scope their data to the leader's own Market Center(s).
         ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'standalone'=>true],
-        ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations'],
+        ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
-        ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations'],
+        ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'recruit_prospects',         'label'=>'Recruiting Prospects','href'=>'backoffice_prospects.php',      'dept'=>'Operations', 'superOnly'=>true],
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
-        ['key'=>'bo_mls',                    'label'=>'MLS',                 'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
+        ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
+        ['key'=>'bo_state_reports',          'label'=>'State Annual Reports','href'=>'backoffice_state_reports.php', 'dept'=>'Broker Files'],
+        ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
@@ -100,11 +109,13 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── Agent Development ───────────────────────────────────────────────────
         ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
         ['key'=>'bo_workflows',              'label'=>'Workflows',           'href'=>'backoffice_workflows.php',      'dept'=>'Agent Development'],
+        ['key'=>'launch_cohorts',            'label'=>'LAUNCH Cohorts',      'href'=>'launch_cohorts.php',            'dept'=>'Agent Development'],
         // ── Finance ─────────────────────────────────────────────────────────────
         ['key'=>'finance_budget',            'label'=>'Department Budget',   'href'=>'finance_budget.php',            'dept'=>'Finance'],
         ['key'=>'finance_statements',        'label'=>'Statement Scanner',   'href'=>'finance_statements.php',        'dept'=>'Finance'],
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
         ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
+        ['key'=>'bo_commission_checks',      'label'=>'Commission Checks',   'href'=>'backoffice_commission_checks.php', 'dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
@@ -158,6 +169,7 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['adminOnly']) && !$admin) continue;
         if (!empty($it['superOnly']) && !$superAdmin) continue;
         if (!empty($it['leaderOnly']) && !can_post_announcements() && !is_recruiter()) continue;
+        if (!empty($it['launchCoachOnly']) && !is_launch_coach() && !$admin) continue;
 
         // Sentinel — inject the personalized assets collapsible inline.
         if ($it['key'] === '__assets__') {
@@ -196,9 +208,13 @@ function render_sidebar(string $current, array $agent): void {
     }
 
     // Back Office section — admins see everything; mc_leader/bic see it too, but with
-    // Operations, Finance, Human Resources, and Technology departments hidden entirely.
-    $showBackOffice = $admin || is_mc_leader() || is_bic();
-    $leaderHiddenDepts = ['Operations', 'Finance', 'Human Resources', 'Technology'];
+    // Finance, Human Resources, and Technology departments hidden entirely, and
+    // Operations filtered down to just the 'leaderVisible' items (Agent Profiles /
+    // Agent Roster — both scope their own data to the leader's MC). Launch coaches
+    // (the other non-admin group that reaches this block) see no Operations items.
+    $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach();
+    $leaderHiddenDepts = ['Finance', 'Human Resources', 'Technology'];
+    $isMcLeaderOrBic = is_mc_leader() || is_bic();
     if ($showBackOffice) {
         static $boStylesEmitted = false;
         if (!$boStylesEmitted) {
@@ -242,8 +258,12 @@ function render_sidebar(string $current, array $agent): void {
         }
         foreach ($deptOrder as $deptName) {
             if (!$admin && in_array($deptName, $leaderHiddenDepts, true)) continue;
+            if (!$admin && $deptName === 'Operations' && !$isMcLeaderOrBic) continue;
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
+            if (!$admin && $deptName === 'Operations') {
+                $visible = array_values(array_filter($visible, fn($it) => !empty($it['leaderVisible'])));
+            }
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';
             echo '<div class="sb-links-sub" hidden>';
@@ -280,6 +300,8 @@ function render_sidebar(string $current, array $agent): void {
     }
     echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
+    if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+    echo '<script>window.AE_CSRF = ' . json_encode($_SESSION['csrf']) . ';</script>';
     echo '<script src="assets/mc-links.js"></script>';
     echo '<script src="assets/global.js"></script>';
     if (function_exists('is_masquerading') && is_masquerading()) {
