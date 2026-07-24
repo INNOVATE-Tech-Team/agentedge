@@ -303,6 +303,9 @@ $missingCount = count($missingAgents);
 
     <div class="ag-toolbar">
       <input type="text" class="ag-search" id="agSearch" placeholder="Search name, email, office…" autocomplete="off">
+      <?php if ($isAdmin): ?>
+      <button type="button" class="btn-detail-link" id="bulk-send-btn" onclick="sendBulkCompletionLinks()" style="margin-left:auto">Email Everyone With Missing Info</button>
+      <?php endif; ?>
     </div>
 
     <div class="ag-tabs">
@@ -556,6 +559,7 @@ $missingCount = count($missingAgents);
                   <?php if ($isAdmin): ?>
                   <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
                   <a href="agent_profile.php?email=<?= h($a['email']) ?>" class="btn-detail-link">View Full Profile →</a>
+                  <button type="button" class="btn-detail-link" id="send-link-<?= $idx ?>" onclick="sendCompletionLink('<?= h($a['email']) ?>', 'send-link-<?= $idx ?>')">Send Completion Link →</button>
                   <?php endif; ?>
                 </div>
 
@@ -871,6 +875,44 @@ $missingCount = count($missingAgents);
       });
     })
     .catch(function () {});
+
+  window.sendCompletionLink = function (email, btnId) {
+    var btn = document.getElementById(btnId);
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch('api/send_profile_completion.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'single', email: email })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        btn.textContent = d.ok ? 'Sent ✓' : orig;
+        if (!d.ok) alert(d.error || 'Could not send.');
+        if (d.ok) setTimeout(function () { btn.textContent = orig; }, 3000);
+      })
+      .catch(function () { btn.disabled = false; btn.textContent = orig; alert('Network error.'); });
+  };
+
+  window.sendBulkCompletionLinks = function () {
+    if (!confirm('Email every active agent who is currently missing required profile info? Each gets their own personal link.')) return;
+    var btn = document.getElementById('bulk-send-btn');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch('api/send_profile_completion.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'bulk_incomplete' })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = orig;
+        if (!d.ok) { alert(d.error || 'Could not send.'); return; }
+        alert('Sent to ' + d.sent + ' agent' + (d.sent === 1 ? '' : 's') + '.');
+      })
+      .catch(function () { btn.disabled = false; btn.textContent = orig; alert('Network error.'); });
+  };
 
   window.saveAdminFields = function (email, idx) {
     var msg = document.getElementById('admin-save-msg-' + idx);

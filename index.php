@@ -59,6 +59,19 @@ $agent = require_login();
       <main class="wrap">
         <div id="sample-banner" class="banner" hidden></div>
 
+        <div id="profile-reminder-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:12px;width:min(440px,95vw);padding:26px;position:relative">
+            <button onclick="dismissProfileReminder()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#888">&times;</button>
+            <h3 style="margin:0 0 6px;font-size:16px;font-weight:800">Finish setting up your profile</h3>
+            <p style="margin:0 0 14px;font-size:13px;color:#666">A few required fields are still missing:</p>
+            <ul id="profile-reminder-list" style="margin:0 0 18px;padding-left:20px;font-size:13px;color:#444;line-height:1.7"></ul>
+            <div style="display:flex;gap:8px">
+              <a href="intake.php" class="btn-cal-nav" style="text-decoration:none;padding:9px 18px;background:#82C112;color:#111;border-radius:6px;font-weight:800;font-size:13px">Complete Profile →</a>
+              <button onclick="dismissProfileReminder()" style="padding:9px 14px;border:1px solid #ccc;background:#fff;color:#555;font-size:13px;border-radius:6px;cursor:pointer">Remind me later</button>
+            </div>
+          </div>
+        </div>
+
         <section class="tiles">
           <div class="tile tile-blue"><div class="tile-val" id="t-volume">—</div><div class="tile-lbl">Sales Volume</div></div>
           <div class="tile tile-green"><div class="tile-val" id="t-closed">—</div><div class="tile-lbl">Closed Deals</div></div>
@@ -119,6 +132,22 @@ $agent = require_login();
 
   <script src="assets/app.js"></script>
   <script>
+  (function(){
+    function dismiss(){ document.getElementById('profile-reminder-overlay').style.display = 'none'; }
+    window.dismissProfileReminder = dismiss;
+    fetch('api/profile_completeness.php', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.complete || !d.missing || !d.missing.length) return;
+        const list = document.getElementById('profile-reminder-list');
+        list.innerHTML = d.missing.map(f => '<li>' + f.label.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) + '</li>').join('');
+        document.getElementById('profile-reminder-overlay').style.display = 'flex';
+      })
+      .catch(() => {});
+    document.getElementById('profile-reminder-overlay').addEventListener('click', e => {
+      if (e.target === e.currentTarget) dismiss();
+    });
+  })();
   (function(){
     fetch('api/announcements.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
       const items=d.items||[];

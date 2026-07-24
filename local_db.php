@@ -437,6 +437,21 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_licenses_email ON agent_intake_licenses(agent_email)");
 
+    // Public "complete your profile" links (emailed reminders + backoffice
+    // send-link action). A new random token is minted every time a link is
+    // sent — old tokens for the same agent are never invalidated, so a
+    // resend can't break a link that's still sitting unopened in someone's
+    // inbox. Not expiring/single-use by design: this is a low-stakes
+    // reminder to fill in missing profile fields, not a security-sensitive
+    // action.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS profile_completion_tokens (
+        token      TEXT PRIMARY KEY,
+        email      TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by TEXT NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_profile_completion_tokens_email ON profile_completion_tokens(email)");
+
     // Ensure headshots directory exists and is web-protected
     $hsDir = $dir . '/headshots';
     if (!is_dir($hsDir)) @mkdir($hsDir, 0750, true);

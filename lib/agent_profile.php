@@ -5,6 +5,42 @@
 if (defined('AGENTEDGE_AGENT_PROFILE_LIB_LOADED')) return;
 define('AGENTEDGE_AGENT_PROFILE_LIB_LOADED', true);
 
+// Same required-field list enforced on submit by api/intake_public.php — kept
+// here too so "what's still missing" can be checked without a submission
+// (the completion-reminder email/popup, and the resend-only-missing form).
+const REQUIRED_INTAKE_FIELDS = [
+    'full_name'       => 'Full Name',
+    'phone'           => 'Phone Number',
+    'license_number'  => 'License Number',
+    'nar_number'      => 'NAR Number',
+    'mls_board'       => 'MLS Board',
+    'office_location' => 'Office Location',
+    'birthday'        => 'Birthday',
+    'address_line1'   => 'Address',
+    'city'            => 'City',
+    'state'           => 'State',
+    'zip'             => 'Zip Code',
+    'emergency_name'  => 'Emergency Contact Name',
+    'emergency_phone' => 'Emergency Contact Phone',
+    'bio'             => 'Bio',
+    'referring_agent' => 'Referring Agent',
+];
+
+// Returns [['key'=>'phone','label'=>'Phone Number'], ...] for every required
+// field that's still blank on this agent's intake row — empty array means
+// nothing missing (an agent with no agent_intake row at all is missing everything).
+function get_missing_required_fields(string $email): array {
+    $st = local_db()->prepare("SELECT * FROM agent_intake WHERE email = ?");
+    $st->execute([strtolower(trim($email))]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $missing = [];
+    foreach (REQUIRED_INTAKE_FIELDS as $key => $label) {
+        if (trim($row[$key] ?? '') === '') $missing[] = ['key' => $key, 'label' => $label];
+    }
+    return $missing;
+}
+
 function load_agent_profile(string $email): ?array {
     $st = local_db()->prepare(
         "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
