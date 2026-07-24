@@ -66,6 +66,12 @@ $agent = require_login();
     .agent-strip::-webkit-scrollbar{height:4px}
     .agent-strip::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
 
+    /* Flat "everyone at this line" grid (wraps instead of scrolling) */
+    .agent-grid{display:flex;flex-wrap:wrap;gap:8px}
+    .ag-sponsor{font-size:9px;color:#aaa;margin-top:-1px}
+    .level-back-link{margin-left:auto;font-size:11px;font-weight:700;color:#5b8e0d;text-decoration:none;white-space:nowrap}
+    .level-back-link:hover{text-decoration:underline}
+
     /* Agent card in strip */
     .ag-card{flex-shrink:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 10px 8px;background:white;border:1.5px solid #e6e7e8;border-radius:8px;cursor:pointer;min-width:108px;max-width:130px;text-align:center;transition:border-color 100ms,box-shadow 100ms;position:relative}
     .ag-card:hover{border-color:#c3dfa8;background:#fafff5}
@@ -171,20 +177,32 @@ function countByLevel(node, depth) {
   return counts;
 }
 
-// Flatten all nodes at a given depth
-function nodesAtDepth(root, target) {
+// Flatten all nodes at a given depth, paired with their direct sponsor
+function nodesAtDepthWithParent(root, target) {
   const out = [];
-  function walk(n, d) {
-    if (d === target) { out.push(n); return; }
-    (n.children||[]).forEach(c => walk(c, d+1));
+  function walk(n, d, parent) {
+    if (d === target) { out.push({node: n, parent}); return; }
+    (n.children||[]).forEach(c => walk(c, d+1, n));
   }
-  walk(root, 0);
+  walk(root, 0, null);
   return out;
 }
 
+// The chain of ancestors (1st line .. target's own line) leading to `target`
+function ancestorChainTo(root, target) {
+  let found = null;
+  function walk(n, chain) {
+    if (found || n === target) { if (!found && n === target) found = chain; return; }
+    (n.children||[]).forEach(c => walk(c, chain.concat([c])));
+  }
+  walk(root, []);
+  return found || [];
+}
+
 // State: selected agent at each line level
-let ROOT    = null;
-let path    = [null, null, null, null, null]; // path[0]=selected 1st-line agent, etc.
+let ROOT      = null;
+let path      = [null, null, null, null, null]; // path[0]=selected 1st-line agent, etc.
+let flatLevel = null; // when set (1-5), show every agent at that line instead of drilling one branch
 
 function selectAgent(level, agent) {
   path[level-1] = agent;
@@ -196,31 +214,113 @@ function selectAgent(level, agent) {
   });
 }
 
-// The "Nth Line" summary pills jump to a level section — but that section only
-// exists once the path has been drilled down to it. Auto-select down the tree
-// (keeping any existing selection that's still valid) so the section renders.
+// The "Nth Line" summary pills show every agent on that line across the whole
+// network (not just one drilled-down branch) — no need to hunt through each
+// line for someone with recruits first. Click the active pill again to return
+// to the normal drill-down view.
 function jumpToLevel(level) {
-  let parent = ROOT;
-  for (let l = 1; l < level; l++) {
-    const kids = parent && parent.children || [];
-    if (!kids.length) return;
-    let next = path[l-1] && kids.includes(path[l-1]) ? path[l-1] : null;
-    if (!next) next = kids.find(k => (k.children||[]).length > 0) || kids[0];
-    path[l-1] = next;
-    parent = next;
-  }
-  for (let i = level; i < 5; i++) path[i] = null;
+  flatLevel = (flatLevel === level) ? null : level;
+  path = [null, null, null, null, null];
   renderLevels();
+  updatePillStates();
+  requestAnimationFrame(() => {
+    const wrap = document.getElementById('levels-wrap');
+    if (wrap) wrap.scrollIntoView({behavior:'smooth', block:'start'});
+  });
+}
+
+function updatePillStates() {
+  document.querySelectorAll('.line-pill').forEach(p => {
+    p.classList.toggle('active', flatLevel !== null && Number(p.dataset.level) === flatLevel);
+  });
+}
+
+// Jump from a card in the flat "all agents on this line" view into the normal
+// drill-down, rooted along that agent's real ancestor chain.
+function drillFromFlat(level, node) {
+  const chain = ancestorChainTo(ROOT, node);
+  flatLevel = null;
+  path = [null, null, null, null, null];
+  chain.forEach((n, i) => { path[i] = n; });
+  renderLevels();
+  updatePillStates();
   requestAnimationFrame(() => {
     const sections = document.querySelectorAll('#levels-wrap .level-section');
-    if (sections[level-1]) sections[level-1].scrollIntoView({behavior:'smooth', block:'start'});
+    if (sections[level]) sections[level].scrollIntoView({behavior:'smooth', block:'nearest'});
   });
+}
+
+// Build one agent card (shared by the drill-down strips and the flat line view)
+function buildAgentCard(kid, opts) {
+  opts = opts || {};
+  const hasKids  = (kid.children||[]).length > 0;
+  const isVacant = !!kid.vacant;
+  const vol      = fmtMoney(kid.volume);
+  const deals    = kid.deals || 0;
+
+  const card = document.createElement('div');
+  card.className = 'ag-card' + (opts.selected ? ' selected' : '') + (!opts.clickable ? ' no-kids' : '') + (isVacant ? ' vacant' : '');
+  const sponsorLine = opts.sponsorName ? `<div class="ag-sponsor">under ${esc(opts.sponsorName)}</div>` : '';
+  card.innerHTML = isVacant ? `
+    <div class="ag-avatar vacant">${esc(initials(kid.name))}</div>
+    <div class="ag-name vacant-label">${esc(kid.name)}</div>
+    <div class="ag-deals">departed — recruits below</div>
+    ${sponsorLine}
+    <div class="ag-divider"></div>
+    <div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : `
+    <div class="ag-avatar">${esc(initials(kid.name))}</div>
+    <div class="ag-name">${esc(kid.name)}</div>
+    <div class="ag-vol${vol ? '' : ' zero'}">${vol || '—'}</div>
+    <div class="ag-deals"><span>${deals}</span> deal${deals===1?'':'s'}</div>
+    ${sponsorLine}
+    <div class="ag-divider"></div>
+    ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-no-rec">no recruits</div>'}`;
+
+  if (opts.clickable && opts.onClick) card.addEventListener('click', opts.onClick);
+  return card;
+}
+
+function renderFlatLevel(level) {
+  const wrap = document.getElementById('levels-wrap');
+  const entries = nodesAtDepthWithParent(ROOT, level);
+
+  const section = document.createElement('div');
+  section.className = 'level-section';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'level-header';
+  hdr.innerHTML = `
+    <span class="level-badge badge-${level}">${LINE_NAMES[level]}</span>
+    <span class="level-title">${esc(entries.length)} agent${entries.length===1?'':'s'} across the network</span>`;
+  const backLink = document.createElement('a');
+  backLink.href = '#';
+  backLink.className = 'level-back-link';
+  backLink.textContent = '← Back to drill-down view';
+  backLink.addEventListener('click', e => { e.preventDefault(); jumpToLevel(level); });
+  hdr.appendChild(backLink);
+  section.appendChild(hdr);
+
+  const grid = document.createElement('div');
+  grid.className = 'agent-grid';
+  entries.forEach(({node, parent}) => {
+    const hasKids = (node.children||[]).length > 0;
+    const card = buildAgentCard(node, {
+      clickable: hasKids,
+      onClick: () => drillFromFlat(level, node),
+      sponsorName: parent ? parent.name : null
+    });
+    grid.appendChild(card);
+  });
+  section.appendChild(grid);
+  wrap.appendChild(section);
 }
 
 function renderLevels() {
   const wrap = document.getElementById('levels-wrap');
   if (!wrap) return;
   wrap.innerHTML = '';
+
+  if (flatLevel) { renderFlatLevel(flatLevel); return; }
 
   // Build each level section
   for (let lvl = 1; lvl <= 5; lvl++) {
@@ -265,30 +365,14 @@ function renderLevels() {
 
     kids.forEach(kid => {
       const hasKids = (kid.children||[]).length > 0;
-      const isVacant = !!kid.vacant; // offboarded agent kept only because a downline still sits under them
       const isClickable = hasKids && lvl < 5;
       const isSelected = selectedAtThisLevel && selectedAtThisLevel === kid;
-      const vol = fmtMoney(kid.volume);
 
-      const deals = kid.deals || 0;
-      const card = document.createElement('div');
-      card.className = 'ag-card' + (isSelected ? ' selected' : '') + (!isClickable ? ' no-kids' : '') + (isVacant ? ' vacant' : '');
-      card.innerHTML = isVacant ? `
-        <div class="ag-avatar vacant">${esc(initials(kid.name))}</div>
-        <div class="ag-name vacant-label">${esc(kid.name)}</div>
-        <div class="ag-deals">departed — recruits below</div>
-        <div class="ag-divider"></div>
-        <div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : `
-        <div class="ag-avatar">${esc(initials(kid.name))}</div>
-        <div class="ag-name">${esc(kid.name)}</div>
-        <div class="ag-vol${vol ? '' : ' zero'}">${vol || '—'}</div>
-        <div class="ag-deals"><span>${deals}</span> deal${deals===1?'':'s'}</div>
-        <div class="ag-divider"></div>
-        ${hasKids ? `<div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : '<div class="ag-no-rec">no recruits</div>'}`;
-
-      if (isClickable) {
-        card.addEventListener('click', () => selectAgent(lvl, kid));
-      }
+      const card = buildAgentCard(kid, {
+        selected: isSelected,
+        clickable: isClickable,
+        onClick: () => selectAgent(lvl, kid)
+      });
       strip.appendChild(card);
 
       // Scroll selected card into view
@@ -316,6 +400,7 @@ function renderTree(tree, totalCount, sponsor) {
 
   ROOT = tree;
   path = [null, null, null, null, null];
+  flatLevel = null;
 
   // Sponsor card — the agent one level above the root
   if (sponsor) {
@@ -381,9 +466,10 @@ function renderTree(tree, totalCount, sponsor) {
     const n   = lineCounts[i];
     const pill = document.createElement('div');
     pill.className = 'line-pill' + (n === 0 ? ' zero' : '');
+    pill.dataset.level = i + 1;
     pill.innerHTML = `<span class="lp-count">${n}</span><span class="lp-label">${name}</span>`;
     if (n > 0) {
-      pill.title = `Jump to ${name}`;
+      pill.title = `See everyone on ${name}`;
       pill.addEventListener('click', () => jumpToLevel(i + 1));
     }
     bar.appendChild(pill);
@@ -517,7 +603,11 @@ document.addEventListener('wheel', e => {
 let _dragStrip = null, _dragStartX = 0, _dragStartScroll = 0, _dragMoved = false;
 document.addEventListener('mousedown', e => {
   const strip = e.target.closest('.agent-strip');
-  if (!strip) return;
+  // Short strips (common on levels 2-5, which often hold just a card or two)
+  // have nothing to scroll — don't arm drag-tracking or its click-swallowing
+  // for them, otherwise ordinary hand jitter during a click gets misread as
+  // a drag and eats the click that was meant to select the card.
+  if (!strip || strip.scrollWidth <= strip.clientWidth) return;
   _dragStrip = strip;
   _dragStartX = e.clientX;
   _dragStartScroll = strip.scrollLeft;
@@ -526,7 +616,7 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('mousemove', e => {
   if (!_dragStrip) return;
   const dx = e.clientX - _dragStartX;
-  if (Math.abs(dx) > 3) _dragMoved = true;
+  if (Math.abs(dx) > 6) _dragMoved = true;
   _dragStrip.scrollLeft = _dragStartScroll - dx;
 });
 document.addEventListener('mouseup', () => {
