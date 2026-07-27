@@ -26,10 +26,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $st = local_db()->prepare("SELECT full_name FROM agent_intake WHERE email = ?");
     $st->execute([$email]);
-    $name    = $st->fetchColumn() ?: '';
-    $missing = get_missing_required_fields($email);
+    $name     = $st->fetchColumn() ?: '';
+    $missing  = get_missing_required_fields($email);
+    $optional = get_blank_optional_fields($email);
 
-    echo json_encode(['ok' => true, 'name' => $name, 'missing' => $missing]);
+    echo json_encode(['ok' => true, 'name' => $name, 'missing' => $missing, 'optional' => $optional]);
     exit;
 }
 
@@ -47,8 +48,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // re-derive the missing set server-side too rather than trusting the
     // request, so this endpoint can't be used to overwrite fields the agent
     // already has on file.
-    $missingKeys = array_column(get_missing_required_fields($email), 'key');
-    $fields      = is_array($body['fields'] ?? null) ? $body['fields'] : [];
+    $missingKeys  = array_column(get_missing_required_fields($email), 'key');
+    $optionalKeys = array_column(get_blank_optional_fields($email), 'key');
+    $fields       = is_array($body['fields'] ?? null) ? $body['fields'] : [];
 
     $toSave = [];
     foreach ($missingKeys as $key) {
@@ -59,6 +61,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         $toSave[$key] = $val;
+    }
+    // Optional fields save if provided, but never block the submission or
+    // require a value — an agent who skips one just doesn't get it recorded.
+    foreach ($optionalKeys as $key) {
+        $val = trim((string)($fields[$key] ?? ''));
+        if ($val !== '') $toSave[$key] = $val;
     }
 
     if ($toSave) {

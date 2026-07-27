@@ -76,25 +76,61 @@
       bio: 'textarea',
     };
 
-    function render(name, missing) {
-      if (!missing.length) {
+    // Fields that render as a dropdown instead of a plain input, keyed by
+    // field name -> its option list. is_military must offer a real,
+    // non-blank "not applicable" value — leaving it as an empty string would
+    // fail the backend's required-field check and block the whole save.
+    const SELECT_OPTIONS = {
+      is_military: [
+        ['not_applicable', 'Not Applicable'],
+        ['veteran', 'Veteran'],
+        ['active', 'Active Duty'],
+      ],
+    };
+
+    function fieldHtml(f) {
+      if (SELECT_OPTIONS[f.key]) {
+        const opts = SELECT_OPTIONS[f.key].map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
+        return `<select id="f-${esc(f.key)}" name="${esc(f.key)}">${opts}</select>`;
+      }
+      if (INPUT_TYPE[f.key] === 'textarea') {
+        return `<textarea id="f-${esc(f.key)}" name="${esc(f.key)}"></textarea>`;
+      }
+      return `<input id="f-${esc(f.key)}" name="${esc(f.key)}" type="${INPUT_TYPE[f.key] || 'text'}">`;
+    }
+
+    function render(name, missing, optional) {
+      optional = optional || [];
+      if (!missing.length && !optional.length) {
         card.innerHTML = '<div class="state-msg done">✓ Your profile is already complete' + (name ? ', ' + esc(name.split(' ')[0]) : '') + '! Nothing left to fill in.</div>';
         return;
       }
       const greeting = name ? esc(name.split(' ')[0]) + ', a' : 'A';
+      const introText = missing.length
+        ? `Fill in the ${missing.length} item${missing.length === 1 ? '' : 's'} below — this only shows what's still needed, everything else on file stays as-is.`
+        : `Your required fields are all set — a couple of optional items below if you'd like to add them.`;
       card.innerHTML = `
         <h1>${greeting} few things are missing from your profile</h1>
-        <div class="sub">Fill in the ${missing.length} item${missing.length === 1 ? '' : 's'} below — this only shows what's still needed, everything else on file stays as-is.</div>
+        <div class="sub">${introText}</div>
         <div class="err" id="err"></div>
         <form id="form">
           ${missing.map(f => `
             <div class="field">
               <label for="f-${esc(f.key)}">${esc(f.label)}</label>
-              ${INPUT_TYPE[f.key] === 'textarea'
-                ? `<textarea id="f-${esc(f.key)}" name="${esc(f.key)}"></textarea>`
-                : `<input id="f-${esc(f.key)}" name="${esc(f.key)}" type="${INPUT_TYPE[f.key] || 'text'}">`}
+              ${fieldHtml(f)}
             </div>
           `).join('')}
+          ${optional.length ? `
+            <div class="field" style="margin-top:22px;padding-top:16px;border-top:1px solid #eee">
+              <label style="text-transform:none;font-size:11px;color:#999;letter-spacing:0;font-weight:600">Optional — feel free to skip</label>
+            </div>
+            ${optional.map(f => `
+              <div class="field">
+                <label for="f-${esc(f.key)}">${esc(f.label)} <span style="text-transform:none;font-weight:400;color:#aaa">(optional)</span></label>
+                ${fieldHtml(f)}
+              </div>
+            `).join('')}
+          ` : ''}
           <button type="submit" class="btn-save" id="save-btn">Save</button>
         </form>
       `;
@@ -143,7 +179,7 @@
             card.innerHTML = '<div class="state-msg">' + esc(d.error || 'This link is invalid.') + '</div>';
             return;
           }
-          render(d.name, d.missing || []);
+          render(d.name, d.missing || [], d.optional || []);
         })
         .catch(() => {
           card.innerHTML = '<div class="state-msg">Could not load this form. Please try again later.</div>';
