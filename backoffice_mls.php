@@ -179,7 +179,7 @@ $superAdmin = is_super_admin();
         <div style="margin-top:10px">
           <div class="field"><label>Products Using This MLS</label>
             <div class="check-group">
-              <label class="check-item"><input type="checkbox" id="f-prod-idx" value="idx"> growwithinnovate.com (IDX)</label>
+              <label class="check-item"><input type="checkbox" id="f-prod-idx" value="idx"> website.innovateonline.com (IDX)</label>
               <label class="check-item"><input type="checkbox" id="f-prod-crm" value="crm"> advantage.innovateonline.com (CRM)</label>
             </div>
           </div>
@@ -270,7 +270,7 @@ function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('
 
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
 const FEED_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark','Other':'Other'};
-const PROD_LABELS={idx:'growwithinnovate.com',crm:'advantage.innovateonline.com'};
+const PROD_LABELS={idx:'website.innovateonline.com',crm:'advantage.innovateonline.com'};
 
 let allRows = [];
 let viewId = null;
