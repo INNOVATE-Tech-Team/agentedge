@@ -3,7 +3,20 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 $agent = require_login();
+
+// Team members (agents on a Team Leader's roster) get the "Your Production"
+// card instead of the cap wheel — a team leader's own team_dashboard.php
+// already covers team-wide cap/production context for them, and not every
+// commission plan has a cap anyway (see the 100% Plan case). Everyone else
+// keeps the cap wheel; Your Production shows for both.
+$isTeamMember = false;
+try {
+    $tm = local_db()->prepare("SELECT 1 FROM team_members WHERE agent_email = ?");
+    $tm->execute([strtolower(trim($agent['email'] ?? ''))]);
+    $isTeamMember = (bool)$tm->fetchColumn();
+} catch (\Throwable $e) {}
 ?>
 <!doctype html>
 <html lang="en">
@@ -13,7 +26,9 @@ $agent = require_login();
   <title>AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
+  <?php if (!$isTeamMember): ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <?php endif; ?>
   <style>
     .ann-panel{margin-bottom:20px}
     .ann-panel h2{margin:0 0 10px;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
@@ -84,7 +99,8 @@ $agent = require_login();
           <div id="ann-list"></div>
         </div>
 
-        <div class="grid2">
+        <div class="grid-dash">
+          <?php if (!$isTeamMember): ?>
           <section class="card">
             <h2>Cap Progress</h2>
             <div class="cap-wrap">
@@ -97,6 +113,20 @@ $agent = require_login();
               <div><dt>Remaining</dt><dd id="cap-remaining">—</dd></div>
             </dl>
             <p class="src-note" id="cap-note"></p>
+          </section>
+          <?php endif; ?>
+
+          <section class="card">
+            <h2>Your Production</h2>
+            <div class="residual-head">
+              <span class="residual-amt" id="prod-volume">—</span>
+              <span class="residual-lbl">YTD sales volume</span>
+            </div>
+            <dl class="cap-legend">
+              <div><dt>Deals</dt><dd id="prod-deals">—</dd></div>
+              <div><dt>Avg Sale</dt><dd id="prod-avg">—</dd></div>
+            </dl>
+            <p class="src-note" id="prod-rank"></p>
           </section>
 
           <section class="card">
@@ -130,7 +160,7 @@ $agent = require_login();
     </div>
   </div>
 
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=<?= @filemtime(__DIR__ . '/assets/app.js') ?: time() ?>"></script>
   <script>
   (function(){
     function dismiss(){ document.getElementById('profile-reminder-overlay').style.display = 'none'; }

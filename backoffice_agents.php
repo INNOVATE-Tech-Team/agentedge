@@ -67,6 +67,11 @@ $intakeAgents = local_db()->query(
      LEFT JOIN agent_admin aa ON aa.email = i.email
      ORDER BY i.full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
+// Drop anyone currently offboarding or already offboarded — terminated_date
+// is stamped the moment an agent enters the Offboarding Queue (and cleared
+// only if that offboarding is cancelled), so this page stays focused on
+// current agents instead of showing departed ones as stale Draft/Submitted rows.
+$intakeAgents = array_values(array_filter($intakeAgents, fn($a) => empty($a['terminated_date'])));
 if ($myMcSlugs !== null) {
     $intakeAgents = array_values(array_filter($intakeAgents, function($a) use ($rosterMcSlugsByEmail, $myMcSlugs) {
         $email = strtolower(trim($a['email'] ?? ''));
@@ -264,6 +269,12 @@ $missingCount = count($missingAgents);
 .ag-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .table-wrap{overflow-x:auto}
 .no-results{padding:32px;text-align:center;color:var(--faint);font-size:13px}
+.hs-thumb .hs-del{position:absolute;top:-6px;right:-6px;background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0}
+.hs-thumb .hs-del:hover{background:rgba(200,0,0,.85)}
+.hs-thumb .hs-dl{position:absolute;bottom:-6px;left:-6px;background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;text-decoration:none}
+.hs-thumb .hs-dl:hover{background:rgba(0,110,0,.85)}
+.hs-upload-label{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f0f5e8;border:1px dashed #82C112;border-radius:6px;font-size:11px;font-weight:700;color:#5b8e0d;cursor:pointer}
+.hs-upload-label:hover{background:#e4f0d8}
 </style>
 </head>
 <body>
@@ -337,7 +348,7 @@ $missingCount = count($missingAgents);
   $statusLabel = $isSubmitted ? 'Submitted' : 'Draft';
   $tabAttr = $isSubmitted ? 'submitted' : 'draft';
   $updatedRaw = $a['submitted_at'] ?? $a['updated_at'] ?? '';
-  $updated = $updatedRaw ? date('M j, Y', strtotime($updatedRaw)) : '—';
+  $updated = $updatedRaw ? fmt_dt_et($updatedRaw, 'M j, Y') : '—';
   $rowId = 'row-' . $idx;
   $detailId = 'detail-' . $idx;
   $emailLower = strtolower($a['email']);
@@ -471,18 +482,32 @@ $missingCount = count($missingAgents);
                 </div>
 
                 <div class="dg-section">Photo</div>
-                <div class="dg-field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:10px">
-                  <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
-                  <?php if ($hs > 0): ?>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <div class="dg-field" style="grid-column:1/-1">
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
+                    <div class="hs-grid" id="hs-grid-<?= $idx ?>" style="display:flex;gap:8px;flex-wrap:wrap">
                       <?php foreach (($hsAll[$emailLower] ?? []) as $hsFile): ?>
-                        <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                          <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
-                        </a>
+                        <div class="hs-thumb" style="position:relative;width:70px;height:70px">
+                          <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
+                            <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+                          </a>
+                          <a class="hs-dl" href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>&dl=1" download="<?= h($hsFile['orig_name'] ?: 'headshot.jpg') ?>" title="Download">&#8681;</a>
+                          <?php if ($isAdmin): ?>
+                          <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>')" title="Delete">✕</button>
+                          <?php endif; ?>
+                        </div>
                       <?php endforeach; ?>
+                      <?php if ($hs === 0): ?>
+                        <span class="dg-value empty">No headshot uploaded yet</span>
+                      <?php endif; ?>
                     </div>
-                  <?php else: ?>
-                    <span class="dg-value empty">No headshot uploaded yet</span>
+                  </div>
+                  <?php if ($isAdmin): ?>
+                  <div style="margin-top:8px">
+                    <label class="hs-upload-label" for="hs-file-<?= $idx ?>">&#43; Upload Headshot</label>
+                    <input type="file" id="hs-file-<?= $idx ?>" accept="image/*" style="display:none" onchange="uploadHeadshot('<?= h($a['email']) ?>', <?= $idx ?>, this)">
+                    <span style="font-size:11px;color:var(--faint);margin-left:8px" id="hs-msg-<?= $idx ?>"></span>
+                  </div>
                   <?php endif; ?>
                 </div>
 
@@ -490,8 +515,7 @@ $missingCount = count($missingAgents);
                 <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
                   <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
                   <div style="display:flex;gap:8px;margin-top:8px">
-                    <textarea id="bo-notes-input-<?= $idx ?>" placeholder="Add a note… (Enter to save, Shift+Enter for a new line)" rows="1"
-                              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addAgentNote(<?= $idx ?>);}"
+                    <textarea id="bo-notes-input-<?= $idx ?>" placeholder="Add a note…" rows="1"
                               oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
                               style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
                     <button type="button" class="btn-detail-link" onclick="addAgentNote(<?= $idx ?>)">Add Note</button>
@@ -548,7 +572,7 @@ $missingCount = count($missingAgents);
 
                 <div class="detail-actions">
                   <?php if ($isSubmitted): ?>
-                    <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? date('M j, Y', strtotime($a['submitted_at'])) : '—') ?></span>
+                    <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? fmt_dt_et($a['submitted_at'], 'M j, Y') : '—') ?></span>
                   <?php else: ?>
                     <span style="font-size:11px;color:var(--faint)">Last updated <?= h($updated) ?></span>
                   <?php endif; ?>
@@ -570,7 +594,7 @@ $missingCount = count($missingAgents);
 
 <?php foreach ($pendingAgents as $idx => $p):
   $addedRaw = $p['added_at'] ?? '';
-  $added = $addedRaw ? date('M j, Y', strtotime($addedRaw)) : '—';
+  $added = $addedRaw ? fmt_dt_et($addedRaw, 'M j, Y') : '—';
   $rowId = 'prow-' . $idx;
   $detailId = 'pdetail-' . $idx;
 ?>
@@ -668,6 +692,7 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Phone</label><input id="em-phone"></div>
         <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
         <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
+        <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from the roster email"></div>
         <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
         <div class="em-section">Address</div>
@@ -941,6 +966,40 @@ $missingCount = count($missingAgents);
       .catch(function () { msg.textContent = 'Network error.'; });
   };
 
+  window.uploadHeadshot = function (email, idx, inputEl) {
+    var file = inputEl.files[0];
+    if (!file) return;
+    var msg = document.getElementById('hs-msg-' + idx);
+    if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
+    msg.textContent = 'Uploading…';
+    var fd = new FormData();
+    fd.append('headshot', file);
+    fd.append('email', email);
+    fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) { location.reload(); }
+        else { msg.textContent = res.error || 'Upload failed.'; }
+      })
+      .catch(function () { msg.textContent = 'Network error.'; });
+    inputEl.value = '';
+  };
+
+  window.deleteHeadshot = function (key) {
+    if (!confirm('Delete this headshot?')) return;
+    fetch('api/intake.php?action=delete_file', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) { location.reload(); }
+        else { alert(res.error || 'Delete failed.'); }
+      })
+      .catch(function () { alert('Network error.'); });
+  };
+
   var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone_last4',
     'address_line1','address_line2','city','state','zip','country',
     'license_number','license_state','license_exp','nar_number',
@@ -1020,6 +1079,7 @@ $missingCount = count($missingAgents);
       });
       document.getElementById('em-hire_date').value = extra.hire_date || '';
       document.getElementById('em-license_renewal').value = extra.license_renewal || '';
+      document.getElementById('em-alt_email').value = extra.alt_email || '';
       document.getElementById('em-personal_tax_id').value = '';
       document.getElementById('em-corporate_tax_id').value = '';
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1058,7 +1118,8 @@ $missingCount = count($missingAgents);
       email: emCurrentEmail,
       birthday: emExtraBirthday,
       hire_date: document.getElementById('em-hire_date').value,
-      license_renewal: document.getElementById('em-license_renewal').value
+      license_renewal: document.getElementById('em-license_renewal').value,
+      alt_email: document.getElementById('em-alt_email').value
     };
 
     Promise.all([

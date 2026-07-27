@@ -241,6 +241,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Email</span><?= dv($a['email']) ?></div>
           <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
@@ -419,9 +420,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 
           <div class="detail-actions">
             <?php if (!empty($a['submitted'])): ?>
-              <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? date('M j, Y', strtotime($a['submitted_at'])) : '—') ?></span>
+              <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? fmt_dt_et($a['submitted_at'], 'M j, Y') : '—') ?></span>
             <?php else: ?>
-              <span style="font-size:11px;color:var(--faint)">Last updated <?= h($a['updated_at'] ? date('M j, Y', strtotime($a['updated_at'])) : '—') ?></span>
+              <span style="font-size:11px;color:var(--faint)">Last updated <?= h($a['updated_at'] ? fmt_dt_et($a['updated_at'], 'M j, Y') : '—') ?></span>
             <?php endif; ?>
             <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
             <button type="button" class="btn-detail-link" onclick="openEditModal()">Edit Profile →</button>
@@ -496,7 +497,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="stub-pane" style="padding:20px">No notes yet.</div>
           <?php else: foreach ($notes as $n): ?>
             <div class="note-card">
-              <div class="note-meta"><?= h($n['created_by']) ?> — <?= h(date('M j, Y g:ia', strtotime($n['created_at']))) ?></div>
+              <div class="note-meta"><?= h($n['created_by']) ?> — <?= h(fmt_dt_et($n['created_at'])) ?></div>
               <div class="note-body"><?= h($n['note']) ?></div>
             </div>
           <?php endforeach; endif; ?>
@@ -513,7 +514,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="stub-pane" style="padding:20px">No communications logged yet.</div>
           <?php else: foreach ($commsLog as $c): ?>
             <div class="note-card">
-              <div class="note-meta"><?= h($c['sender_email']) ?> — <?= h(date('M j, Y g:ia', strtotime($c['sent_at']))) ?></div>
+              <div class="note-meta"><?= h($c['sender_email']) ?> — <?= h(fmt_dt_et($c['sent_at'])) ?></div>
               <div class="note-body"><strong><?= h($c['subject']) ?></strong><br><?= h($c['snippet']) ?></div>
             </div>
           <?php endforeach; endif; ?>
@@ -527,7 +528,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
         <div class="checklist-line">
           <strong>Onboarding:</strong>
           <?php if ($queueStatus['onboarding']): $ob = $queueStatus['onboarding']; ?>
-            <?= h(ucfirst($ob['status'])) ?> — added <?= h(date('M j, Y', strtotime($ob['added_at']))) ?>
+            <?= h(ucfirst($ob['status'])) ?> — added <?= h(fmt_dt_et($ob['added_at'], 'M j, Y')) ?>
             — <a href="onboarding.php?open=<?= (int)$ob['id'] ?>" target="_blank" class="btn-detail-link" style="margin-left:4px">View Checklist →</a>
           <?php else: ?>
             <span class="dg-value empty">No onboarding record on file.</span>
@@ -536,7 +537,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
         <div class="checklist-line">
           <strong>Offboarding:</strong>
           <?php if ($queueStatus['offboarding']): $off = $queueStatus['offboarding']; ?>
-            <?= h(ucfirst($off['status'])) ?> — added <?= h(date('M j, Y', strtotime($off['added_at']))) ?>
+            <?= h(ucfirst($off['status'])) ?> — added <?= h(fmt_dt_et($off['added_at'], 'M j, Y')) ?>
             — <a href="offboarding.php?open=<?= (int)$off['id'] ?>" target="_blank" class="btn-detail-link" style="margin-left:4px">View Checklist →</a>
           <?php else: ?>
             <span class="dg-value empty">No offboarding record on file.</span>
@@ -577,6 +578,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Phone</label><input id="em-phone"></div>
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
+            <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
             <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
             <div class="em-section">Address</div>
@@ -992,6 +994,7 @@ window.openEditModal = function () {
     });
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
+    document.getElementById('em-alt_email').value = extra.alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1028,7 +1031,8 @@ window.saveEditModal = function () {
     email: PROFILE_EMAIL,
     birthday: emExtraBirthday,
     hire_date: document.getElementById('em-hire_date').value,
-    license_renewal: document.getElementById('em-license_renewal').value
+    license_renewal: document.getElementById('em-license_renewal').value,
+    alt_email: document.getElementById('em-alt_email').value
   };
 
   Promise.all([
