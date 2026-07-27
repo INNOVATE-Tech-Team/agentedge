@@ -310,7 +310,15 @@ function sendReply(id){
       replyPendingFiles=[];
       (files.length?uploadTicketFilesSequential(d.messageId,files):Promise.resolve()).then(load);
     } else { alert(d.error||'Reply failed — please try again.'); }
-  }).catch(()=>alert('Network error — reply was not sent.'));
+  }).catch(()=>{
+    // A dropped connection here doesn't mean the reply wasn't saved — the
+    // server may have committed it before the response failed to come back.
+    // Reload the ticket instead of just asserting it failed, so the thread
+    // shows the true state — otherwise a user who trusts this message and
+    // clicks Reply again risks posting the same reply twice.
+    alert('Connection issue sending your reply — reloading the ticket to check whether it went through.');
+    openTicket(id);
+  });
 }
 
 function addCc(id){
