@@ -30,9 +30,8 @@ $rows = $db->query("
     LIMIT 300
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-function fmt_dt(string $dt): string {
-    $ts = strtotime($dt);
-    return $ts ? date('M j, Y g:ia', $ts) : $dt;
+function fmt_dt(?string $dt): string {
+    return fmt_dt_et($dt);
 }
 ?>
 <!doctype html>

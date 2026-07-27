@@ -350,7 +350,7 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
       <?php if ($mySubmission): ?>
       <div class="upload-submitted">
         <div class="upload-submitted-title">✓ Submitted</div>
-        <div class="upload-submitted-sub"><?= htmlspecialchars($mySubmission['original_name']) ?> — <?= date('F j, Y g:ia', strtotime($mySubmission['submitted_at'])) ?></div>
+        <div class="upload-submitted-sub"><?= htmlspecialchars($mySubmission['original_name']) ?> — <?= fmt_dt_et($mySubmission['submitted_at'], 'F j, Y g:ia') ?></div>
         <button class="btn-cancel" style="background:white;border:1.5px solid #ccc;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700" onclick="document.getElementById('upload-input').click()">Re-upload</button>
       </div>
       <?php else: ?>

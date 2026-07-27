@@ -108,7 +108,7 @@ foreach ($results as $r) {
                 <td class="disc-scores-cell">
                   <?= (int)$r['score_d'] ?>&nbsp;/&nbsp;<?= (int)$r['score_i'] ?>&nbsp;/&nbsp;<?= (int)$r['score_s'] ?>&nbsp;/&nbsp;<?= (int)$r['score_c'] ?>
                 </td>
-                <td class="disc-date-cell"><?= date('M j, Y', strtotime($r['completed_at'])) ?></td>
+                <td class="disc-date-cell"><?= fmt_dt_et($r['completed_at'], 'M j, Y') ?></td>
                 <td>
                   <a href="disc-result.php?token=<?= urlencode($r['token']) ?>"
                      class="disc-view-link" target="_blank">View</a>

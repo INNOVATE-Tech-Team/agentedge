@@ -84,7 +84,7 @@ if ($lesson['type'] === 'upload') {
               <tr>
                 <td class="agent-email"><?= htmlspecialchars($u['agent_email']) ?></td>
                 <td><?= htmlspecialchars($u['original_name']) ?></td>
-                <td><?= date('M j, Y g:ia', strtotime($u['submitted_at'])) ?></td>
+                <td><?= fmt_dt_et($u['submitted_at']) ?></td>
                 <td><a class="dl-btn" href="api/uni_download.php?submission=<?= (int)$u['id'] ?>" target="_blank">Download</a></td>
               </tr>
               <?php endforeach; ?>
@@ -112,7 +112,7 @@ if ($lesson['type'] === 'upload') {
                 <td class="agent-email"><?= htmlspecialchars($a['agent_email']) ?></td>
                 <td><?= htmlspecialchars($a['question']) ?><br><span class="qtype-tag"><?= htmlspecialchars($a['qtype']) ?></span></td>
                 <td><?= $resp ?></td>
-                <td><?= date('M j, Y g:ia', strtotime($a['submitted_at'])) ?></td>
+                <td><?= fmt_dt_et($a['submitted_at']) ?></td>
               </tr>
               <?php endforeach; ?>
             </tbody>

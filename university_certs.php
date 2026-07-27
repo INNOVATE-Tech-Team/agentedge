@@ -80,7 +80,7 @@ if ($printMode) {
           <div class="cert-footer">
             <div class="cert-date-block">
               <div class="cert-footer-label">Date Issued</div>
-              <div class="cert-footer-value"><?= date('F j, Y', strtotime($certRow['issued_at'])) ?></div>
+              <div class="cert-footer-value"><?= fmt_dt_et($certRow['issued_at'], 'F j, Y') ?></div>
             </div>
             <div class="cert-seal">🎓</div>
             <div class="cert-code-block">
@@ -172,7 +172,7 @@ $certs = $certsQ->fetchAll(PDO::FETCH_ASSOC);
           </div>
           <div class="cert-card-meta">
             <div>
-              <div class="cert-date">Issued <?= date('M j, Y', strtotime($cert['issued_at'])) ?></div>
+              <div class="cert-date">Issued <?= fmt_dt_et($cert['issued_at'], 'M j, Y') ?></div>
               <div class="cert-code"><?= htmlspecialchars($cert['cert_code']) ?></div>
             </div>
             <a class="cert-print-btn" href="university_certs.php?print=1&code=<?= urlencode($cert['cert_code']) ?>" target="_blank">Print</a>

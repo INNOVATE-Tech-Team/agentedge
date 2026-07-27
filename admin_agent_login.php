@@ -160,7 +160,7 @@ $pending = $db->query(
           <?php foreach ($pending as $p): ?>
             <tr>
               <td><?= h($p['email']) ?></td>
-              <td><?= h($p['expires_at']) ?></td>
+              <td><?= h(fmt_dt_et($p['expires_at'])) ?></td>
               <td>
                 <form method="post" style="display:inline" onsubmit="return confirm('Revoke this link?')">
                   <input type="hidden" name="action" value="revoke">
