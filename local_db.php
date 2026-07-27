@@ -1554,44 +1554,28 @@ function local_db(): PDO {
         foreach ($memberships as $m) { $mm->execute($m); }
     }
 
-    // Backfill: rows present in Carrie's MLS spreadsheet but not captured in the
-    // original seed above. Runs on every boot; INSERT is skipped once a row with
-    // the same state+name+username already exists, so it's safe to re-run.
-    $mmBackfillCheck = $pdo->prepare("SELECT COUNT(*) FROM mls_memberships WHERE state=? AND name=? AND username=?");
-    $mmBackfillIns = $pdo->prepare("INSERT INTO mls_memberships
-        (state,board_or_mls,name,membership_type,address,phone,office_id,broker_of_record,
-         username,password,login_link,notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
-    $mmBackfill = [
-        ['NC','MLS','Triad','','','','','Carrie Kinney','283428','Innovate25!','https://triadmls.com/','$63/month (WSAR)'],
-        ['SC | HH','MLS','Lowcountry','Flex','','','','Carrie Kinney','bmls.kinneyc','Innovate2025!!','https://bmls.flexmls.com/',''],
-        ['SC | CHS','MLS','Charleston Trident Association of Realtors (CTAR)','Matrix','','','4132','Carrie Kinney','4132','4620','https://ims.charlestonrealtors.com/',''],
-        ['SC | HV','MLS','Pee Dee Realtor Association','Paragon','','','','Carrie Kinney','554031769','Innovate26!!','https://peedeemls.paragonrels.com/ParagonLS/Default.mvc/Login','carrie@innovateonline.com login; $100/qtr'],
-    ];
-    foreach ($mmBackfill as $b) {
-        $mmBackfillCheck->execute([$b[0], $b[2], $b[8]]);
-        if ($mmBackfillCheck->fetchColumn() == 0) { $mmBackfillIns->execute($b); }
-    }
+    // NOTE: a one-time backfill block used to live here (added rows for Triad,
+    // Lowcountry, Charleston Trident Assoc of Realtors, and Pee Dee Realtor
+    // Association from an earlier version of Carrie's spreadsheet). Removed
+    // 2026-07-27 — its exact-name dedup check didn't recognize differently-named
+    // rows an even earlier reconciliation pass had already added under, so on
+    // this server's first boot after deploy it silently created 3 duplicate rows
+    // (Triad/Triad MLS, Charleston Trident.../Charleston-CTAR, Pee Dee w/ and w/o
+    // trailing space) — and because it ran unconditionally on every request, any
+    // manual delete of one of those duplicates got silently re-created on the
+    // very next page load. All 4 of its entries already have a permanent,
+    // better-documented counterpart in mls_memberships now, so this block has
+    // fully served its purpose.
 
     // Reconciliation pass 2026-07-27: Carrie's updated "MLS & Assoc" spreadsheet.
-    // Adds memberships not previously captured and corrects/fills fields on a
-    // handful of existing rows whose credentials had gone stale. INSERTs dedupe
-    // like the backfill above; UPDATEs match on stable identifying columns and
-    // simply no-op once applied, so this whole block is safe to re-run.
-    $mm3Check = $pdo->prepare("SELECT COUNT(*) FROM mls_memberships WHERE state=? AND name=? AND username=?");
-    $mm3Ins = $pdo->prepare("INSERT INTO mls_memberships
-        (state,board_or_mls,name,membership_type,office_id,broker_of_record,username,password,login_link,notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?)");
-    $mm3New = [
-        ['NC','MLS','Hive','Flex','552500608','Carrie Kinney','ncr.554031769','Innovate2026!!','https://hivemls.relevateone.com/dashboard','Area: East Coast; Board: BCAR, CFAR; email carriekinneyrealtor@gmail.com'],
-        ['SC','MLS','Coastal Carolinas Assoc of Realtors (CCAR)','Paragon','19197','Carrie Kinney','29819','','https://www.ccarsc.org/','Area: Horry & Georgetown Co; NRDS 554031769; additional CCAR login carrie@innovateonline.com / Innovate2025!!'],
-        ['SC','MLS','CCAR','','42507','Carrie Kinney','31918','','','NRDS 31918'],
-        ['SC','MLS','CCAR','','42508','Carrie Kinney','31919','','','NRDS 31919'],
-    ];
-    foreach ($mm3New as $n) {
-        $mm3Check->execute([$n[0], $n[2], $n[6]]);
-        if ($mm3Check->fetchColumn() == 0) { $mm3Ins->execute($n); }
-    }
+    // Corrects/fills fields on existing rows whose credentials had gone stale;
+    // UPDATEs match on stable identifying columns and simply no-op once applied,
+    // so this part is safe to re-run. (The INSERT half of this pass, which added
+    // Hive and 3 new CCAR rows, has been removed now that it's applied — an
+    // unconditional INSERT-if-not-exists block run on every request will silently
+    // recreate a row the instant someone deletes it, exactly what happened to the
+    // old mmBackfill block above. If any of those 4 rows ever need re-adding, do
+    // it once by hand rather than reintroducing a standing backfill.)
     $mm3Updates = [
         ["UPDATE mls_memberships SET membership_type=?, office_id=?, broker_of_record=?, username=?, password=?, login_link=?, notes=? WHERE state=? AND name=? AND broker_of_record=''",
          ['Paragon','81833','Carrie Kinney','kinneycar','Diesel1972!','https://my.doorifymls.com/','Area: Triangle; carrie@innovateonline.com login','NC','Doorify | Raleigh']],
