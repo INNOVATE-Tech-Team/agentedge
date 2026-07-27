@@ -76,7 +76,7 @@ $statusLabels = [
             $fd     = date('M j, Y', strtotime($req['slot_date']));
             $fs     = date('g:i A', strtotime($req['start_time']));
             $fe     = date('g:i A', strtotime($req['end_time']));
-            $createdOn = date('M j, Y g:i A', strtotime($req['created_at']));
+            $createdOn = fmt_dt_et($req['created_at'], 'M j, Y g:i A');
           ?>
           <tr id="reqrow-<?= $req['id'] ?>">
             <td>

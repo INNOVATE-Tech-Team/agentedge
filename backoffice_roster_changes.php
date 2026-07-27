@@ -34,9 +34,8 @@ $added    = array_values(array_filter($changes, fn($r) => $r['action'] === 'adde
 $removed  = array_values(array_filter($changes, fn($r) => $r['action'] === 'removed'));
 $restored = array_values(array_filter($changes, fn($r) => $r['action'] === 'restored'));
 
-function fmt_dt(string $dt): string {
-    $ts = strtotime($dt . ' UTC');
-    return $ts ? date('M j, Y g:ia', $ts) : $dt;
+function fmt_dt(?string $dt): string {
+    return fmt_dt_et($dt);
 }
 
 $stateNames = [
