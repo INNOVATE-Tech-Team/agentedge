@@ -4,46 +4,48 @@
 // Usage (as yourself):
 //   https://agentedge.innovateonline.com/api/dotloop_debug.php
 //
-// Usage (to inspect any agent, as admin):
-//   https://agentedge.innovateonline.com/api/dotloop_debug.php?staffid=42&secret=YOUR_DEBUG_SECRET
+// Usage (to inspect another agent's connection, as admin):
+//   https://agentedge.innovateonline.com/api/dotloop_debug.php?email=someone@example.com&secret=YOUR_DEBUG_SECRET
 //
-// Set debug_secret in config.php to enable the staffid override.
+// Set debug_secret in config.php to enable the email override.
 //
 require __DIR__ . '/../db.php';
 require __DIR__ . '/../auth.php';
+require __DIR__ . '/../lib/dotloop.php';
 header('Content-Type: application/json');
 
 $viewer = current_agent();
 if (!$viewer) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
 
-$target_staffid = (int)$viewer['id'];
+$target_email = $viewer['email'];
 
 // Allow checking another agent if a matching debug_secret is passed.
-if (isset($_GET['staffid'])) {
+if (isset($_GET['email'])) {
     $c = cfg();
     $secret = $c['debug_secret'] ?? null;
     if (!$secret || ($_GET['secret'] ?? '') !== $secret) {
         http_response_code(403);
-        echo json_encode(['error' => 'staffid override requires ?secret= matching debug_secret in config.php']);
+        echo json_encode(['error' => 'email override requires ?secret= matching debug_secret in config.php']);
         exit;
     }
-    $target_staffid = (int)$_GET['staffid'];
+    $target_email = (string)$_GET['email'];
 }
 
-$row = db_one(
-    "SELECT access_token, refresh_token, expires_at, dotloop_profile_id
-     FROM agentedge_dotloop_tokens WHERE staffid = ?",
-    [(string)$target_staffid]
-);
+$row = dotloop_get_tokens($target_email);
 if (!$row) {
-    echo json_encode(['error' => 'no token stored for this staffid — agent has not connected dotloop yet', 'staffid' => $target_staffid]);
+    echo json_encode(['error' => 'no token stored for this email — agent has not connected dotloop yet', 'email' => $target_email]);
     exit;
 }
 
-$token = $row['access_token'];
-$out   = [
-    'staffid'            => $target_staffid,
-    'stored_profile_id'  => $row['dotloop_profile_id'],
+$token = dotloop_token($target_email); // auto-refreshes if needed
+if ($token === null) {
+    echo json_encode(['error' => 'stored refresh_token failed — agent needs to reconnect', 'email' => $target_email, 'stored_profile_id' => $row['profile_id']]);
+    exit;
+}
+
+$out = [
+    'email'              => $target_email,
+    'stored_profile_id'  => $row['profile_id'],
     'token_expires_at'   => $row['expires_at'],
     'token_expires_in_s' => $row['expires_at'] ? ((int)$row['expires_at'] - time()) : null,
     'steps'              => [],
