@@ -27,10 +27,12 @@ function queue_onboarding_agent(
     string $sponsor = '',
     string $role = 'agent',
     string $notes = '',
-    string $addedByName = ''
+    string $addedByName = '',
+    string $phone = ''
 ): array {
     $email = trim($email);
     $name  = trim($name);
+    $phone = trim($phone);
     // Normalized against the canonical market_centers list — an unrecognized
     // value (typo, stale office name) lands as blank rather than riding
     // through untouched, same as the old free-text field used to allow.
@@ -46,22 +48,23 @@ function queue_onboarding_agent(
         $queueId = (int)$row['id'];
         $pdo->prepare(
             "UPDATE onboard_queue
-                SET agent_name = ?, market_center = ?, state_code = ?, canonical_agent_id = ?
+                SET agent_name = ?, market_center = ?, state_code = ?, canonical_agent_id = ?,
+                    agent_phone = CASE WHEN ? != '' THEN ? ELSE agent_phone END
               WHERE id = ?"
-        )->execute([$name, $marketCenter, trim($stateCode) ?: null, $canonicalAgentId, $queueId]);
+        )->execute([$name, $marketCenter, trim($stateCode) ?: null, $canonicalAgentId, $phone, $phone, $queueId]);
         return ['id' => $queueId, 'wasNew' => false];
     }
 
     $now = date('Y-m-d H:i:s');
     $ins = $pdo->prepare(
         "INSERT INTO onboard_queue
-            (agent_email, agent_name, market_center, start_date, sponsor, role, added_by, added_at, notes, state_code, canonical_agent_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+            (agent_email, agent_name, market_center, start_date, sponsor, role, added_by, added_at, notes, state_code, canonical_agent_id, agent_phone)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
     );
     $ins->execute([
         $email, $name, $marketCenter, trim($startDate), trim($sponsor),
         trim($role) ?: 'agent', $addedBy, $now, trim($notes),
-        trim($stateCode) ?: null, $canonicalAgentId,
+        trim($stateCode) ?: null, $canonicalAgentId, $phone,
     ]);
     $queueId = (int)$pdo->lastInsertId();
 

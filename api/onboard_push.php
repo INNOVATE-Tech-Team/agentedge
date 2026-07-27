@@ -36,6 +36,7 @@ if ($expected === '' || !hash_equals($expected, $provided)) {
 
 $name  = trim($body['name']  ?? $body['agent_name']  ?? '');
 $email = trim($body['email'] ?? $body['agent_email'] ?? '');
+$phone = trim($body['phone'] ?? $body['agent_phone'] ?? '');
 if ($name === '' || $email === '') {
     json_out(['ok'=>false,'error'=>'name and email are required']);
 }
@@ -57,7 +58,7 @@ $stateCode         = trim($body['state_code']           ?? '');
 $licenseExp        = trim($body['license_exp']          ?? '');
 $canonicalAgentId  = isset($body['canonical_agent_id']) ? (string)$body['canonical_agent_id'] : null;
 
-$result   = queue_onboarding_agent($pdo, $email, $name, $mc, $stateCode, $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes);
+$result   = queue_onboarding_agent($pdo, $email, $name, $mc, $stateCode, $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes, '', $phone);
 $queueId  = $result['id'];
 $queueUrl = $base . '/onboarding.php?open=' . $queueId;
 
@@ -76,7 +77,7 @@ if ($defaultPw !== '') {
 // otherwise this happens later, when onboarding is marked complete
 // (onboard_action.php's complete_onboarding), which requires a state by then.
 if ($stateCode !== '') {
-    add_or_reactivate_roster_agent($pdo, $name, $stateCode, $mc, $licenseExp, $canonicalAgentId, $addedBy);
+    add_or_reactivate_roster_agent($pdo, $name, $stateCode, $mc, $licenseExp, $canonicalAgentId, $addedBy, $email, $phone);
 }
 
 echo json_encode(['ok'=>true,'id'=>$queueId,'queue_url'=>$queueUrl,'already_queued'=>!$result['wasNew']]);

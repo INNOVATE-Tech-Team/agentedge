@@ -36,12 +36,16 @@ function add_or_reactivate_roster_agent(
     string $marketCenter,
     string $licenseExp,
     ?string $canonicalAgentId,
-    string $addedBy
+    string $addedBy,
+    string $email = '',
+    string $phone = ''
 ): array {
     $name  = trim($name);
     $state = strtoupper(trim($stateCode));
     $mc    = trim($marketCenter);
     $exp   = trim($licenseExp);
+    $email = trim($email);
+    $phone = trim($phone);
     if ($exp && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp)) $exp = '';
 
     $existing = null;
@@ -64,9 +68,11 @@ function add_or_reactivate_roster_agent(
             "UPDATE innovate_roster
                 SET agent_name = ?, state_code = ?, market_center = ?, license_exp = ?,
                     canonical_agent_id = COALESCE(?, canonical_agent_id),
+                    email = CASE WHEN ? != '' THEN ? ELSE email END,
+                    phone = CASE WHEN ? != '' THEN ? ELSE phone END,
                     active = 1, removed_at = '', removed_by = ''
               WHERE id = ?"
-        )->execute([$name, $state, $mc, $exp, $canonicalAgentId, $id]);
+        )->execute([$name, $state, $mc, $exp, $canonicalAgentId, $email, $email, $phone, $phone, $id]);
 
         $pdo->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")
             ->execute([$name, $state, $mc, $exp, $existing['active'] ? 'updated' : 'restored', $addedBy]);
@@ -75,10 +81,10 @@ function add_or_reactivate_roster_agent(
     }
 
     $stmt = $pdo->prepare(
-        "INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp,active,added_at,added_by,canonical_agent_id)
-         VALUES (?,?,?,?,1,datetime('now'),?,?)"
+        "INSERT INTO innovate_roster (agent_name,state_code,market_center,license_exp,active,added_at,added_by,canonical_agent_id,email,phone)
+         VALUES (?,?,?,?,1,datetime('now'),?,?,?,?)"
     );
-    $stmt->execute([$name, $state, $mc, $exp, $addedBy, $canonicalAgentId]);
+    $stmt->execute([$name, $state, $mc, $exp, $addedBy, $canonicalAgentId, $email, $phone]);
     $id = (int)$pdo->lastInsertId();
 
     $pdo->prepare("INSERT INTO roster_changes (agent_name,state_code,market_center,license_exp,action,changed_by) VALUES (?,?,?,?,?,?)")

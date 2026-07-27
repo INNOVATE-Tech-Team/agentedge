@@ -125,7 +125,9 @@ try {
         '',
         '',
         'agent',
-        'Submitted via public onboarding intake form'
+        'Submitted via public onboarding intake form',
+        '',
+        $fv('phone')
     );
 
     // ── Email notification ────────────────────────────────────────────────────
