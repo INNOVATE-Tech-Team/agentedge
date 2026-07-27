@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'headshot') {
     $st->execute([$key]);
     $file = $st->fetch(PDO::FETCH_ASSOC);
     if (!$file) { header('Content-Type: application/json'); intake_json_out(['error' => 'not found'], 404); }
-    if (!$isAdmin && strtolower($file['agent_email']) !== $myEmail) {
+    if (!is_leader() && strtolower($file['agent_email']) !== $myEmail) {
         header('Content-Type: application/json'); intake_json_out(['error' => 'forbidden'], 403);
     }
     $cfgDir  = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
@@ -47,8 +47,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'headshot') {
     $path    = $dataDir . '/headshots/' . basename($key);
     if (!file_exists($path)) { header('Content-Type: application/json'); intake_json_out(['error' => 'file not found'], 404); }
 
+    $disposition = !empty($_GET['dl']) ? 'attachment' : 'inline';
     header('Content-Type: ' . ($file['mime_type'] ?: 'image/jpeg'));
-    header('Content-Disposition: inline; filename="' . addslashes(basename($file['orig_name'])) . '"');
+    header('Content-Disposition: ' . $disposition . '; filename="' . addslashes(basename($file['orig_name'])) . '"');
     header('Cache-Control: private, max-age=86400');
     header('X-Content-Type-Options: nosniff');
     header('Content-Length: ' . filesize($path));
@@ -305,6 +306,10 @@ if ($email === $myEmail) {
     }
 
     notify_profile_changed($fv('full_name') ?: $myEmail, $myEmail, $changes);
+
+    if ($isSubmitted && !$wasSubmitted) {
+        notify_intake_submitted($fv('full_name') ?: $myEmail, $myEmail);
+    }
 }
 
 intake_json_out(['ok' => true, 'submitted' => $isSubmitted]);

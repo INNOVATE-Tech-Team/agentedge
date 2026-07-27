@@ -7,6 +7,8 @@
 // pandadoc_state_templates DB table (see pandadoc_template_for_state() in
 // local_db.php), managed via admin_pandadoc_templates.php.
 // Webhook shared key (Developer Dashboard > API Dashboard > Configuration) as 'pandadoc_webhook_key'.
+// 'pandadoc_notify_cc' (config.php, array of emails) — staff CC'd on every
+// onboarding document so they get PandaDoc's native completion email too.
 // Docs: https://developers.pandadoc.com
 
 require_once __DIR__ . '/../local_db.php';
@@ -80,15 +82,26 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
             return ['ok'=>true,'document_id'=>$docId];
         }
     } else {
+        // Staff in 'pandadoc_notify_cc' (config.php) are copied as CC recipients
+        // so they get PandaDoc's own completion email — PandaDoc only emails the
+        // document's creator (this API key's owner) by default, so anyone else
+        // who needs to know when an agent signs has to be added here.
+        $recipients = [[
+            'email'      => $agentEmail,
+            'first_name' => $first,
+            'last_name'  => $last,
+            'role'       => 'Agent',
+        ]];
+        foreach ($c['pandadoc_notify_cc'] ?? [] as $ccEmail) {
+            $ccEmail = trim($ccEmail);
+            if ($ccEmail === '') continue;
+            $recipients[] = ['email' => $ccEmail, 'recipient_type' => 'CC'];
+        }
+
         $create = pandadoc_request('POST', '/public/v1/documents', [
             'name'          => "Onboarding Agreement - {$agentName}",
             'template_uuid' => $templateId,
-            'recipients'    => [[
-                'email'      => $agentEmail,
-                'first_name' => $first,
-                'last_name'  => $last,
-                'role'       => 'Agent',
-            ]],
+            'recipients'    => $recipients,
         ]);
         if (!$create['ok']) {
             $err = $create['data']['message'] ?? $create['data']['error'] ?? $create['data']['info_message'] ?? "HTTP {$create['code']}";
