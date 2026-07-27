@@ -36,7 +36,7 @@ if (!is_admin()) {
     }
     // Role filter check
     $rf = json_decode($course['role_filter'] ?? '[]', true);
-    if (!empty($rf) && !in_array(my_role(), $rf, true)) { header('Location: university.php'); exit; }
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
 }
 
 // Lessons
@@ -104,12 +104,15 @@ foreach ($gradableLessons as $lesson) {
     .course-header-cta{padding:10px 20px;background:#82C112;color:#000;font-weight:800;font-size:13px;border-radius:6px;text-decoration:none;white-space:nowrap;align-self:center}
     .course-header-cta:hover{background:#5b8e0d;color:#fff}
     .lesson-list{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+    .lesson-list[hidden]{display:none}
     .folder-section{margin-bottom:6px}
-    .folder-section-title{font-size:12px;font-weight:800;color:#888;margin:4px 0 8px}
+    .folder-section-title{font-size:15px;font-weight:800;color:#82C112;margin:4px 0 8px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+    .folder-section-title:hover{color:#5b8e0d}
+    .folder-arrow{font-size:12px;width:12px;flex-shrink:0;display:inline-block}
     .lesson-row{display:flex;align-items:center;gap:14px;padding:14px 18px;background:white;border:1px solid #e5e5e5;border-radius:8px;text-decoration:none;color:inherit;transition:border-color 100ms,box-shadow 100ms}
     .lesson-row:hover{border-color:#c3dfa8;box-shadow:0 2px 8px rgba(0,0,0,.06)}
     .lesson-row.completed{border-left:3px solid #82C112}
-    .lesson-row.placeholder{opacity:.55;cursor:default}
+    .lesson-row.placeholder{cursor:default}
     .lesson-row.placeholder:hover{border-color:#e5e5e5;box-shadow:none}
     .lesson-num{font-size:12px;font-weight:800;color:#bbb;width:24px;flex-shrink:0;text-align:right}
     .lesson-type-icon{font-size:18px;flex-shrink:0}
@@ -186,7 +189,7 @@ foreach ($gradableLessons as $lesson) {
         <?php
           $lessonNum = 0;
           $typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
-          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => 'Coming Soon', 'upload' => 'Upload'];
+          $typeLabels = ['video' => 'Video', 'doc' => 'Document', 'quiz' => 'Quiz', 'placeholder' => '', 'upload' => 'Upload'];
           function render_learner_lesson_row($lesson, &$lessonNum, $progressMap, $typeIcons, $typeLabels) {
             $isPlaceholder = $lesson['type'] === 'placeholder';
             $prog   = $progressMap[$lesson['id']] ?? null;
@@ -209,7 +212,6 @@ foreach ($gradableLessons as $lesson) {
               </div>
               <div class="lesson-status">
                 <?php if ($isPlaceholder): ?>
-                <span class="status-todo" style="font-size:11px;color:#ccc;font-weight:700">Coming Soon</span>
                 <?php elseif ($isDone && $lesson['type'] === 'quiz' && $prog['score'] !== null): ?>
                 <span class="status-quiz-score"><?= $prog['score'] ?>%</span>
                 <?php elseif ($isDone): ?>
@@ -224,8 +226,10 @@ foreach ($gradableLessons as $lesson) {
         ?>
         <?php foreach ($folders as $folder): ?>
         <div class="folder-section">
-          <div class="folder-section-title">📁 <?= htmlspecialchars($folder['title']) ?></div>
-          <div class="lesson-list">
+          <div class="folder-section-title folder-toggle" data-folder="<?= (int)$folder['id'] ?>">
+            <span class="folder-arrow">▼</span> 📁 <?= htmlspecialchars($folder['title']) ?>
+          </div>
+          <div class="lesson-list" data-folder-list="<?= (int)$folder['id'] ?>">
             <?php foreach ($lessonsByFolder[$folder['id']] ?? [] as $lesson) render_learner_lesson_row($lesson, $lessonNum, $progressMap, $typeIcons, $typeLabels); ?>
           </div>
         </div>
@@ -259,5 +263,37 @@ foreach ($gradableLessons as $lesson) {
     </main>
   </div>
 </div>
+<script>
+(function(){
+  var KEY = 'uni_collapsed_folders_<?= $courseId ?>';
+  var folderEls = document.querySelectorAll('.folder-toggle');
+  var raw = localStorage.getItem(KEY);
+  var collapsed;
+  if (raw !== null) {
+    try { collapsed = new Set(JSON.parse(raw)); } catch(e) { collapsed = new Set(); }
+  } else {
+    // First visit: default to only the first folder open.
+    collapsed = new Set();
+    folderEls.forEach(function(hdr, i){ if (i > 0) collapsed.add(hdr.dataset.folder); });
+  }
+  function saveCollapsed() { localStorage.setItem(KEY, JSON.stringify([...collapsed])); }
+  folderEls.forEach(function(hdr){
+    var id = hdr.dataset.folder;
+    var list = document.querySelector('.lesson-list[data-folder-list="' + id + '"]');
+    var arrow = hdr.querySelector('.folder-arrow');
+    function apply(isCollapsed) {
+      if (list) list.hidden = isCollapsed;
+      if (arrow) arrow.textContent = isCollapsed ? '▶' : '▼';
+    }
+    apply(collapsed.has(id));
+    hdr.addEventListener('click', function(){
+      var isNowCollapsed = !collapsed.has(id);
+      if (isNowCollapsed) collapsed.add(id); else collapsed.delete(id);
+      saveCollapsed();
+      apply(isNowCollapsed);
+    });
+  });
+})();
+</script>
 </body>
 </html>

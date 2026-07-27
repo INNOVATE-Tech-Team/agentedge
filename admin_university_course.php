@@ -41,7 +41,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 $allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
 $stateNames = ['FL'=>'Florida','GA'=>'Georgia','MD'=>'Maryland','MA'=>'Massachusetts','NC'=>'North Carolina','NJ'=>'New Jersey','NH'=>'New Hampshire','OH'=>'Ohio','PA'=>'Pennsylvania','RI'=>'Rhode Island','SC'=>'South Carolina','TN'=>'Tennessee','VA'=>'Virginia','DE'=>'Delaware'];
-$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','staff'=>'Staff','super_admin'=>'Super Admin'];
+$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','staff'=>'Staff','super_admin'=>'Super Admin'];
 
 $courseInviteOnly  = (int)($course['invite_only']  ?? 0);
 $courseStateFilter = json_decode($course['state_filter'] ?? '[]', true) ?: [];
@@ -85,6 +85,12 @@ if ($courseId) {
     .field input,.field select,.field textarea{width:100%;padding:9px 12px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box}
     .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid #82C112}
     .field textarea{resize:vertical;min-height:80px}
+    .tag-input-box{display:flex;flex-wrap:wrap;align-items:center;gap:6px;width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:6px;background:#fff;box-sizing:border-box;cursor:text}
+    .tag-input-box input{border:none;outline:none;flex:1;min-width:100px;font-size:13px;padding:4px 2px;background:transparent}
+    .tag-chip{display:inline-flex;align-items:center;gap:6px;background:#eef7e0;color:#4c7a0a;border:1px solid #cfe6ad;border-radius:14px;padding:3px 10px;font-size:12px;font-weight:600}
+    .tag-chip button{border:none;background:none;cursor:pointer;color:#4c7a0a;font-size:12px;line-height:1;padding:0}
+    .related-chip{display:inline-flex;align-items:center;gap:6px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:14px;padding:3px 10px;font-size:12px}
+    .related-chip button{border:none;background:none;cursor:pointer;color:#999;font-size:12px;line-height:1;padding:0}
     .field-row{display:flex;align-items:center;gap:10px}
     .toggle-label{font-size:13px;font-weight:600;color:#333;cursor:pointer;display:flex;align-items:center;gap:8px}
     .toggle-label input[type=checkbox]{width:16px;height:16px;accent-color:#82C112;cursor:pointer}
@@ -478,6 +484,44 @@ if ($courseId) {
       <div class="editor-toolbar-extra"><button type="button" class="link-btn" onclick="toggleHtmlSource()" id="l-html-toggle">View HTML</button></div>
       <input type="hidden" id="l-content">
     </div>
+
+    <!-- Search & Discovery (admin-only metadata; not shown on the public lesson page) -->
+    <div style="margin-top:6px">
+      <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">Search &amp; Discovery</div>
+      <div style="font-size:12px;color:#888;margin-bottom:12px">Helps agents find and navigate related content. Not shown on the public lesson page.</div>
+
+      <div class="field">
+        <label>Tags</label>
+        <div class="tag-input-box" id="l-tags-box" onclick="document.getElementById('l-tag-input').focus()">
+          <div id="l-tags-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+          <input type="text" id="l-tag-input" placeholder="Type a tag and press Enter…" onkeydown="onTagInputKeydown(event)" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Learning Objective</label>
+        <textarea id="l-learning-objective" rows="2" placeholder="What will the agent be able to do after this lesson? (1-2 sentences)"></textarea>
+      </div>
+
+      <div class="field">
+        <label>Difficulty</label>
+        <select id="l-difficulty">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Related Lessons (optional)</label>
+        <div style="position:relative">
+          <input type="text" id="l-related-search" placeholder="Search lessons by title…" oninput="searchRelatedLessons(this.value)" autocomplete="off">
+          <div id="l-related-results" style="display:none;position:absolute;z-index:10;background:white;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:220px;overflow-y:auto;width:100%;margin-top:2px"></div>
+        </div>
+        <div id="l-related-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      </div>
+    </div>
+
     <div class="field" id="l-duration-field">
       <label>Duration (seconds, optional)</label>
       <input type="number" id="l-duration" value="0" min="0">
@@ -676,6 +720,62 @@ function onTypeChange() {
     : '';
 }
 
+// -- Tags / Learning Objective / Difficulty / Related Lessons ------------
+let lessonTags = [];
+let selectedRelatedLessons = []; // [{id,title}]
+
+function renderTags() {
+  document.getElementById('l-tags-list').innerHTML = lessonTags.map((t,i) =>
+    `<span class="tag-chip">${esc(t)}<button type="button" onclick="removeTag(${i})">✕</button></span>`
+  ).join('');
+}
+function onTagInputKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const val = e.target.value.trim();
+    if (val && !lessonTags.includes(val)) { lessonTags.push(val); renderTags(); }
+    e.target.value = '';
+  } else if (e.key === 'Backspace' && !e.target.value && lessonTags.length) {
+    lessonTags.pop();
+    renderTags();
+  }
+}
+function removeTag(i) { lessonTags.splice(i,1); renderTags(); }
+
+let relatedSearchTimer = null;
+function searchRelatedLessons(q) {
+  clearTimeout(relatedSearchTimer);
+  const res = document.getElementById('l-related-results');
+  if (q.trim().length < 2) { res.style.display='none'; return; }
+  relatedSearchTimer = setTimeout(() => {
+    const excludeId = parseInt(document.getElementById('l-id').value) || 0;
+    api({action:'search_lessons', q, exclude_id: excludeId}).then(d => {
+      if (!d.ok || !d.lessons.length) { res.style.display='none'; res.innerHTML=''; return; }
+      res.innerHTML = d.lessons.map(l =>
+        `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''" onclick='addRelatedLesson(${l.id}, ${JSON.stringify(l.title)})'>${esc(l.title)} <span style="color:#aaa;font-size:11px">${esc(l.course_title||'')}</span></div>`
+      ).join('');
+      res.style.display = '';
+    });
+  }, 300);
+}
+function addRelatedLesson(id, title) {
+  if (!selectedRelatedLessons.some(l => l.id === id)) {
+    selectedRelatedLessons.push({id, title});
+    renderRelatedLessons();
+  }
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
+}
+function removeRelatedLesson(id) {
+  selectedRelatedLessons = selectedRelatedLessons.filter(l => l.id !== id);
+  renderRelatedLessons();
+}
+function renderRelatedLessons() {
+  document.getElementById('l-related-list').innerHTML = selectedRelatedLessons.map(l =>
+    `<span class="related-chip">${esc(l.title)}<button type="button" onclick="removeRelatedLesson(${l.id})">✕</button></span>`
+  ).join('');
+}
+
 function resetLessonAttachUI() {
   document.getElementById('l-attach-list').innerHTML = '';
   const id = document.getElementById('l-id').value;
@@ -700,6 +800,15 @@ function openAddLesson() {
   document.getElementById('l-file-current').style.display = 'none';
   document.getElementById('l-upload-status').textContent = '';
   pendingLessonFile = null;
+  lessonTags = [];
+  renderTags();
+  document.getElementById('l-tag-input').value = '';
+  document.getElementById('l-learning-objective').value = '';
+  document.getElementById('l-difficulty').value = 'beginner';
+  selectedRelatedLessons = [];
+  renderRelatedLessons();
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
   resetLessonAttachUI();
   onTypeChange();
   document.getElementById('lesson-modal').classList.add('open');
@@ -731,6 +840,22 @@ function editLesson(lesson) {
   const cur = document.getElementById('l-file-current');
   cur.style.display = lesson.file_key ? '' : 'none';
   pendingLessonFile = null;
+  try { lessonTags = JSON.parse(lesson.tags || '[]'); } catch(e) { lessonTags = []; }
+  renderTags();
+  document.getElementById('l-tag-input').value = '';
+  document.getElementById('l-learning-objective').value = lesson.learning_objective || '';
+  document.getElementById('l-difficulty').value = lesson.difficulty || 'beginner';
+  selectedRelatedLessons = [];
+  renderRelatedLessons();
+  document.getElementById('l-related-search').value = '';
+  document.getElementById('l-related-results').style.display = 'none';
+  let relIds = [];
+  try { relIds = JSON.parse(lesson.related_lessons || '[]'); } catch(e) {}
+  if (relIds.length) {
+    api({action:'lessons_by_ids', ids: relIds}).then(d => {
+      if (d.ok) { selectedRelatedLessons = d.lessons; renderRelatedLessons(); }
+    });
+  }
   resetLessonAttachUI();
   onTypeChange();
   document.getElementById('lesson-modal').classList.add('open');
@@ -772,6 +897,9 @@ function deleteAttachment(id, lessonId) {
 function saveLesson() {
   const title = document.getElementById('l-title').value.trim();
   if (!title) { alert('Title required'); return; }
+  if (!lessonTags.length) { alert('At least one tag is required'); return; }
+  const learningObjective = document.getElementById('l-learning-objective').value.trim();
+  if (!learningObjective) { alert('Learning Objective required'); return; }
   const id = document.getElementById('l-id').value;
   const btn = document.getElementById('l-save-btn');
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -832,6 +960,10 @@ function saveLesson() {
     embed_url: document.getElementById('l-embed-url').value.trim(),
     content_html: contentHtml === '<p><br></p>' ? '' : contentHtml,
     duration_sec: parseInt(document.getElementById('l-duration').value)||0,
+    tags: lessonTags,
+    learning_objective: learningObjective,
+    difficulty: document.getElementById('l-difficulty').value,
+    related_lessons: selectedRelatedLessons.map(l => l.id),
   };
   if (id) { body.id = parseInt(id); }
   else { body.course_id = COURSE_ID; }

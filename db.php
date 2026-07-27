@@ -2,6 +2,30 @@
 // Read-only MySQL connection (mysqli) to the Perfex database. AgentEdge only
 // ever runs SELECTs. Uses mysqli (which this PHP already has) rather than PDO.
 
+// All stored timestamps (SQLite datetime('now'), MySQL NOW()/UTC_TIMESTAMP())
+// are UTC. Default PHP to Eastern so date()/time() calls without an explicit
+// timestamp behave like an Eastern clock app-wide.
+date_default_timezone_set('America/New_York');
+
+// Format a UTC timestamp string as stored in the DB for display in Eastern time.
+function fmt_dt_et(?string $utcDt, string $fmt = 'M j, Y g:ia'): string {
+    if (!$utcDt) return '';
+    $ts = strtotime($utcDt . ' UTC');
+    return $ts ? date($fmt, $ts) : $utcDt;
+}
+
+// Eastern calendar-day boundaries, expressed as UTC datetime strings, for use
+// as bind params against UTC-stored timestamp columns (SQLite has no IANA
+// timezone support, so day-boundary math has to happen on the PHP side).
+function et_day_bounds_utc(int $daysAgo = 0): array {
+    $tz = new DateTimeZone('America/New_York');
+    $start = new DateTime("today -{$daysAgo} days", $tz);
+    $end = (clone $start)->modify('+1 day');
+    $start->setTimezone(new DateTimeZone('UTC'));
+    $end->setTimezone(new DateTimeZone('UTC'));
+    return [$start->format('Y-m-d H:i:s'), $end->format('Y-m-d H:i:s')];
+}
+
 function cfg(): array {
     static $cfg = null;
     if ($cfg === null) {

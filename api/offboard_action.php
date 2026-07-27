@@ -7,6 +7,7 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../offboard_tools.php';
+require_once __DIR__ . '/../lib/roster.php';
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 
@@ -212,6 +213,35 @@ if ($action === 'add_to_queue') {
         $now,
     ]);
     $queueId = (int)$pdo->lastInsertId();
+
+    // Take the agent off the active roster the moment offboarding starts,
+    // rather than waiting for the "AgentEdge account" deprovisioning step
+    // later in the checklist — mirrors what api/roster_agent.php's own
+    // "remove" action already does when roster removal is the starting
+    // point instead. Best-effort: a departing agent who was never matched
+    // to a roster row (e.g. added by name only, no roster listing) shouldn't
+    // block the offboarding case from being created.
+    try { remove_roster_agent($pdo, $name, $mc, null, $agent['email']); } catch (\Throwable $e) {}
+
+    // Push the same signal to Advantage (coastline-server) so the agent drops
+    // off the team roster there too, not just locally — best-effort, never
+    // blocks offboarding itself if Advantage is unreachable or not configured.
+    try {
+        $c = cfg();
+        if (!empty($c['crm_base']) && !empty($c['crm_token']) && $email !== '') {
+            $ctx = stream_context_create(['http' => [
+                'method'        => 'POST',
+                'timeout'       => 8,
+                'header'        => "Content-Type: application/json\r\n",
+                'content'       => json_encode(['email' => $email]),
+                'ignore_errors' => true,
+            ]]);
+            @file_get_contents(
+                rtrim($c['crm_base'], '/') . '/public/agentedge/offboard?token=' . urlencode($c['crm_token']),
+                false, $ctx
+            );
+        }
+    } catch (\Throwable $e) {}
 
     // Stamp agent_admin.terminated_date as of today — the day an agent enters
     // the Offboarding Queue, not their eventual last day — so the Network

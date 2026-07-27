@@ -47,6 +47,9 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
 @media(max-width:860px){.grid2{grid-template-columns:1fr}}
+/* Flows to 2 or 3 cards depending on whether the cap wheel is shown
+   (hidden for Team Leader team members — see index.php) */
+.grid-dash{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:16px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px}
 .card h2{font-size:15px;margin:0 0 14px}
 
@@ -103,9 +106,6 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 @media(max-width:760px){
   .layout{flex-direction:column}
   .sidebar{width:100%;height:auto;position:static}
-  .sb-nav{display:flex;flex-wrap:nowrap;overflow-x:auto}
-  .sb-item{border-left:0;border-bottom:3px solid transparent;white-space:nowrap;padding:10px 14px}
-  .sb-active{border-left:0;border-bottom-color:var(--green)}
   .sb-foot{display:flex;align-items:center;justify-content:space-between}
   .sb-who{margin:0}
 }

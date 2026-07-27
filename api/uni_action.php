@@ -170,10 +170,13 @@ if ($action === 'create_course') {
 if ($action === 'update_course') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $existingStmt = $db->prepare("SELECT invite_only,state_filter,role_filter FROM uni_courses WHERE id=?");
+    $existingStmt->execute([$id]);
+    $ex = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: ['invite_only'=>0,'state_filter'=>'[]','role_filter'=>'[]'];
     $catId       = !empty($in['category_id']) ? (int)$in['category_id'] : null;
-    $inviteOnly  = (int)($in['invite_only'] ?? 0);
-    $stateFilter = json_encode(array_values(array_filter((array)($in['state_filter'] ?? []), 'strlen')));
-    $roleFilter  = json_encode(array_values(array_filter((array)($in['role_filter']  ?? []), 'strlen')));
+    $inviteOnly  = array_key_exists('invite_only', $in) ? (int)$in['invite_only'] : (int)$ex['invite_only'];
+    $stateFilter = array_key_exists('state_filter', $in) ? json_encode(array_values(array_filter((array)$in['state_filter'], 'strlen'))) : $ex['state_filter'];
+    $roleFilter  = array_key_exists('role_filter', $in) ? json_encode(array_values(array_filter((array)$in['role_filter'], 'strlen'))) : $ex['role_filter'];
     $db->prepare("UPDATE uni_courses SET category_id=?,title=?,description=?,is_required=?,sort_ord=?,published=?,invite_only=?,state_filter=?,role_filter=? WHERE id=?")
        ->execute([$catId, trim($in['title'] ?? ''), trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), (int)($in['published'] ?? 0), $inviteOnly, $stateFilter, $roleFilter, $id]);
     echo json_encode(['ok'=>true]); exit;
@@ -255,21 +258,52 @@ if ($action === 'create_lesson') {
     $courseId = (int)($in['course_id'] ?? 0);
     $title    = trim($in['title'] ?? '');
     if (!$courseId || !$title) { http_response_code(400); echo json_encode(['error'=>'course_id and title required']); exit; }
+    $tags = array_values(array_filter(array_map('trim', (array)($in['tags'] ?? [])), 'strlen'));
+    if (!$tags) { http_response_code(400); echo json_encode(['error'=>'at least one tag is required']); exit; }
+    $learningObjective = trim($in['learning_objective'] ?? '');
+    if (!$learningObjective) { http_response_code(400); echo json_encode(['error'=>'learning objective is required']); exit; }
+    $difficulty = in_array($in['difficulty'] ?? '', ['beginner','intermediate','advanced']) ? $in['difficulty'] : 'beginner';
+    $relatedLessons = array_values(array_unique(array_map('intval', (array)($in['related_lessons'] ?? []))));
     $type = in_array($in['type'] ?? '', ['video','doc','quiz','placeholder','upload']) ? $in['type'] : 'video';
     $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
     $mo   = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE course_id=?"); $mo->execute([$courseId]);
     $nextOrd = ((int)$mo->fetchColumn()) + 10;
-    $db->prepare("INSERT INTO uni_lessons (course_id,folder_id,title,sort_ord,type,embed_url,content_html,duration_sec) VALUES (?,?,?,?,?,?,?,?)")
-       ->execute([$courseId, $folderId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0)]);
+    $db->prepare("INSERT INTO uni_lessons (course_id,folder_id,title,sort_ord,type,embed_url,content_html,duration_sec,tags,learning_objective,difficulty,related_lessons) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+       ->execute([$courseId, $folderId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), json_encode($tags), $learningObjective, $difficulty, json_encode($relatedLessons)]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_lesson') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $tags = array_values(array_filter(array_map('trim', (array)($in['tags'] ?? [])), 'strlen'));
+    if (!$tags) { http_response_code(400); echo json_encode(['error'=>'at least one tag is required']); exit; }
+    $learningObjective = trim($in['learning_objective'] ?? '');
+    if (!$learningObjective) { http_response_code(400); echo json_encode(['error'=>'learning objective is required']); exit; }
+    $difficulty = in_array($in['difficulty'] ?? '', ['beginner','intermediate','advanced']) ? $in['difficulty'] : 'beginner';
+    $relatedLessons = array_values(array_unique(array_map('intval', (array)($in['related_lessons'] ?? []))));
     $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
-    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,folder_id=?,embed_url=?,content_html=?,duration_sec=? WHERE id=?")
-       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), $folderId, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), $id]);
+    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,folder_id=?,embed_url=?,content_html=?,duration_sec=?,tags=?,learning_objective=?,difficulty=?,related_lessons=? WHERE id=?")
+       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), $folderId, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), json_encode($tags), $learningObjective, $difficulty, json_encode($relatedLessons), $id]);
     echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'search_lessons') {
+    $q = trim($in['q'] ?? '');
+    if (mb_strlen($q) < 2) { echo json_encode(['ok'=>true,'lessons'=>[]]); exit; }
+    $excludeId = (int)($in['exclude_id'] ?? 0);
+    $s = $db->prepare("SELECT l.id, l.title, c.title as course_title
+                        FROM uni_lessons l LEFT JOIN uni_courses c ON c.id=l.course_id
+                        WHERE l.title LIKE ? AND l.id != ?
+                        ORDER BY l.title LIMIT 20");
+    $s->execute(['%'.$q.'%', $excludeId]);
+    echo json_encode(['ok'=>true,'lessons'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
+}
+if ($action === 'lessons_by_ids') {
+    $ids = array_values(array_unique(array_map('intval', (array)($in['ids'] ?? []))));
+    if (!$ids) { echo json_encode(['ok'=>true,'lessons'=>[]]); exit; }
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $s = $db->prepare("SELECT id, title FROM uni_lessons WHERE id IN ($placeholders)");
+    $s->execute($ids);
+    echo json_encode(['ok'=>true,'lessons'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
 }
 if ($action === 'delete_lesson') {
     $id = (int)($in['id'] ?? 0);

@@ -11,7 +11,7 @@ $state = bin2hex(random_bytes(16));
 $_SESSION['dotloop_oauth_state'] = $state;
 
 $c = cfg();
-$url = 'https://auth.dotloop.com/oauth2/auth?' . http_build_query([
+$url = 'https://auth.dotloop.com/oauth/authorize?' . http_build_query([
     'response_type' => 'code',
     'client_id'     => $c['dotloop_client_id'],
     'redirect_uri'  => $c['dotloop_redirect_uri'],

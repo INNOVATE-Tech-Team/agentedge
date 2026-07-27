@@ -9,13 +9,19 @@ if (!is_admin()) { header('Location: index.php'); exit; }
 $db = local_db();
 
 // ── Summary stats ─────────────────────────────────────────────────────────────
+// 7d/30d are rolling windows (a fixed duration back from "now"), so UTC vs ET
+// doesn't matter for them. "Today" is a calendar-day boundary, so it needs to
+// be computed against Eastern midnight, not UTC midnight.
+[$todayStartUtc, $todayEndUtc] = et_day_bounds_utc(0);
 $totalLogins   = (int)$db->query("SELECT COUNT(*) FROM login_events")->fetchColumn();
 $uniqueUsers   = (int)$db->query("SELECT COUNT(DISTINCT email) FROM login_events")->fetchColumn();
 $logins7d      = (int)$db->query("SELECT COUNT(*) FROM login_events WHERE logged_in_at >= datetime('now','-7 days')")->fetchColumn();
 $unique7d      = (int)$db->query("SELECT COUNT(DISTINCT email) FROM login_events WHERE logged_in_at >= datetime('now','-7 days')")->fetchColumn();
 $logins30d     = (int)$db->query("SELECT COUNT(*) FROM login_events WHERE logged_in_at >= datetime('now','-30 days')")->fetchColumn();
 $unique30d     = (int)$db->query("SELECT COUNT(DISTINCT email) FROM login_events WHERE logged_in_at >= datetime('now','-30 days')")->fetchColumn();
-$loginsToday   = (int)$db->query("SELECT COUNT(*) FROM login_events WHERE date(logged_in_at)=date('now')")->fetchColumn();
+$loginsTodayStmt = $db->prepare("SELECT COUNT(*) FROM login_events WHERE logged_in_at >= ? AND logged_in_at < ?");
+$loginsTodayStmt->execute([$todayStartUtc, $todayEndUtc]);
+$loginsToday   = (int)$loginsTodayStmt->fetchColumn();
 
 // ── Per-user breakdown ────────────────────────────────────────────────────────
 $perUser = $db->query("
@@ -41,19 +47,27 @@ $recent = $db->query("
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Daily trend (last 30 days) ────────────────────────────────────────────────
-$trend = $db->query("
-    SELECT date(logged_in_at) AS day,
-           COUNT(*) AS logins,
-           COUNT(DISTINCT email) AS unique_users
+// SQLite has no IANA timezone support, so day buckets are computed here in PHP
+// against Eastern calendar days rather than via SQL date(logged_in_at) (UTC).
+$trendRaw = $db->query("
+    SELECT logged_in_at
     FROM login_events
-    WHERE logged_in_at >= datetime('now','-30 days')
-    GROUP BY day
-    ORDER BY day
-")->fetchAll(PDO::FETCH_ASSOC);
+    WHERE logged_in_at >= datetime('now','-31 days')
+")->fetchAll(PDO::FETCH_COLUMN);
 
-function fmt_dt(string $dt): string {
-    $ts = strtotime($dt);
-    return $ts ? date('M j, Y g:ia', $ts) : $dt;
+$trendMap = []; // 'Y-m-d' (Eastern) => login count
+$etZone = new DateTimeZone('America/New_York');
+foreach ($trendRaw as $loggedInAt) {
+    $ts = strtotime($loggedInAt . ' UTC');
+    if ($ts === false) continue;
+    $d = (new DateTime('@' . $ts))->setTimezone($etZone);
+    $day = $d->format('Y-m-d');
+    $trendMap[$day] = ($trendMap[$day] ?? 0) + 1;
+}
+$trend = !empty($trendMap);
+
+function fmt_dt(?string $dt): string {
+    return fmt_dt_et($dt);
 }
 function method_badge(string $methods): string {
     $out = '';
@@ -140,15 +154,12 @@ function method_badge(string $methods): string {
         <?php if ($trend): ?>
         <div class="lr-chart-wrap">
           <?php
-            $maxLogins = max(array_column($trend, 'logins') ?: [1]);
-            // Build a map by day
-            $trendMap = [];
-            foreach ($trend as $t) $trendMap[$t['day']] = $t;
             $days = [];
             for ($i = 29; $i >= 0; $i--) {
                 $day = date('Y-m-d', strtotime("-{$i} days"));
-                $days[] = ['day' => $day, 'logins' => $trendMap[$day]['logins'] ?? 0];
+                $days[] = ['day' => $day, 'logins' => $trendMap[$day] ?? 0];
             }
+            $maxLogins = max(array_column($days, 'logins') ?: [1]);
           ?>
           <div class="lr-bars">
             <?php foreach ($days as $d): ?>

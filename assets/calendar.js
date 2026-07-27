@@ -10,6 +10,7 @@ let calFilter = 'all';
 let agentMC   = '';
 let agentMCSlug = '';
 const evCache = {};
+let hasPersonalCal = false;
 
 const SCOPES = {
   company:        { bg: '#82C112', text: '#111' },
@@ -17,7 +18,8 @@ const SCOPES = {
   personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
-  bic:            { bg: '#f5a623', text: '#111' },
+  birthday:       { bg: '#f5a623', text: '#111' },
+  anniversary:    { bg: '#2e9e6b', text: '#fff' },
 };
 
 function calEsc(s) {
@@ -31,6 +33,36 @@ function slugify(s) {
 
 function calKey() {
   return `${calYear}-${String(calMonth + 1).padStart(2, '0')}`;
+}
+
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function monthKeyOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// The "Next 30 Days" rolling list only makes sense while the grid is showing
+// the actual current month — once you page away with prev/next, the list
+// below switches to plain events for whichever month is on screen.
+function isCurrentMonth() {
+  const today = new Date();
+  return calYear === today.getFullYear() && calMonth === today.getMonth();
+}
+
+// The event list below the grid is a rolling "next 30 days" window anchored
+// to today, independent of whatever month the grid above is paged to — it
+// may span two months' worth of cached event data.
+async function loadUpcomingWindow() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end   = new Date(start); end.setDate(end.getDate() + 29);
+  const keys  = new Set([monthKeyOf(start), monthKeyOf(end)]);
+  const lists = await Promise.all([...keys].map(k => loadEvents(k)));
+  const startStr = ymd(start), endStr = ymd(end);
+  return lists.flat()
+    .filter(e => e.date >= startStr && e.date <= endStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 async function loadProfile() {
@@ -75,19 +107,14 @@ async function loadEvents(key) {
   const training = trainingRes.status === 'fulfilled' ? (trainingRes.value.events ?? []) : [];
   const events   = eventsRes.status   === 'fulfilled' ? (eventsRes.value.events   ?? []) : [];
   const personal = personalRes.status === 'fulfilled' ? (personalRes.value.events ?? []) : [];
-  const hasPersonalUrl = personalRes.status === 'fulfilled' ? (personalRes.value.has_url ?? false) : false;
   const bic      = bicRes.status       === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
 
-  // Update personal bar status text
-  const personalStatus = document.getElementById('cal-personal-status');
-  if (personalStatus) {
-    if (!hasPersonalUrl) {
-      personalStatus.textContent = 'No calendar synced yet.';
-    } else if (personal.length) {
-      personalStatus.textContent = personal.length + ' event' + (personal.length !== 1 ? 's' : '') + ' this month from your personal calendar.';
-    } else {
-      personalStatus.textContent = 'Calendar synced — no events this month.';
-    }
+  // has_url reflects account-level state (not month-specific) — sync it
+  // every time so "Connected"/"Connect" status is correct on first load,
+  // not just after a same-session save.
+  if (personalRes.status === 'fulfilled') {
+    hasPersonalCal = personalRes.value.has_url ?? false;
+    updateMyCalBar();
   }
 
   evCache[key] = [...company, ...training, ...events, ...personal, ...bic].sort((a, b) => a.date.localeCompare(b.date));
@@ -100,7 +127,8 @@ function filtered(evs) {
   if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
   if (calFilter === 'events')   return evs.filter(e => e.scope === 'events');
   if (calFilter === 'mycal')    return evs.filter(e => e.scope === 'personal');
-  if (calFilter === 'bic')      return evs.filter(e => e.scope === 'bic');
+  if (calFilter === 'birthday')    return evs.filter(e => e.scope === 'birthday');
+  if (calFilter === 'anniversary') return evs.filter(e => e.scope === 'anniversary');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -149,7 +177,8 @@ function scopeLabel(scope) {
   if (scope === 'personal')      return 'Personal';
   if (scope === 'training')      return 'Training';
   if (scope === 'events')        return 'Events';
-  if (scope === 'bic')           return 'Birthday / Anniversary';
+  if (scope === 'birthday')      return 'Birthday';
+  if (scope === 'anniversary')   return 'Anniversary';
   return 'Company';
 }
 
@@ -161,12 +190,13 @@ function calRsvpLabel(ev) {
 }
 
 function renderList(evs) {
+  const onCurMonth = isCurrentMonth();
   document.getElementById('cal-list-title').textContent =
-    `${CAL_MONTHS[calMonth]} ${calYear} Events`;
+    onCurMonth ? 'Next 30 Days' : `${CAL_MONTHS[calMonth]} ${calYear} Events`;
   const vis  = filtered(evs);
   const body = document.getElementById('cal-event-list-body');
   if (!vis.length) {
-    body.innerHTML = '<p class="muted" style="padding:.75rem 0">No events this month.</p>';
+    body.innerHTML = `<p class="muted" style="padding:.75rem 0">No events ${onCurMonth ? 'in the next 30 days' : 'this month'}.</p>`;
     return;
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
@@ -202,14 +232,15 @@ function renderList(evs) {
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, bic: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, birthday: 0, anniversary: 0 };
   evs.forEach(e => {
     if      (e.scope === 'company')        counts.company++;
     else if (e.scope === 'market-center')  counts.mc++;
     else if (e.scope === 'training')       counts.training++;
     else if (e.scope === 'events')         counts.events++;
     else if (e.scope === 'personal')       counts.mycal++;
-    else if (e.scope === 'bic')            counts.bic++;
+    else if (e.scope === 'birthday')       counts.birthday++;
+    else if (e.scope === 'anniversary')    counts.anniversary++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;
@@ -239,11 +270,10 @@ async function calDraw() {
   document.getElementById('cal-event-list-body').innerHTML = '';
   updateTrainingBar();
   updateEventsBar();
-  updatePersonalBar();
   const evs = await loadEvents(calKey());
   renderGrid(evs);
-  renderList(evs);
   updateTabCounts(evs);
+  renderList(isCurrentMonth() ? await loadUpcomingWindow() : evs);
 }
 
 function updateTrainingBar() {
@@ -257,13 +287,13 @@ function updateEventsBar() {
 }
 
 function updateMyCalBar() {
-  const bar = document.getElementById('cal-mycal-bar');
-  if (bar) bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
-}
-
-function updatePersonalBar() {
-  const bar = document.getElementById('cal-personal-bar');
-  if (bar) bar.style.display = calFilter === 'personal' ? 'flex' : 'none';
+  const bar       = document.getElementById('cal-mycal-bar');
+  const connected = document.getElementById('cal-mycal-connected');
+  const setup     = document.getElementById('cal-mycal-setup');
+  if (!bar) return;
+  bar.style.display = calFilter === 'mycal' ? 'flex' : 'none';
+  if (connected) connected.style.display = hasPersonalCal ? 'block' : 'none';
+  if (setup)     setup.style.display     = hasPersonalCal ? 'none'  : 'block';
 }
 
 document.querySelectorAll('.cal-tab').forEach(t => {
@@ -273,10 +303,13 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     calFilter = t.dataset.filter;
     updateTrainingBar();
     updateEventsBar();
-    updatePersonalBar();
     updateMyCalBar();
     if (calFilter === 'mycal') loadCalFeedUrl();
-    loadEvents(calKey()).then(evs => { renderGrid(evs); renderList(evs); });
+    loadEvents(calKey()).then(evs => {
+      renderGrid(evs);
+      if (!isCurrentMonth()) renderList(evs);
+    });
+    if (isCurrentMonth()) loadUpcomingWindow().then(evs => renderList(evs));
   });
 });
 
@@ -290,6 +323,39 @@ document.getElementById('cal-next').addEventListener('click', () => {
 });
 
 loadProfile().then(() => calDraw());
+
+// My Calendar ICS handlers
+async function savePersonalCalUrl(url) {
+  const msg = document.getElementById('cal-mycal-msg');
+  const btn = document.getElementById('cal-mycal-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  if (msg) { msg.textContent = ''; }
+  try {
+    const r = await fetch('api/personal_cal.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Save failed');
+    hasPersonalCal = url !== '';
+    delete evCache[calKey()];
+    updateMyCalBar();
+    calDraw();
+  } catch (err) {
+    if (msg) { msg.textContent = err.message; msg.style.color = '#c00'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+  }
+}
+document.getElementById('cal-mycal-save-btn')?.addEventListener('click', () => {
+  const url = (document.getElementById('cal-mycal-url')?.value || '').trim();
+  if (!url) return;
+  savePersonalCalUrl(url);
+});
+document.getElementById('cal-mycal-remove-btn')?.addEventListener('click', () => {
+  if (!confirm('Disconnect your personal calendar?')) return;
+  savePersonalCalUrl('');
+});
+document.getElementById('cal-mycal-change-btn')?.addEventListener('click', () => {
+  hasPersonalCal = false; updateMyCalBar();
+});
 
 // ── Admin: training event modal ───────────────────────────────────────────────
 if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {

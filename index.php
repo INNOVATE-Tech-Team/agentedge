@@ -3,7 +3,20 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 $agent = require_login();
+
+// Team members (agents on a Team Leader's roster) get the "Your Production"
+// card instead of the cap wheel — a team leader's own team_dashboard.php
+// already covers team-wide cap/production context for them, and not every
+// commission plan has a cap anyway (see the 100% Plan case). Everyone else
+// keeps the cap wheel; Your Production shows for both.
+$isTeamMember = false;
+try {
+    $tm = local_db()->prepare("SELECT 1 FROM team_members WHERE agent_email = ?");
+    $tm->execute([strtolower(trim($agent['email'] ?? ''))]);
+    $isTeamMember = (bool)$tm->fetchColumn();
+} catch (\Throwable $e) {}
 ?>
 <!doctype html>
 <html lang="en">
@@ -13,7 +26,9 @@ $agent = require_login();
   <title>AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
+  <?php if (!$isTeamMember): ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <?php endif; ?>
   <style>
     .ann-panel{margin-bottom:20px}
     .ann-panel h2{margin:0 0 10px;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
@@ -59,6 +74,19 @@ $agent = require_login();
       <main class="wrap">
         <div id="sample-banner" class="banner" hidden></div>
 
+        <div id="profile-reminder-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:12px;width:min(440px,95vw);padding:26px;position:relative">
+            <button onclick="dismissProfileReminder()" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#888">&times;</button>
+            <h3 style="margin:0 0 6px;font-size:16px;font-weight:800">Finish setting up your profile</h3>
+            <p style="margin:0 0 14px;font-size:13px;color:#666">A few required fields are still missing:</p>
+            <ul id="profile-reminder-list" style="margin:0 0 18px;padding-left:20px;font-size:13px;color:#444;line-height:1.7"></ul>
+            <div style="display:flex;gap:8px">
+              <a href="intake.php" class="btn-cal-nav" style="text-decoration:none;padding:9px 18px;background:#82C112;color:#111;border-radius:6px;font-weight:800;font-size:13px">Complete Profile →</a>
+              <button onclick="dismissProfileReminder()" style="padding:9px 14px;border:1px solid #ccc;background:#fff;color:#555;font-size:13px;border-radius:6px;cursor:pointer">Remind me later</button>
+            </div>
+          </div>
+        </div>
+
         <section class="tiles">
           <div class="tile tile-blue"><div class="tile-val" id="t-volume">—</div><div class="tile-lbl">Sales Volume</div></div>
           <div class="tile tile-green"><div class="tile-val" id="t-closed">—</div><div class="tile-lbl">Closed Deals</div></div>
@@ -71,7 +99,8 @@ $agent = require_login();
           <div id="ann-list"></div>
         </div>
 
-        <div class="grid2">
+        <div class="grid-dash">
+          <?php if (!$isTeamMember): ?>
           <section class="card">
             <h2>Cap Progress</h2>
             <div class="cap-wrap">
@@ -84,6 +113,20 @@ $agent = require_login();
               <div><dt>Remaining</dt><dd id="cap-remaining">—</dd></div>
             </dl>
             <p class="src-note" id="cap-note"></p>
+          </section>
+          <?php endif; ?>
+
+          <section class="card">
+            <h2>Your Production</h2>
+            <div class="residual-head">
+              <span class="residual-amt" id="prod-volume">—</span>
+              <span class="residual-lbl">YTD sales volume</span>
+            </div>
+            <dl class="cap-legend">
+              <div><dt>Deals</dt><dd id="prod-deals">—</dd></div>
+              <div><dt>Avg Sale</dt><dd id="prod-avg">—</dd></div>
+            </dl>
+            <p class="src-note" id="prod-rank"></p>
           </section>
 
           <section class="card">
@@ -117,8 +160,24 @@ $agent = require_login();
     </div>
   </div>
 
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=<?= @filemtime(__DIR__ . '/assets/app.js') ?: time() ?>"></script>
   <script>
+  (function(){
+    function dismiss(){ document.getElementById('profile-reminder-overlay').style.display = 'none'; }
+    window.dismissProfileReminder = dismiss;
+    fetch('api/profile_completeness.php', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.complete || !d.missing || !d.missing.length) return;
+        const list = document.getElementById('profile-reminder-list');
+        list.innerHTML = d.missing.map(f => '<li>' + f.label.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) + '</li>').join('');
+        document.getElementById('profile-reminder-overlay').style.display = 'flex';
+      })
+      .catch(() => {});
+    document.getElementById('profile-reminder-overlay').addEventListener('click', e => {
+      if (e.target === e.currentTarget) dismiss();
+    });
+  })();
   (function(){
     fetch('api/announcements.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
       const items=d.items||[];

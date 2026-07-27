@@ -13,6 +13,7 @@ const ROLE_LABELS = [
     'recruiter'            => 'Recruiter',
     'bic'                  => 'Broker in Charge',
     'mc_leader'            => 'Market Center Leader',
+    'team_leader'          => 'Team Leader',
     'launch_coach'         => 'Launch Coach',
     'director_of_coaching' => 'Director of Coaching',
     'launch_facilitator'   => 'Launch Facilitator',
@@ -55,7 +56,7 @@ function default_perms(string $role = 'agent'): array {
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
     if (!function_exists('local_db')) return null;
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email FROM agent_roles WHERE email=?");
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
@@ -66,6 +67,12 @@ function fetch_perms_local(string $email): ?array {
     $perms['mc_slugs']    = $mcs;
     $perms['own_mc_slug'] = $row['own_mc_slug'] ?? '';
     $perms['bic_email']   = $row['bic_email']   ?? '';
+    // Merge the optional "extra role" (e.g. Team Leader alongside a BIC's
+    // primary role) into the effective roles list so course role_filter
+    // checks recognize it, not just the primary role.
+    $extra = json_decode($row['extra_roles_json'] ?? '[]', true);
+    $extraRole = (is_array($extra) && !empty($extra[0]['role'])) ? canonical_role($extra[0]['role']) : '';
+    $perms['roles'] = array_values(array_unique(array_filter([$r, $extraRole])));
     return $perms;
 }
 
@@ -88,8 +95,28 @@ function fetch_perms_crm(string $email): array {
 }
 
 function fetch_perms(string $email): array {
-    $local = fetch_perms_local($email);
-    return $local ?? fetch_perms_crm($email);
+    $perms = fetch_perms_local($email) ?? fetch_perms_crm($email);
+    // Team leader status is resolved independently of role/agent_roles — a bic
+    // or mc_leader can also lead a team, and a team spans multiple MCs, so it
+    // can't live in agent_roles.mc_slugs. The teams/team_members tables are the
+    // sole source of truth, checked live on every request (same as mc_slugs).
+    $emailLower = strtolower(trim($email));
+    if (function_exists('local_db') && $emailLower !== '') {
+        try {
+            $stmt = local_db()->prepare("SELECT id FROM teams WHERE leader_email=? AND enabled=1");
+            $stmt->execute([$emailLower]);
+            $teamId = $stmt->fetchColumn();
+            if ($teamId !== false) {
+                $perms['team_id'] = (int)$teamId;
+                if (!in_array('team_leader', $perms['roles'], true)) $perms['roles'][] = 'team_leader';
+            }
+            $stmt = local_db()->prepare("SELECT team_id FROM team_members WHERE agent_email=?");
+            $stmt->execute([$emailLower]);
+            $ownTeamId = $stmt->fetchColumn();
+            if ($ownTeamId !== false) $perms['own_team_id'] = (int)$ownTeamId;
+        } catch (\Throwable $e) {}
+    }
+    return $perms;
 }
 
 // The logged-in agent's permissions. Memoized per-request only (a static, not
@@ -117,11 +144,20 @@ function my_mc_slugs(): array    { return current_perms()['mc_slugs'] ?? []; }
 function my_own_mc_slug(): string { return current_perms()['own_mc_slug'] ?? ''; }
 // The BIC email assigned to this agent.
 function my_bic_email(): string   { return current_perms()['bic_email'] ?? ''; }
+// The team this user leads (one team per leader, resolved live from the teams
+// table — see fetch_perms()). Null if they don't lead a team.
+function my_team_id(): ?int       { $t = current_perms()['team_id'] ?? null; return $t !== null ? (int)$t : null; }
+// The team this agent is a member of (not leading it) — via team_members.
+function my_own_team_id(): ?int   { $t = current_perms()['own_team_id'] ?? null; return $t !== null ? (int)$t : null; }
 
 function is_super_admin(): bool    { return !empty(current_perms()['isSuperAdmin']); }
 function is_admin(): bool          { return !empty(current_perms()['isAdmin']); }
 function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
 function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
+// NOTE: deliberately not folded into is_leader() below — that gate is checked
+// by unrelated features (announcements, company email audiences) not part of
+// this build. Team-specific pages check is_team_leader() explicitly instead.
+function is_team_leader(): bool   { return my_team_id() !== null; }
 function is_recruiter(): bool      { return (current_perms()['role'] ?? '') === 'recruiter'; }
 // Can view "Leaders & Recruiters" visibility docs (super_admin, mc_leader, bic, recruiter)
 function can_view_leader_docs(): bool { return is_super_admin() || is_mc_leader() || is_bic() || is_recruiter(); }
@@ -139,6 +175,19 @@ function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }
+// All effective roles for the current agent (primary + optional extra role) --
+// use for role_filter-style checks so an extra role counts too.
+function my_roles(): array         { return current_perms()['roles'] ?? [my_role()]; }
+
+// Finance Accounting Checklists — scoped to specific named staff, not a role tier.
+// Same hardcoded-allowlist shape as reconciliation.php, centralized here since
+// both finance_checklists.php and its api/ counterpart need the same check.
+const FINANCE_CHECKLIST_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com', 'dominic@innovateonline.com'];
+function can_access_finance_checklists(): bool {
+    if (is_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, FINANCE_CHECKLIST_EMAILS, true);
+}
 
 function require_admin_page(): void {
     if (!is_admin()) { header('Location: index.php'); exit; }

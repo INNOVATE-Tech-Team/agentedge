@@ -135,6 +135,10 @@ function local_db(): PDO {
     // Migration: add tracking columns to existing installs (no-op if already present)
     try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN state_code         TEXT"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN canonical_agent_id TEXT"); } catch (\Exception $e) {}
+    // Never existed at all until now — phone was silently dropped everywhere
+    // in the onboarding pipeline (intake form, admin add-to-queue, and the
+    // Advantage CRM push all collected it but had nowhere to put it).
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN agent_phone TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Per-step provisioning status for each queued agent
     $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_steps (
@@ -285,6 +289,14 @@ function local_db(): PDO {
     // Migrations for existing installs
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN personal_cal_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN cal_token        TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // A second email some agents use with Darwin/AccountTECH instead of their
+    // roster/login email — lets production-matching (api/team_production.php,
+    // api/backoffice_production.php) resolve to the right person by email
+    // even when Darwin has a different address on file, instead of falling
+    // back to fragile name-matching or requiring the mismatch to be manually
+    // reconciled on one side or the other.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_alt_email ON agent_extra(alt_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
@@ -437,6 +449,21 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_licenses_email ON agent_intake_licenses(agent_email)");
 
+    // Public "complete your profile" links (emailed reminders + backoffice
+    // send-link action). A new random token is minted every time a link is
+    // sent — old tokens for the same agent are never invalidated, so a
+    // resend can't break a link that's still sitting unopened in someone's
+    // inbox. Not expiring/single-use by design: this is a low-stakes
+    // reminder to fill in missing profile fields, not a security-sensitive
+    // action.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS profile_completion_tokens (
+        token      TEXT PRIMARY KEY,
+        email      TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by TEXT NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_profile_completion_tokens_email ON profile_completion_tokens(email)");
+
     // Ensure headshots directory exists and is web-protected
     $hsDir = $dir . '/headshots';
     if (!is_dir($hsDir)) @mkdir($hsDir, 0750, true);
@@ -570,6 +597,15 @@ function local_db(): PDO {
     // to cfg()'s sendgrid_from at send time.
     try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN from_name  TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // is_html: Company Email sends pre-rendered HTML bodies; everything else
+    // (announcements, ticket notifications) is plain text and gets the 0 default.
+    // Already live on production ahead of this migration (see cron/process_email_queue.php,
+    // api/company_email_action.php) — added here so a fresh install's schema matches.
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN is_html INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // reply_to: per-ticket Reply-To address (reply+{id}-{token}@...) so a reply
+    // typed in the recipient's mail client routes back into the ticket thread.
+    // Only ticket notifications set this; everything else gets '' (no Reply-To header).
+    try { $pdo->exec("ALTER TABLE notification_queue ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Company Email (Back Office) ───────────────────────────────────────────
     // These three tables existed live on Lightsail long before this migration
@@ -618,6 +654,26 @@ function local_db(): PDO {
     // the auto photo/phone/links entirely.
     try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN use_custom  INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN custom_html TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN photo_key   TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Per-role signatures — used by transactional notification emails
+    // (onboarding complete, coach assignment, etc.) to brand the sign-off
+    // based on the sender's AgentEdge role rather than their personal profile.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS role_signatures (
+        role         TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL DEFAULT '',
+        title        TEXT NOT NULL DEFAULT '',
+        phone        TEXT NOT NULL DEFAULT '',
+        website_url  TEXT NOT NULL DEFAULT '',
+        use_custom   INTEGER NOT NULL DEFAULT 0,
+        custom_html  TEXT NOT NULL DEFAULT '',
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_by   TEXT NOT NULL DEFAULT ''
+    )");
+    $seedSt = $pdo->prepare("INSERT OR IGNORE INTO role_signatures (role) VALUES (?)");
+    foreach (['default', 'admin', 'staff', 'recruiter', 'mc_leader'] as $seedRole) {
+        $seedSt->execute([$seedRole]);
+    }
 
     // Reusable Company Email templates — personal by default, is_shared=1 makes
     // one visible/loadable by anyone with Company Email access, not just the owner.
@@ -995,6 +1051,10 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN embed_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN folder_id INTEGER"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lessons_folder ON uni_lessons(folder_id)");
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN learning_objective TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'beginner'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN related_lessons TEXT NOT NULL DEFAULT '[]'"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_lesson_files (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1079,6 +1139,32 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_state ON market_centers(state_code)");
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // ── Teams (Team Leader platform) ──────────────────────────────────────────
+    // Distinct from market_centers: a team spans agents across multiple MCs,
+    // led by a single team_leader. leader_email is the source of truth for the
+    // team_leader role (roles.php reads this table directly rather than storing
+    // it in agent_roles.extra_roles_json, which already silently drops scope
+    // data for other extra roles).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS teams (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT    NOT NULL,
+        slug         TEXT    UNIQUE NOT NULL,
+        leader_email TEXT    NOT NULL DEFAULT '',
+        enabled      INTEGER NOT NULL DEFAULT 1,
+        sort_ord     INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_teams_leader ON teams(leader_email)");
+
+    // One team per agent — agent_email is the PK, so adding someone to a new
+    // team silently moves them off any prior one.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS team_members (
+        agent_email TEXT PRIMARY KEY,
+        team_id     INTEGER NOT NULL,
+        added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id)");
 
     // ── Per-state automation status for the State Rosters page.
     $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
@@ -1203,6 +1289,53 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_period ON budget_lines(period_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_bl_dept   ON budget_lines(department)");
+
+    // ── Finance: Accounting Checklists (recurring projects / task follower) ───
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_templates (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        description TEXT    NOT NULL DEFAULT '',
+        recurrence  TEXT    NOT NULL DEFAULT 'monthly',  -- monthly | quarterly | annual | one_time
+        active      INTEGER NOT NULL DEFAULT 1,
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_template_items (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id             INTEGER NOT NULL,
+        title                   TEXT    NOT NULL,
+        description             TEXT    NOT NULL DEFAULT '',
+        default_assignee_email  TEXT    NOT NULL DEFAULT '',
+        sort_ord                INTEGER NOT NULL DEFAULT 0
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcti_template ON finance_checklist_template_items(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_runs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        period_label TEXT   NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'open',  -- open | closed
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcr_template ON finance_checklist_runs(template_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_run_items (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id            INTEGER NOT NULL,
+        title             TEXT    NOT NULL,
+        description       TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'todo',  -- todo | done
+        assigned_to_email TEXT    NOT NULL DEFAULT '',
+        due_date          TEXT    NOT NULL DEFAULT '',
+        notes             TEXT    NOT NULL DEFAULT '',
+        sort_ord          INTEGER NOT NULL DEFAULT 0,
+        completed_at      TEXT    NOT NULL DEFAULT '',
+        completed_by      TEXT    NOT NULL DEFAULT '',
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcri_run ON finance_checklist_run_items(run_id)");
 
     // ── MLS Integrations tracker ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (
@@ -1419,6 +1552,25 @@ function local_db(): PDO {
             ['NC','MLS','Doorify | Raleigh','MLS','','','','','','','','','','','','','','',''],
         ];
         foreach ($memberships as $m) { $mm->execute($m); }
+    }
+
+    // Backfill: rows present in Carrie's MLS spreadsheet but not captured in the
+    // original seed above. Runs on every boot; INSERT is skipped once a row with
+    // the same state+name+username already exists, so it's safe to re-run.
+    $mmBackfillCheck = $pdo->prepare("SELECT COUNT(*) FROM mls_memberships WHERE state=? AND name=? AND username=?");
+    $mmBackfillIns = $pdo->prepare("INSERT INTO mls_memberships
+        (state,board_or_mls,name,membership_type,address,phone,office_id,broker_of_record,
+         username,password,login_link,notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    $mmBackfill = [
+        ['NC','MLS','Triad','','','','','Carrie Kinney','283428','Innovate25!','https://triadmls.com/','$63/month (WSAR)'],
+        ['SC | HH','MLS','Lowcountry','Flex','','','','Carrie Kinney','bmls.kinneyc','Innovate2025!!','https://bmls.flexmls.com/',''],
+        ['SC | CHS','MLS','Charleston Trident Association of Realtors (CTAR)','Matrix','','','4132','Carrie Kinney','4132','4620','https://ims.charlestonrealtors.com/',''],
+        ['SC | HV','MLS','Pee Dee Realtor Association','Paragon','','','','Carrie Kinney','554031769','Innovate26!!','https://peedeemls.paragonrels.com/ParagonLS/Default.mvc/Login','carrie@innovateonline.com login; $100/qtr'],
+    ];
+    foreach ($mmBackfill as $b) {
+        $mmBackfillCheck->execute([$b[0], $b[2], $b[8]]);
+        if ($mmBackfillCheck->fetchColumn() == 0) { $mmBackfillIns->execute($b); }
     }
 
     // ── Listing Intelligence ──────────────────────────────────────────────────

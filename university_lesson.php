@@ -39,7 +39,7 @@ if (!is_admin()) {
         if (!$stateCode || !in_array($stateCode, $sf, true)) { header('Location: university.php'); exit; }
     }
     $rf = json_decode($lesson['role_filter'] ?? '[]', true);
-    if (!empty($rf) && !in_array(my_role(), $rf, true)) { header('Location: university.php'); exit; }
+    if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
 }
 
 $courseId = (int)$lesson['course_id'];
@@ -56,7 +56,7 @@ $nextLesson  = $lessonIndex < count($allLessons) - 1 ? $allLessons[$lessonIndex 
 $progQ = $db->prepare("SELECT * FROM uni_progress WHERE agent_email=? AND lesson_id=?");
 $progQ->execute([$email, $lessonId]);
 $progress = $progQ->fetch(PDO::FETCH_ASSOC);
-$isComplete = $progress !== null;
+$isComplete = $progress !== false;
 
 // Quiz questions (without correct_index/correct_indexes — never sent to client)
 $questions = [];
@@ -131,6 +131,7 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
     /* Content HTML */
     .lesson-content{line-height:1.7;font-size:14px;color:#333;margin-bottom:20px}
     .lesson-content p{margin:0 0 12px}
+    .lesson-content img{max-width:100%;height:auto;border-radius:8px;display:block;margin:0 auto 12px}
     /* Quiz */
     .quiz-wrap{margin-bottom:20px}
     .quiz-progress{font-size:12px;color:#888;margin-bottom:16px;font-weight:700}
@@ -263,6 +264,11 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
 
       <!-- Document lesson -->
       <?php elseif ($lesson['type'] === 'doc'): ?>
+      <?php if ($lesson['content_html']): ?>
+      <div class="card" style="padding:20px 24px;margin-bottom:20px">
+        <div class="lesson-content"><?= $lesson['content_html'] ?></div>
+      </div>
+      <?php endif; ?>
       <?php if ($lesson['file_key']): ?>
       <div class="doc-wrap">
         <div class="doc-icon">📄</div>
@@ -273,11 +279,6 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
       <div class="doc-wrap" style="background:#fff3cd;border-color:#ffc107">
         <div class="doc-icon">⚠️</div>
         <div class="doc-title">Document not uploaded yet</div>
-      </div>
-      <?php endif; ?>
-      <?php if ($lesson['content_html']): ?>
-      <div class="card" style="padding:20px 24px;margin-bottom:20px">
-        <div class="lesson-content"><?= $lesson['content_html'] ?></div>
       </div>
       <?php endif; ?>
       <?php render_attachments($attachments); ?>

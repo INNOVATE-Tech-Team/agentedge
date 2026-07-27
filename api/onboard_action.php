@@ -19,11 +19,47 @@ function json_out(array $d, int $code = 200): void {
     exit;
 }
 
-$agent = require_login();
-if (!is_admin()) json_out(['ok'=>false,'error'=>'Admin access required'], 403);
+$agent    = require_login();
+$isAdmin  = is_admin();
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) json_out(['ok'=>false,'error'=>'Admin access required'], 403);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
+
+// mc_leader/bic may only view their own Market Center's onboarding queue —
+// every other action (add/search CRM/mark done/provision/complete/cancel/
+// change state or MC) stays admin-only.
+if (!$isAdmin && $action !== 'list_queue') {
+    json_out(['ok'=>false,'error'=>'Admin access required'], 403);
+}
+
 $pdo    = local_db();
+
+// Puts an onboarding-queue entry's agent on the active roster as soon as a
+// valid state + Market Center are both known for it — called right after
+// add_to_queue, and again from set_state/set_market_center in case that
+// data wasn't available yet at add-time. Mirrors complete_onboarding's own
+// add_or_reactivate_roster_agent() call, just triggered as early as possible
+// instead of only at the very end of the process. Best-effort/no-op if
+// either field is still missing — roster placement then just waits for
+// whichever of these three call sites fills in the gap next.
+function onboard_try_roster_placement(PDO $pdo, int $queueId, string $doneBy): void {
+    $st = $pdo->prepare("SELECT agent_name, market_center, state_code, canonical_agent_id, agent_email, agent_phone FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return;
+
+    $state = strtoupper(trim($row['state_code'] ?? ''));
+    $mc    = trim($row['market_center'] ?? '');
+    if (!in_array($state, ROSTER_VALID_STATES, true) || $mc === '') return;
+
+    try {
+        add_or_reactivate_roster_agent(
+            $pdo, $row['agent_name'], $state, $mc, '', $row['canonical_agent_id'] ?? null, $doneBy,
+            $row['agent_email'] ?? '', $row['agent_phone'] ?? ''
+        );
+    } catch (\Throwable $e) {}
+}
 
 // ── GET: list_queue ───────────────────────────────────────────────────────────
 if ($action === 'list_queue') {
@@ -45,6 +81,11 @@ if ($action === 'list_queue') {
         );
         $st->execute([$filter]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    if (!$isAdmin) {
+        $myMcSlugs = my_mc_slugs();
+        $rows = array_values(array_filter($rows, fn($r) => in_array(slugify_mc($r['market_center'] ?? ''), $myMcSlugs, true)));
     }
 
     // Attach steps for each entry
@@ -179,9 +220,11 @@ if ($action === 'add_to_queue') {
         $body['sponsor']    ?? '',
         $body['role']       ?? 'agent',
         $body['notes']      ?? '',
-        $agent['name']      ?? ''
+        '',
+        trim($body['agent_phone'] ?? $body['phone'] ?? '')
     );
     $queueId = $result['id'];
+    onboard_try_roster_placement($pdo, $queueId, $agent['email']);
 
     http_response_code(200);
     header('Content-Type: application/json');
@@ -196,27 +239,14 @@ if ($action === 'add_to_queue') {
 }
 
 // ── POST: set_state ───────────────────────────────────────────────────────────
-// An agent can be licensed in more than one state, so state_code stores a
-// comma-separated list (e.g. "SC,NC") — accepts state_codes as an array, or a
-// single state_code string for backward compatibility.
 if ($action === 'set_state') {
     $queueId = (int)($body['queue_id'] ?? 0);
-    if (!$queueId) json_out(['ok'=>false,'error'=>'queue_id is required']);
-
-    $raw = $body['state_codes'] ?? $body['state_code'] ?? [];
-    if (!is_array($raw)) $raw = [$raw];
-
-    $states = [];
-    foreach ($raw as $s) {
-        $s = strtoupper(trim((string)$s));
-        if ($s === '') continue;
-        if (!in_array($s, ONBOARD_VALID_STATES, true)) {
-            json_out(['ok'=>false,'error'=>"\"$s\" is not a valid state."]);
-        }
-        if (!in_array($s, $states, true)) $states[] = $s;
+    $state   = strtoupper(trim($body['state_code'] ?? ''));
+    if (!$queueId || !in_array($state, ONBOARD_VALID_STATES, true)) {
+        json_out(['ok'=>false,'error'=>'queue_id and a valid state_code are required']);
     }
-
-    $pdo->prepare("UPDATE onboard_queue SET state_code = ? WHERE id = ?")->execute([implode(',', $states), $queueId]);
+    $pdo->prepare("UPDATE onboard_queue SET state_code = ? WHERE id = ?")->execute([$state, $queueId]);
+    onboard_try_roster_placement($pdo, $queueId, $agent['email']);
     json_out(['ok'=>true]);
 }
 
@@ -232,6 +262,7 @@ if ($action === 'set_market_center') {
         json_out(['ok'=>false,'error'=>'queue_id and a valid market_center are required']);
     }
     $pdo->prepare("UPDATE onboard_queue SET market_center = ? WHERE id = ?")->execute([$mc, $queueId]);
+    onboard_try_roster_placement($pdo, $queueId, $agent['email']);
     json_out(['ok'=>true]);
 }
 
@@ -257,7 +288,7 @@ if ($action === 'mark_done') {
     if (in_array($status, ['done','skipped'], true)) {
         try {
             require_once __DIR__ . '/../lib/notifications.php';
-            maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $agent['email'], $agent['name'] ?? '');
+            maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
         } catch (\Throwable $e) {}
     }
 
@@ -300,9 +331,7 @@ if ($action === 'provision') {
                 $pdo->prepare("UPDATE onboard_steps SET pandadoc_document_id=? WHERE queue_id=? AND tool_key=?")
                     ->execute([$docId, $queueId, $toolKey]);
             },
-            // Only one template can be picked — an agent licensed in several
-            // states gets the doc for the first one listed.
-            explode(',', $entry['state_code'] ?? '')[0] ?: null
+            $entry['state_code'] ?? null
         );
     }
 
@@ -331,7 +360,7 @@ if ($action === 'provision') {
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
-        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $agent['email'], $agent['name'] ?? '');
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
     } catch (\Throwable $e) {}
 
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
@@ -345,19 +374,9 @@ if ($action === 'complete_onboarding') {
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
 
-    // state_code is a comma-separated list — an agent can be licensed in more
-    // than one state. Each valid state gets its own innovate_roster row (same
-    // Market Center on all of them), tied together by canonical_agent_id.
-    $states = array_values(array_unique(array_filter(
-        array_map(fn($s) => strtoupper(trim($s)), explode(',', $row['state_code'] ?? ''))
-    )));
-    if (!$states) {
-        json_out(['ok'=>false,'error'=>'Set at least one valid license state for this agent before completing onboarding.']);
-    }
-    foreach ($states as $s) {
-        if (!in_array($s, ROSTER_VALID_STATES, true)) {
-            json_out(['ok'=>false,'error'=>"\"$s\" is not a valid license state."]);
-        }
+    $state = strtoupper(trim($row['state_code'] ?? ''));
+    if (!in_array($state, ROSTER_VALID_STATES, true)) {
+        json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
     }
     // Same treatment as state above — market_center only ever reaches this
     // table already normalized against the canonical list (see
@@ -368,17 +387,17 @@ if ($action === 'complete_onboarding') {
         json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
     }
 
-    foreach ($states as $s) {
-        add_or_reactivate_roster_agent(
-            $pdo,
-            $row['agent_name'],
-            $s,
-            $mc,
-            '',
-            $row['canonical_agent_id'] ?? null,
-            $agent['email']
-        );
-    }
+    add_or_reactivate_roster_agent(
+        $pdo,
+        $row['agent_name'],
+        $state,
+        $row['market_center'] ?? '',
+        '',
+        $row['canonical_agent_id'] ?? null,
+        $agent['email'],
+        $row['agent_email'] ?? '',
+        $row['agent_phone'] ?? ''
+    );
 
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);
@@ -395,7 +414,7 @@ if ($action === 'complete_onboarding') {
         $intake = $intakeSt->fetch(PDO::FETCH_ASSOC);
         $isNewAgent = $intake && trim($intake['prior_occupation'] ?? '') === '' && trim($intake['prior_affiliation'] ?? '') === '';
         if ($isNewAgent) {
-            notify_coach_assignment_needed($row['agent_name'], $row['agent_email'], $agent['email'], $agent['name'] ?? '');
+            notify_coach_assignment_needed($row['agent_name'], $row['agent_email']);
         }
 
         // Step 13 — schedule the 10-day post-completion check-in text.

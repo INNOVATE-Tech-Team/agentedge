@@ -9,7 +9,9 @@ require_once __DIR__ . '/onboard_tools.php';
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 
 $agent = require_login();
-require_admin_page();
+$isAdmin  = is_admin();
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) { header('Location: index.php'); exit; }
 
 $tools = onboard_tools();
 // Build a map keyed by tool key for JS
@@ -40,88 +42,8 @@ $mcOptsJson = json_encode($mcOpts);
           <div class="content-title">Onboarding Queue</div>
           <div class="content-hello">Track every new agent through their provisioning checklist</div>
         </div>
-        <button class="btn-save" id="btn-add-agent" onclick="toggleAddPanel()">+ Add Agent</button>
       </header>
       <main class="wrap">
-
-        <!-- Add Agent Panel (hidden by default) -->
-        <div class="ob-add-panel" id="ob-add-panel">
-          <h2 style="margin:0 0 16px;font-size:15px">Add Agent to Onboarding Queue</h2>
-
-          <!-- CRM Search -->
-          <div class="form-grid" style="margin-bottom:16px">
-            <div class="field full">
-              <label>Search CRM Roster</label>
-              <div class="search-wrap">
-                <input type="text" id="crm-search" class="field input" placeholder="Type name or email to pre-fill from CRM…" autocomplete="off"
-                       style="padding:10px 12px;border:1px solid #E6E7E8;border-radius:8px;font-size:14px;background:#fafafa;width:100%">
-                <div class="crm-results" id="crm-results" style="display:none"></div>
-              </div>
-            </div>
-          </div>
-
-          <form id="ob-add-form">
-            <div class="form-grid">
-              <div class="field">
-                <label>Full Name *</label>
-                <input type="text" id="ob-name" required placeholder="Jane Smith">
-              </div>
-              <div class="field">
-                <label>Email *</label>
-                <input type="email" id="ob-email" required placeholder="jane@example.com">
-              </div>
-              <div class="field">
-                <label>License State(s) <small style="font-weight:400;color:#999">(can hold more than one)</small></label>
-                <div id="ob-state-checks" style="display:flex;flex-wrap:wrap;gap:6px;padding-top:6px">
-                  <?php foreach (['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'] as $st): ?>
-                    <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;background:#f0f0f0;padding:3px 9px;border-radius:10px;cursor:pointer;margin:0">
-                      <input type="checkbox" class="ob-state-check" value="<?= h($st) ?>" style="margin:0" onchange="onAddStateChange()"><?= h($st) ?>
-                    </label>
-                  <?php endforeach; ?>
-                </div>
-              </div>
-              <div class="field">
-                <label>Market Center *</label>
-                <select id="ob-mc" required>
-                  <option value="">Select Market Center…</option>
-                  <?php foreach ($mcOpts as $opt): ?>
-                  <option value="<?= h($opt['name']) ?>"><?= h(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
-              <div class="field">
-                <label>Role</label>
-                <select id="ob-role">
-                  <option value="agent">Agent</option>
-                  <option value="mc_leader">Market Center Leader</option>
-                  <option value="broker_in_charge">Broker in Charge</option>
-                  <option value="recruiter">Recruiter</option>
-                  <option value="retention_admin">Retention Admin</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>Start Date</label>
-                <input type="date" id="ob-start">
-              </div>
-              <div class="field">
-                <label>Sponsor / Recruited By</label>
-                <div class="search-wrap">
-                  <input type="text" id="ob-sponsor" placeholder="Who recruited them?" autocomplete="off">
-                  <div class="crm-results" id="sponsor-results" style="display:none"></div>
-                </div>
-              </div>
-              <div class="field full">
-                <label>Notes</label>
-                <input type="text" id="ob-notes" placeholder="Anything the office should know…">
-              </div>
-            </div>
-            <div class="form-actions">
-              <button type="submit" class="btn-save" id="ob-add-btn">Add to Queue</button>
-              <button type="button" class="btn-save" style="background:#f0f0f0;color:#333" onclick="toggleAddPanel()">Cancel</button>
-              <span class="form-msg" id="ob-add-msg"></span>
-            </div>
-          </form>
-        </div>
 
         <!-- Filter Tabs -->
         <div class="ob-tabs" id="ob-tabs">
@@ -143,6 +65,7 @@ $mcOptsJson = json_encode($mcOpts);
     window.ONBOARD_TOOLS   = <?= $toolsJson ?>;
     window.ONBOARD_MC_OPTS = <?= $mcOptsJson ?>;
     window.ONBOARD_OPEN_ID = <?= (int)($_GET['open'] ?? 0) ?>;
+    window.IS_ADMIN         = <?= $isAdmin ? 'true' : 'false' ?>;
   </script>
   <script src="assets/onboard.js"></script>
 </body>

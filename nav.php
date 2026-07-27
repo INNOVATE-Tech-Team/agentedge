@@ -58,8 +58,9 @@ function nav_items(): array {
     // mc_leader/bic now see the Back Office section directly (department-filtered
     // in render_sidebar()), so no separate Agent Communications shortcut is needed here.
     return array_merge($core, $ext, [
-        ['key' => 'coach_dashboard', 'label' => 'Coach Dashboard', 'href' => 'coach_dashboard.php', 'launchCoachOnly' => true],
-        ['key' => 'crm', 'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
+        ['key' => 'coach_dashboard',   'label' => 'Coach Dashboard',    'href' => 'coach_dashboard.php',   'launchCoachOnly' => true],
+        ['key' => 'crm',               'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
+        ['key' => 'settings_signature','label' => 'My Email Signature', 'href' => 'settings_signature.php','group_label' => 'My Account', 'staffOnly' => true],
     ]);
 }
 
@@ -84,18 +85,25 @@ function backoffice_nav_items(bool $superAdmin): array {
         // themselves scope their data to the leader's own Market Center(s).
         ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'standalone'=>true],
         ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations', 'leaderVisible'=>true],
-        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations'],
+        ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
         ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'recruit_prospects',         'label'=>'Recruiting Prospects','href'=>'backoffice_prospects.php',      'dept'=>'Operations', 'superOnly'=>true],
+        // ── My Team (team_leader role) ──────────────────────────────────────────
+        // Its own dept so it never entangles with the mc_leader/bic-only
+        // 'leaderVisible' filtering already applied to Operations below.
+        ['key'=>'team_dashboard',            'label'=>'Team Dashboard',      'href'=>'team_dashboard.php',             'dept'=>'My Team', 'teamLeaderOnly'=>true],
+        ['key'=>'team_recruiting',           'label'=>'Recruiting (Advantage)', 'href'=>'https://advantage.innovateonline.com', 'dept'=>'My Team', 'teamLeaderOnly'=>true, 'external'=>true],
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
-        ['key'=>'bo_mls',                    'label'=>'MLS',                 'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
+        ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
+        ['key'=>'bo_state_reports',          'label'=>'State Annual Reports','href'=>'backoffice_state_reports.php', 'dept'=>'Broker Files'],
+        ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
@@ -114,12 +122,14 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
         ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
         ['key'=>'bo_commission_checks',      'label'=>'Commission Checks',   'href'=>'backoffice_commission_checks.php', 'dept'=>'Finance'],
+        ['key'=>'finance_checklists',        'label'=>'Accounting Checklists','href'=>'finance_checklists.php',        'dept'=>'Finance', 'financeChecklistItem'=>true],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
+        ['key'=>'teams',                     'label'=>'Teams',               'href'=>'teams.php',                     'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_links',               'label'=>'Link Settings',       'href'=>'admin_links.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_backoffice',          'label'=>'Menu Builder',        'href'=>'admin_backoffice.php',          'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_dotloop_tokens',      'label'=>'DotLoop Tokens',      'href'=>'admin_dotloop_tokens.php',      'dept'=>'Technology', 'superOnly'=>true],
@@ -168,6 +178,7 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['superOnly']) && !$superAdmin) continue;
         if (!empty($it['leaderOnly']) && !can_post_announcements() && !is_recruiter()) continue;
         if (!empty($it['launchCoachOnly']) && !is_launch_coach() && !$admin) continue;
+        if (!empty($it['staffOnly']) && in_array(my_role(), ['agent', 'launch_agent'], true)) continue;
 
         // Sentinel — inject the personalized assets collapsible inline.
         if ($it['key'] === '__assets__') {
@@ -208,9 +219,14 @@ function render_sidebar(string $current, array $agent): void {
     // Back Office section — admins see everything; mc_leader/bic see it too, but with
     // Finance, Human Resources, and Technology departments hidden entirely, and
     // Operations filtered down to just the 'leaderVisible' items (Agent Profiles /
-    // Agent Roster — both scope their own data to the leader's MC). Launch coaches
-    // (the other non-admin group that reaches this block) see no Operations items.
-    $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach();
+    // Agent Roster / Onboarding Queue — all three scope their own data to the
+    // leader's MC). Launch coaches (the other non-admin group that reaches this
+    // block) see no Operations items.
+    // Finance Accounting Checklists is scoped to 3 named staff (see roles.php),
+    // narrower than any role tier — so it needs its own bypass into a section
+    // (Finance) that's otherwise hidden from non-admins entirely.
+    $financeChecklistAccess = can_access_finance_checklists();
+    $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach() || $financeChecklistAccess || is_team_leader();
     $leaderHiddenDepts = ['Finance', 'Human Resources', 'Technology'];
     $isMcLeaderOrBic = is_mc_leader() || is_bic();
     if ($showBackOffice) {
@@ -230,7 +246,7 @@ function render_sidebar(string $current, array $agent): void {
         $boItems    = backoffice_nav_items($superAdmin);
         $standalone = array_values(array_filter($boItems, fn($it) => !empty($it['standalone'])));
         $deptItems  = array_values(array_filter($boItems, fn($it) => empty($it['standalone'])));
-        $deptOrder  = ['Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources'];
+        $deptOrder  = ['My Team','Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources'];
         $byDept     = array_fill_keys($deptOrder, []);
         foreach ($deptItems as $it) {
             $d = $it['dept'] ?? 'Operations';
@@ -255,12 +271,18 @@ function render_sidebar(string $current, array $agent): void {
                . htmlspecialchars($it['label']) . $arr . '</a>';
         }
         foreach ($deptOrder as $deptName) {
-            if (!$admin && in_array($deptName, $leaderHiddenDepts, true)) continue;
+            $financeChecklistBypass = $financeChecklistAccess && $deptName === 'Finance';
+            if (!$admin && in_array($deptName, $leaderHiddenDepts, true) && !$financeChecklistBypass) continue;
             if (!$admin && $deptName === 'Operations' && !$isMcLeaderOrBic) continue;
             $dItems  = $byDept[$deptName] ?? [];
-            $visible = array_values(array_filter($dItems, fn($it) => empty($it['superOnly']) || $superAdmin));
+            $visible = array_values(array_filter($dItems, fn($it) =>
+                (empty($it['superOnly']) || $superAdmin) && (empty($it['teamLeaderOnly']) || is_team_leader())
+            ));
             if (!$admin && $deptName === 'Operations') {
                 $visible = array_values(array_filter($visible, fn($it) => !empty($it['leaderVisible'])));
+            }
+            if (!$admin && $financeChecklistBypass) {
+                $visible = array_values(array_filter($visible, fn($it) => !empty($it['financeChecklistItem'])));
             }
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';

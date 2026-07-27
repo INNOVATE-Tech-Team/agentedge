@@ -11,6 +11,8 @@
   const TOOLS       = window.ONBOARD_TOOLS || [];
   const STATES      = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
   const MC_OPTS     = window.ONBOARD_MC_OPTS || [];
+  const IS_ADMIN    = window.IS_ADMIN === true;
+  const notesLoaded = new Set();   // queue ids whose notes have already been fetched
 
   // Tool key → definition map
   const TOOL_MAP = {};
@@ -116,77 +118,15 @@
     if (el) el.value = val || '';
   }
 
-  // ── Sponsor / Recruited By autocomplete ────────────────────────────────────
-  // Reuses the same CRM/roster search as "Search CRM Roster" above, but just
-  // fills the sponsor field with the picked name instead of the whole form.
-  let sponsorTimer = null;
-  const sponsorInput   = document.getElementById('ob-sponsor');
-  const sponsorResults = document.getElementById('sponsor-results');
-
-  if (sponsorInput) {
-    sponsorInput.addEventListener('input', () => {
-      clearTimeout(sponsorTimer);
-      const q = sponsorInput.value.trim();
-      if (q.length < 2) { hideSponsorResults(); return; }
-      sponsorTimer = setTimeout(() => fetchSponsor(q), 300);
-    });
-
-    sponsorInput.addEventListener('blur', () => {
-      setTimeout(hideSponsorResults, 200);
-    });
-  }
-
-  function hideSponsorResults() {
-    if (sponsorResults) { sponsorResults.style.display = 'none'; sponsorResults.innerHTML = ''; }
-  }
-
-  function fetchSponsor(q) {
-    fetch('api/onboard_action.php?action=search_crm&q=' + encodeURIComponent(q), {
-      credentials: 'same-origin',
-    })
-      .then(r => r.json())
-      .then(d => {
-        if (!d.ok || !d.results?.length) { hideSponsorResults(); return; }
-        sponsorResults.innerHTML = d.results.map(r =>
-          `<div class="crm-result-item" data-name="${esc(r.name)}">
-             <strong>${esc(r.name)}</strong>
-             ${r.marketCenter ? `<span style="color:#aaa;font-size:11px;margin-left:6px">${esc(r.marketCenter)}</span>` : ''}
-           </div>`
-        ).join('');
-        sponsorResults.style.display = 'block';
-
-        sponsorResults.querySelectorAll('.crm-result-item').forEach(item => {
-          item.addEventListener('mousedown', () => {
-            sponsorInput.value = item.dataset.name;
-            hideSponsorResults();
-          });
-        });
-      })
-      .catch(() => hideSponsorResults());
-  }
-
-  // ── Add-panel: filter Market Center by checked License State(s) ────────────
-  window.onAddStateChange = function () {
-    const checked = Array.from(document.querySelectorAll('.ob-state-check:checked')).map(cb => cb.value);
-    const mcSelect = document.getElementById('ob-mc');
-    if (!mcSelect) return;
-    const current  = mcSelect.value;
-    const filtered = checked.length ? MC_OPTS.filter(m => checked.includes(m.state_code)) : MC_OPTS;
-    mcSelect.innerHTML = '<option value="">Select Market Center…</option>' +
-      filtered.map(m => `<option value="${esc(m.name)}">${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`).join('');
-    if (filtered.some(m => m.name === current)) mcSelect.value = current;
-  };
-
   // ── Add-agent form submit ──────────────────────────────────────────────────
   const addForm = document.getElementById('ob-add-form');
   if (addForm) {
     addForm.addEventListener('submit', e => {
       e.preventDefault();
-      const btn    = document.getElementById('ob-add-btn');
-      const name   = document.getElementById('ob-name')?.value.trim();
-      const email  = document.getElementById('ob-email')?.value.trim();
-      const mc     = document.getElementById('ob-mc')?.value.trim();
-      const states = Array.from(document.querySelectorAll('.ob-state-check:checked')).map(cb => cb.value);
+      const btn  = document.getElementById('ob-add-btn');
+      const name = document.getElementById('ob-name')?.value.trim();
+      const email= document.getElementById('ob-email')?.value.trim();
+      const mc   = document.getElementById('ob-mc')?.value.trim();
       if (!name || !email) { setMsg('ob-add-msg','Name and email are required.',false); return; }
       if (!mc) { setMsg('ob-add-msg','Market Center is required.',false); return; }
 
@@ -197,7 +137,7 @@
         agent_name:    name,
         agent_email:   email,
         market_center: mc,
-        state_code:    states.join(','),
+        state_code:    document.getElementById('ob-state')?.value,
         role:          document.getElementById('ob-role')?.value,
         start_date:    document.getElementById('ob-start')?.value,
         sponsor:       document.getElementById('ob-sponsor')?.value.trim(),
@@ -208,7 +148,6 @@
           if (d.ok) {
             setMsg('ob-add-msg', name + ' added to queue.', true);
             addForm.reset();
-            onAddStateChange(); // resync Market Center options now states are unchecked
             // Expand the newly added entry after reload
             expandedIds.add(d.id);
             // Switch to active tab and reload
@@ -258,10 +197,12 @@
 
     container.innerHTML = queue.map(entry => renderEntry(entry)).join('');
 
-    // Restore expanded state
+    // Restore expanded state — the whole container was just rebuilt, so any
+    // previously-loaded notes list is gone too; force a re-fetch for each.
     expandedIds.forEach(id => {
       const cl = container.querySelector(`.ob-checklist[data-qid="${id}"]`);
       if (cl) cl.classList.add('open');
+      loadNotes(id, true);
     });
   }
 
@@ -311,38 +252,25 @@
 
     const stepsHtml = steps.map(s => renderStep(entry.id, s, entry.status)).join('');
 
-    // An agent can be licensed in more than one state, so state_code is a
-    // comma-separated list — rendered as checkboxes instead of a single select.
-    const selectedStates = (entry.state_code || '').split(',').map(s => s.trim()).filter(Boolean);
-    const stateChecksHtml = STATES.map(s => `
-      <label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;background:#f0f0f0;padding:2px 7px;border-radius:10px;cursor:pointer;margin:0 4px 4px 0">
-        <input type="checkbox" value="${s}" style="margin:0" ${selectedStates.includes(s) ? 'checked' : ''}
-               onchange="onStateCheckboxChange(${entry.id})">${s}
-      </label>`).join('');
-    const stateSelectHtml = entry.status === 'active'
-      ? `<span id="ob-states-${entry.id}">${stateChecksHtml}</span>`
-      : (selectedStates.join(', ') || '');
+    const stateOptions = STATES.map(s =>
+      `<option value="${s}"${entry.state_code === s ? ' selected' : ''}>${s}</option>`
+    ).join('');
+    const stateSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
+      <select class="ob-state-select" onchange="setQueueState(${entry.id}, this)" title="License state (required to complete onboarding)">
+        <option value="">State…</option>
+        ${stateOptions}
+      </select>` : (entry.state_code ? esc(entry.state_code) : '—');
 
-    // Market Center options are filtered to whichever states are checked
-    // above (falls back to the full list until at least one is checked).
-    const filteredMcOpts = selectedStates.length
-      ? MC_OPTS.filter(m => selectedStates.includes(m.state_code))
-      : MC_OPTS;
-    const mcOptions = filteredMcOpts.map(m =>
+    const mcOptions = MC_OPTS.map(m =>
       `<option value="${esc(m.name)}"${entry.market_center === m.name ? ' selected' : ''}>${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
     ).join('');
-    // Keep the currently-saved Market Center selectable even if a state edit
-    // just filtered it out of the list — don't silently orphan existing data.
-    const currentMcOrphaned = entry.market_center && !filteredMcOpts.some(m => m.name === entry.market_center);
-    const orphanedOption = currentMcOrphaned ? `<option value="${esc(entry.market_center)}" selected>${esc(entry.market_center)}</option>` : '';
-    const mcSelectHtml = entry.status === 'active' ? `
+    const mcSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
       <select class="ob-state-select" onchange="setQueueMarketCenter(${entry.id}, this)" title="Market Center (required to complete onboarding)">
         <option value="">Market Center…</option>
-        ${orphanedOption}
         ${mcOptions}
-      </select>` : (entry.market_center ? esc(entry.market_center) : '');
+      </select>` : (entry.market_center ? esc(entry.market_center) : '—');
 
-    const footerHtml = entry.status === 'active' ? `
+    const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
       <div class="ob-footer">
         <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${entry.market_center ? '1' : '0'}"
                 onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
@@ -374,6 +302,15 @@
             <span>Market Center (required to complete): ${mcSelectHtml}</span>
           </div>` : ''}
           ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          <div class="ob-notes" id="ob-notes-${entry.id}" data-email="${esc(entry.agent_email)}">
+            <div class="ob-notes-list" id="ob-notes-list-${entry.id}" style="font-size:12px;color:#aaa">Loading notes…</div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <textarea id="ob-notes-input-${entry.id}" placeholder="Add a note (admin/BIC/ML only — not visible to the agent)…" rows="1"
+                        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
+                        style="flex:1;padding:6px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
+              <button class="ob-btn-sm ob-btn-done" onclick="addOnboardNote(${entry.id})">Add Note</button>
+            </div>
+          </div>
           ${footerHtml}
         </div>
       </div>`;
@@ -386,7 +323,7 @@
     const disabled = queueStatus !== 'active';
 
     let actionsHtml = '';
-    if (!disabled) {
+    if (!disabled && IS_ADMIN) {
       if (step.status === 'done') {
         actionsHtml = `<button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
       } else if (step.status === 'skipped') {
@@ -436,12 +373,54 @@
     const open = cl.classList.toggle('open');
     if (open) {
       expandedIds.add(queueId);
+      loadNotes(queueId);
     } else {
       expandedIds.delete(queueId);
     }
     // Flip the arrow
     const arrow = head?.querySelector('span:last-child');
     if (arrow) arrow.textContent = open ? '▲' : '▼';
+  };
+
+  // ── Notes (admin/BIC/ML only — enforced server-side by api/agent_notes.php,
+  // never surfaced to the agent since this whole page is staff-only) ─────────
+  function renderNotes(queueId, notes) {
+    const list = document.getElementById('ob-notes-list-' + queueId);
+    if (!list) return;
+    if (!notes.length) { list.innerHTML = '<div style="color:#aaa">No notes yet.</div>'; return; }
+    list.innerHTML = notes.map(n => `
+      <div class="ob-note" style="padding:6px 0;border-bottom:1px solid #F0F0F0">
+        <div style="white-space:pre-wrap">${esc(n.note)}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:2px">${esc(n.created_by)} · ${esc(n.created_at)}</div>
+      </div>`).join('');
+  }
+
+  function loadNotes(queueId, force) {
+    if (notesLoaded.has(queueId) && !force) return;
+    const wrap = document.getElementById('ob-notes-' + queueId);
+    const email = wrap?.dataset.email;
+    if (!email) return;
+    fetch('api/agent_notes.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        notesLoaded.add(queueId);
+        if (d.ok) renderNotes(queueId, d.notes || []);
+      })
+      .catch(() => {});
+  }
+
+  window.addOnboardNote = function (queueId) {
+    const input = document.getElementById('ob-notes-input-' + queueId);
+    const wrap  = document.getElementById('ob-notes-' + queueId);
+    const email = wrap?.dataset.email;
+    const note  = (input?.value || '').trim();
+    if (!note || !email) return;
+    post('api/agent_notes.php', { email, note })
+      .then(d => {
+        if (d.ok) { input.value = ''; input.style.height = 'auto'; loadNotes(queueId, true); }
+        else { alert(d.error || 'Could not save note.'); }
+      })
+      .catch(() => { alert('Network error saving note.'); });
   };
 
   // ── Mark step done/pending/skipped ─────────────────────────────────────────
@@ -489,21 +468,19 @@
       });
   };
 
-  // ── Set license state(s) on a queue entry ──────────────────────────────────
-  // Reloads the whole queue on success (rather than patching in place) since
-  // the Market Center dropdown's options depend on which states are checked.
-  window.onStateCheckboxChange = function (queueId) {
-    const container = document.getElementById(`ob-states-${queueId}`);
-    if (!container) return;
-    const boxes  = Array.from(container.querySelectorAll('input[type=checkbox]'));
-    const states = boxes.filter(cb => cb.checked).map(cb => cb.value);
-    boxes.forEach(cb => cb.disabled = true);
-    post('api/onboard_action.php?action=set_state', { queue_id: queueId, state_codes: states })
+  // ── Set license state on a queue entry ─────────────────────────────────────
+  window.setQueueState = function (queueId, select) {
+    const state = select.value;
+    if (!state) return;
+    select.disabled = true;
+    post('api/onboard_action.php?action=set_state', { queue_id: queueId, state_code: state })
       .then(d => {
-        if (!d.ok) alert(d.error || 'Could not set state.');
-        loadQueue();
+        select.disabled = false;
+        if (!d.ok) { alert(d.error || 'Could not set state.'); return; }
+        const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
+        if (btn) btn.dataset.hasState = '1';
       })
-      .catch(() => { boxes.forEach(cb => cb.disabled = false); });
+      .catch(() => { select.disabled = false; });
   };
 
   // ── Set Market Center on a queue entry ─────────────────────────────────────
