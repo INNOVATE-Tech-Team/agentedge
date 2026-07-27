@@ -73,7 +73,7 @@ if ($action === 'confirm') {
     $st->execute([$token]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
 
-    if (!$row || $row['used_at'] || strtotime($row['expires_at']) < time()) {
+    if (!$row || $row['used_at'] || strtotime($row['expires_at'] . ' UTC') < time()) {
         echo json_encode(['ok' => false, 'error' => 'This reset link is invalid or has expired. Request a new one.']);
         exit;
     }
