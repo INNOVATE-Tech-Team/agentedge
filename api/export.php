@@ -50,8 +50,17 @@ $roster = $db->query(
      ORDER BY state_code, agent_name"
 )->fetchAll(PDO::FETCH_ASSOC);
 
+// Teams (cross-MC groups led by a team_leader) — CRM resolves/creates the
+// leader's Advantage account from this and scopes their Recruiting Outreach
+// access to it. Only the leader needs an Advantage account; regular member
+// rows aren't needed there, so they aren't exported.
+$teams = $db->query(
+    "SELECT id, name, leader_email, enabled FROM teams ORDER BY name"
+)->fetchAll(PDO::FETCH_ASSOC);
+
 echo json_encode([
     'market_centers' => $market_centers,
     'agent_roles'    => $agent_roles,
     'roster'         => $roster,
+    'teams'          => $teams,
 ]);
