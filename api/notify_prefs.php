@@ -4,6 +4,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/notifications.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
@@ -42,6 +43,18 @@ if ($notifySms && $smsPhone === '') {
     http_response_code(400); echo json_encode(['error'=>'phone number required to enable SMS']); exit;
 }
 
+// Compare against the prior row so the opt-in confirmation text only fires
+// on an actual new opt-in (SMS newly turned on, or re-pointed at a different
+// number) — not on every unrelated profile-prefs save. This confirmation is
+// the carrier-required "opt-in message": it's the literal text a TCR
+// reviewer can be told to expect the moment this toggle is flipped on.
+$prior = local_db()->prepare("SELECT notify_sms, sms_phone FROM notification_prefs WHERE email=?");
+$prior->execute([$email]);
+$priorRow = $prior->fetch(PDO::FETCH_ASSOC);
+$isNewOptIn = $notifySms && $smsPhone !== '' && (
+    empty($priorRow['notify_sms']) || ($priorRow['sms_phone'] ?? '') !== $smsPhone
+);
+
 local_db()->prepare(
     "INSERT INTO notification_prefs (email, notify_email, notify_sms, sms_phone, updated_at)
      VALUES (?, ?, ?, ?, datetime('now'))
@@ -51,5 +64,17 @@ local_db()->prepare(
          sms_phone    = excluded.sms_phone,
          updated_at   = excluded.updated_at"
 )->execute([$email, $notifyEmail, $notifySms, $smsPhone]);
+
+if ($isNewOptIn) {
+    // Sent synchronously (not queued) so it goes out immediately, matching
+    // what the campaign's Opt-in Message evidence describes: the confirmation
+    // arrives the moment the toggle is flipped, before any other text.
+    send_sms_twilio(
+        $smsPhone,
+        "INNOVATE Real Estate: You're opted in for account & company text notifications. "
+        . "Msg frequency varies (a few/month). Msg&Data rates may apply. Reply STOP to cancel, HELP for help.",
+        cfg()
+    );
+}
 
 echo json_encode(['ok' => true]);

@@ -1384,8 +1384,10 @@ fetch('api/backoffice_production.php',{credentials:'same-origin',cache:'no-store
         if (d.total_volume>0){ document.getElementById('prod-vol-num').textContent=fmtVol(d.total_volume); document.getElementById('prod-vol-tile').style.display=''; }
         if (d.total_deals>0) { document.getElementById('prod-deals-num').textContent=d.total_deals.toLocaleString(); document.getElementById('prod-deals-tile').style.display=''; }
         const map=d.agents||{};
+        const byEmail=d.agentsByEmail||{};
         document.querySelectorAll('tr[data-agent]').forEach(row=>{
-            const prod=lookupProd(row.dataset.agent, map);
+            const email=(row.dataset.email||'').trim();
+            const prod=(email && byEmail[email]) || lookupProd(row.dataset.agent, map);
             const vt=row.querySelector('.prod-cell-vol'), dt=row.querySelector('.prod-cell-deals');
             if (!vt||!dt) return;
             if (prod&&(prod.volume>0||prod.deals>0)){

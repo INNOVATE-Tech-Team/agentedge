@@ -6,7 +6,10 @@
 //
 // GET /api/roster_export.php?token=...
 // Response: { agents: [{ canonical_agent_id, agent_name, state_code, market_center,
-//              license_exp, retention_status, retention_notes, last_contact_at, added_at }] }
+//              license_exp, retention_status, retention_notes, last_contact_at, added_at,
+//              email }] }
+// `email` added for coastline's agent-sites sync (matches against
+// innovate.users) — see api/agent_profile_export.php for bio/headshot.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 
@@ -30,7 +33,7 @@ if (!hash_equals($token, $given)) {
 
 $rows = local_db()->query(
     "SELECT canonical_agent_id, agent_name, state_code, market_center, license_exp,
-            retention_status, retention_notes, last_contact_at, added_at
+            retention_status, retention_notes, last_contact_at, added_at, email
      FROM innovate_roster WHERE active = 1"
 )->fetchAll(PDO::FETCH_ASSOC);
 

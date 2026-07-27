@@ -17,14 +17,28 @@ $out = [
     'hasData' => false,
     'tiles'   => ['volume' => 0, 'closedDeals' => 0, 'residual' => 0, 'recruits' => 0],
     'cap'     => null,
+    'production' => null,
     'network' => [],
 ];
+
+// Some agents use a different email with Darwin/AccountTECH than their
+// AgentEdge login (agent_extra.alt_email, set on the Agent Profile page) —
+// match darwin_cap_progress against either one so their numbers still show
+// up even when Darwin has a different address on file.
+$myEmails = [strtolower(trim($agent['email'] ?? ''))];
+try {
+    $altRow = local_db()->prepare("SELECT alt_email FROM agent_extra WHERE email=? AND alt_email != ''");
+    $altRow->execute([$myEmails[0]]);
+    $alt = $altRow->fetchColumn();
+    if ($alt) $myEmails[] = strtolower(trim($alt));
+} catch (\Throwable $e) {}
+$emailPlaceholders = implode(',', array_fill(0, count($myEmails), '?'));
 
 // Cap progress — from Darwin sync (lib/darwin.php / cron/sync_darwin.php), matched
 // by email since AgentEdge doesn't otherwise track the agent's Darwin person id.
 try {
-    $capRow = local_db()->prepare("SELECT cap_amount, cap_earned FROM darwin_cap_progress WHERE lower(agent_email)=lower(?) AND is_active_agent=1 LIMIT 1");
-    $capRow->execute([$agent['email'] ?? '']);
+    $capRow = local_db()->prepare("SELECT cap_amount, cap_earned FROM darwin_cap_progress WHERE lower(agent_email) IN ($emailPlaceholders) AND is_active_agent=1 LIMIT 1");
+    $capRow->execute($myEmails);
     $cap = $capRow->fetch(PDO::FETCH_ASSOC);
     if ($cap) {
         $out['cap'] = ['amount' => (float)$cap['cap_amount'], 'paid' => (float)$cap['cap_earned']];
@@ -130,8 +144,8 @@ try {
 // customAPI_InnovateRevenueShare). Overrides the Perfex-derived values above when this
 // agent is found in Darwin; falls back to the Perfex figures otherwise.
 try {
-    $idRow = local_db()->prepare("SELECT agent_person_id FROM darwin_cap_progress WHERE lower(agent_email)=lower(?) AND is_active_agent=1 LIMIT 1");
-    $idRow->execute([$agent['email'] ?? '']);
+    $idRow = local_db()->prepare("SELECT agent_person_id FROM darwin_cap_progress WHERE lower(agent_email) IN ($emailPlaceholders) AND is_active_agent=1 LIMIT 1");
+    $idRow->execute($myEmails);
     $darwinPersonId = $idRow->fetchColumn();
 
     if ($darwinPersonId) {
@@ -141,6 +155,33 @@ try {
         if ($sv) {
             $out['tiles']['volume']      = (float)$sv['ytd_sales_volume'];
             $out['tiles']['closedDeals'] = (int)$sv['ytd_transaction_count'];
+
+            // Company-wide rank by YTD volume — replaces the old cap-wheel
+            // "progress toward a goal" feel with "progress relative to
+            // peers", since not everyone has (or should have) a cap. Ranking
+            // itself only needs to compare against agents who've actually
+            // closed something (an agent with $0 production can't outrank
+            // anyone), but the denominator should be the WHOLE active
+            // roster — same unique-agent count backoffice_roster.php's
+            // headline stat uses — so agents who haven't produced yet this
+            // year are still counted as part of the company, not silently
+            // dropped from "out of N agents."
+            $myVolume = (float)$sv['ytd_sales_volume'];
+            $rankStmt = local_db()->query(
+                "SELECT sv2.ytd_sales_volume
+                   FROM darwin_sales_volume sv2
+                   JOIN darwin_cap_progress cp2 ON cp2.agent_person_id = sv2.agent_person_id
+                  WHERE cp2.is_active_agent = 1
+                    AND (sv2.ytd_sales_volume > 0 OR sv2.ytd_transaction_count > 0)"
+            )->fetchAll(PDO::FETCH_COLUMN);
+            $rank = 1 + count(array_filter($rankStmt, fn($v) => (float)$v > $myVolume));
+            $totalAgents = (int)local_db()->query("SELECT COUNT(DISTINCT agent_name) FROM innovate_roster WHERE active=1")->fetchColumn();
+            $out['production'] = [
+                'volume'      => $myVolume,
+                'deals'       => (float)$sv['ytd_transaction_count'],
+                'rank'        => $totalAgents > 0 ? $rank : null,
+                'totalAgents' => $totalAgents,
+            ];
         }
 
         $rsStmt = local_db()->prepare(

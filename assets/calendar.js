@@ -18,7 +18,8 @@ const SCOPES = {
   personal:       { bg: '#e91e8c', text: '#fff' },
   training:       { bg: '#82C112', text: '#111' },
   events:         { bg: '#7c3aed', text: '#fff' },
-  bic:            { bg: '#f5a623', text: '#111' },
+  birthday:       { bg: '#f5a623', text: '#111' },
+  anniversary:    { bg: '#2e9e6b', text: '#fff' },
 };
 
 function calEsc(s) {
@@ -40,6 +41,14 @@ function ymd(d) {
 
 function monthKeyOf(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// The "Next 30 Days" rolling list only makes sense while the grid is showing
+// the actual current month — once you page away with prev/next, the list
+// below switches to plain events for whichever month is on screen.
+function isCurrentMonth() {
+  const today = new Date();
+  return calYear === today.getFullYear() && calMonth === today.getMonth();
 }
 
 // The event list below the grid is a rolling "next 30 days" window anchored
@@ -118,7 +127,8 @@ function filtered(evs) {
   if (calFilter === 'training') return evs.filter(e => e.scope === 'training');
   if (calFilter === 'events')   return evs.filter(e => e.scope === 'events');
   if (calFilter === 'mycal')    return evs.filter(e => e.scope === 'personal');
-  if (calFilter === 'bic')      return evs.filter(e => e.scope === 'bic');
+  if (calFilter === 'birthday')    return evs.filter(e => e.scope === 'birthday');
+  if (calFilter === 'anniversary') return evs.filter(e => e.scope === 'anniversary');
   return evs.filter(e => e.scope === calFilter);
 }
 
@@ -167,7 +177,8 @@ function scopeLabel(scope) {
   if (scope === 'personal')      return 'Personal';
   if (scope === 'training')      return 'Training';
   if (scope === 'events')        return 'Events';
-  if (scope === 'bic')           return 'Birthday / Anniversary';
+  if (scope === 'birthday')      return 'Birthday';
+  if (scope === 'anniversary')   return 'Anniversary';
   return 'Company';
 }
 
@@ -179,11 +190,13 @@ function calRsvpLabel(ev) {
 }
 
 function renderList(evs) {
-  document.getElementById('cal-list-title').textContent = 'Next 30 Days';
+  const onCurMonth = isCurrentMonth();
+  document.getElementById('cal-list-title').textContent =
+    onCurMonth ? 'Next 30 Days' : `${CAL_MONTHS[calMonth]} ${calYear} Events`;
   const vis  = filtered(evs);
   const body = document.getElementById('cal-event-list-body');
   if (!vis.length) {
-    body.innerHTML = '<p class="muted" style="padding:.75rem 0">No events in the next 30 days.</p>';
+    body.innerHTML = `<p class="muted" style="padding:.75rem 0">No events ${onCurMonth ? 'in the next 30 days' : 'this month'}.</p>`;
     return;
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
@@ -219,14 +232,15 @@ function renderList(evs) {
 }
 
 function updateTabCounts(evs) {
-  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, bic: 0 };
+  const counts = { all: evs.length, company: 0, mc: 0, training: 0, events: 0, mycal: 0, birthday: 0, anniversary: 0 };
   evs.forEach(e => {
     if      (e.scope === 'company')        counts.company++;
     else if (e.scope === 'market-center')  counts.mc++;
     else if (e.scope === 'training')       counts.training++;
     else if (e.scope === 'events')         counts.events++;
     else if (e.scope === 'personal')       counts.mycal++;
-    else if (e.scope === 'bic')            counts.bic++;
+    else if (e.scope === 'birthday')       counts.birthday++;
+    else if (e.scope === 'anniversary')    counts.anniversary++;
   });
   document.querySelectorAll('.cal-tab').forEach(t => {
     const n = counts[t.dataset.filter] ?? 0;
@@ -259,7 +273,7 @@ async function calDraw() {
   const evs = await loadEvents(calKey());
   renderGrid(evs);
   updateTabCounts(evs);
-  renderList(await loadUpcomingWindow());
+  renderList(isCurrentMonth() ? await loadUpcomingWindow() : evs);
 }
 
 function updateTrainingBar() {
@@ -291,8 +305,11 @@ document.querySelectorAll('.cal-tab').forEach(t => {
     updateEventsBar();
     updateMyCalBar();
     if (calFilter === 'mycal') loadCalFeedUrl();
-    loadEvents(calKey()).then(evs => renderGrid(evs));
-    loadUpcomingWindow().then(evs => renderList(evs));
+    loadEvents(calKey()).then(evs => {
+      renderGrid(evs);
+      if (!isCurrentMonth()) renderList(evs);
+    });
+    if (isCurrentMonth()) loadUpcomingWindow().then(evs => renderList(evs));
   });
 });
 

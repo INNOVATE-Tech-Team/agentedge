@@ -5,6 +5,68 @@
 if (defined('AGENTEDGE_AGENT_PROFILE_LIB_LOADED')) return;
 define('AGENTEDGE_AGENT_PROFILE_LIB_LOADED', true);
 
+// Fields checked for the completion-reminder email/popup and the
+// resend-only-missing form. Deliberately narrower than the required-field
+// list api/intake_public.php enforces at onboarding submission — fields
+// collected only at onboarding (e.g. referring_agent) are excluded here so
+// tenured agents who joined before a field existed aren't nagged for it.
+const REQUIRED_INTAKE_FIELDS = [
+    'full_name'       => 'Full Name',
+    'phone'           => 'Phone Number',
+    'license_number'  => 'License Number',
+    'nar_number'      => 'NAR Number',
+    'mls_board'       => 'MLS Board',
+    'office_location' => 'Office Location',
+    'birthday'        => 'Birthday',
+    'address_line1'   => 'Address',
+    'city'            => 'City',
+    'state'           => 'State',
+    'zip'             => 'Zip Code',
+    'emergency_name'  => 'Emergency Contact Name',
+    'emergency_phone' => 'Emergency Contact Phone',
+    'bio'             => 'Bio',
+    'is_military'      => 'Military Status',
+];
+
+// Bonus fields shown alongside the required ones on the completion form, but
+// never enforced — the agent can leave these blank and still submit. Kept
+// separate from REQUIRED_INTAKE_FIELDS because that list is all-or-nothing
+// (api/complete_profile_action.php rejects the whole save if any of those
+// come back blank); languages has no such gate.
+const OPTIONAL_INTAKE_FIELDS = [
+    'languages' => 'Languages Spoken',
+];
+
+// Returns [['key'=>'phone','label'=>'Phone Number'], ...] for every required
+// field that's still blank on this agent's intake row — empty array means
+// nothing missing (an agent with no agent_intake row at all is missing everything).
+function get_missing_required_fields(string $email): array {
+    $row = agent_intake_row($email);
+    $missing = [];
+    foreach (REQUIRED_INTAKE_FIELDS as $key => $label) {
+        if (trim($row[$key] ?? '') === '') $missing[] = ['key' => $key, 'label' => $label];
+    }
+    return $missing;
+}
+
+// Same shape as get_missing_required_fields(), but for the non-enforced
+// bonus fields — only returns ones still blank, so an agent who already has
+// it on file isn't asked again.
+function get_blank_optional_fields(string $email): array {
+    $row = agent_intake_row($email);
+    $blank = [];
+    foreach (OPTIONAL_INTAKE_FIELDS as $key => $label) {
+        if (trim($row[$key] ?? '') === '') $blank[] = ['key' => $key, 'label' => $label];
+    }
+    return $blank;
+}
+
+function agent_intake_row(string $email): array {
+    $st = local_db()->prepare("SELECT * FROM agent_intake WHERE email = ?");
+    $st->execute([strtolower(trim($email))]);
+    return $st->fetch(PDO::FETCH_ASSOC) ?: [];
+}
+
 function load_agent_profile(string $email): ?array {
     $st = local_db()->prepare(
         "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
@@ -21,7 +83,7 @@ function load_agent_profile(string $email): ?array {
                 i.corporation_start, i.corporation_end,
                 i.personal_tax_id_enc, i.corporate_tax_id_enc,
                 i.submitted, i.submitted_at, i.updated_at,
-                e.hire_date, e.license_renewal,
+                e.hire_date, e.license_renewal, e.alt_email,
                 ar.role,
                 aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by,
                 aa.recruit_source_email

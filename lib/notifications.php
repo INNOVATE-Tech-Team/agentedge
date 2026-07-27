@@ -9,49 +9,78 @@
 
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/company_email.php';
 
 // ── Audience resolution ───────────────────────────────────────────────────────
 
-// Returns [['email'=>..., 'sms_phone'=>...], ...] for opted-in recipients
-// matching the given announcement audience.
+// Returns [['email'=>..., 'notify_email'=>1, 'notify_sms'=>0|1, 'sms_phone'=>...], ...].
+// Email reach mirrors Company Email's model: 'all'/'mc' are sourced from the
+// full active innovate_roster (not notification_prefs, which only ever has a
+// row for an agent who's visited notification settings — nearly nobody, so an
+// INNER JOIN against it silently reached ~4% of the company). Every agent is
+// opted in to email by default; notification_prefs is now only consulted for
+// an explicit opt-out (notify_email=0) or SMS opt-in (a phone number an agent
+// entered themselves, which stays opt-in since there's nothing to fall back to).
 function resolve_notification_recipients(string $audience, string $targetMcSlug, string $targetBicEmail): array {
     $db = local_db();
 
-    // Start from notification_prefs — only opted-in agents.
-    // We LEFT JOIN agent_roles so we can filter by placement for mc/bic audiences.
-    $base = "SELECT np.email, np.notify_email, np.notify_sms, np.sms_phone,
-                     COALESCE(ar.role,'agent') AS role,
-                     COALESCE(ar.own_mc_slug,'')   AS own_mc_slug,
-                     COALESCE(ar.bic_email,'')      AS bic_email
-              FROM   notification_prefs np
-              LEFT JOIN agent_roles ar ON LOWER(ar.email) = LOWER(np.email)
-              WHERE  (np.notify_email = 1 OR np.notify_sms = 1)";
+    $optOut = array_flip(array_map(
+        fn($e) => strtolower(trim($e)),
+        $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN)
+    ));
+    $smsByEmail = [];
+    foreach ($db->query("SELECT email, sms_phone FROM notification_prefs WHERE notify_sms=1 AND sms_phone<>''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $smsByEmail[strtolower(trim($r['email']))] = $r['sms_phone'];
+    }
 
+    $emails = [];
     switch ($audience) {
         case 'all':
-            $stmt = $db->query($base);
+            foreach (ce_fetch_crm_roster() as $a) {
+                $e = strtolower(trim($a['email'] ?? ''));
+                if ($e && filter_var($e, FILTER_VALIDATE_EMAIL)) $emails[$e] = true;
+            }
             break;
 
         case 'admin':
-            $stmt = $db->prepare($base . " AND ar.role IN ('super_admin','staff')");
-            $stmt->execute();
+            foreach ($db->query("SELECT email FROM agent_roles WHERE role IN ('super_admin','staff')")->fetchAll(PDO::FETCH_COLUMN) as $e) {
+                $e = strtolower(trim($e));
+                if ($e) $emails[$e] = true;
+            }
             break;
 
         case 'mc':
-            $stmt = $db->prepare($base . " AND ar.own_mc_slug = ?");
-            $stmt->execute([$targetMcSlug]);
+            foreach (ce_fetch_crm_roster() as $a) {
+                $e  = strtolower(trim($a['email'] ?? ''));
+                $mc = $a['marketCenter'] ?? '';
+                if ($e && $mc !== '' && slugify_mc($mc) === $targetMcSlug) $emails[$e] = true;
+            }
             break;
 
         case 'bic':
-            $stmt = $db->prepare($base . " AND ar.bic_email = ?");
+            $stmt = $db->prepare("SELECT email FROM agent_roles WHERE bic_email = ?");
             $stmt->execute([$targetBicEmail]);
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $e) {
+                $e = strtolower(trim($e));
+                if ($e) $emails[$e] = true;
+            }
             break;
 
         default:
             return [];
     }
 
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $out = [];
+    foreach (array_keys($emails) as $e) {
+        if (isset($optOut[$e])) continue;
+        $out[] = [
+            'email'        => $e,
+            'notify_email' => 1,
+            'notify_sms'   => isset($smsByEmail[$e]) ? 1 : 0,
+            'sms_phone'    => $smsByEmail[$e] ?? '',
+        ];
+    }
+    return $out;
 }
 
 // ── Queue builder ─────────────────────────────────────────────────────────────
@@ -71,22 +100,29 @@ function queue_announcement_notifications(
 
     $db      = local_db();
     $ins     = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
-    $subject  = 'New Announcement: ' . $title;
-    $emailBody = $title . "\n\n" . $body . "\n\n— INNOVATE Real Estate\nLog in to AgentEdge: https://agentedge.innovateonline.com";
+    $subject   = 'New Announcement: ' . $title;
+    $emailBody = notification_email_html(
+        '<h2 style="margin:0 0 16px;color:#1a1a1a;font-size:20px;font-weight:800">' . htmlspecialchars($title, ENT_QUOTES) . '</h2>'
+        . '<div style="color:#444;font-size:15px;line-height:1.7">' . $body . '</div>'
+        . '<div style="margin-top:24px">'
+        . '<a href="https://agentedge.innovateonline.com" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">Log in to AgentEdge &rarr;</a>'
+        . '</div>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
     $smsBody   = 'INNOVATE: ' . $title . ' — ' . mb_substr(strip_tags($body), 0, 120);
     if (mb_strlen($smsBody) > 155) $smsBody = mb_substr($smsBody, 0, 152) . '…';
 
     $queued = 0;
     foreach ($recipients as $r) {
         if ($r['notify_email']) {
-            $ins->execute([$r['email'], 'email', $subject, $emailBody, '', $fromEmail, $fromName]);
+            $ins->execute([$r['email'], 'email', $subject, $emailBody, '', 1, $fromEmail, $fromName]);
             $queued++;
         }
         if ($r['notify_sms'] && $r['sms_phone'] !== '') {
-            $ins->execute([$r['email'], 'sms', '', $smsBody, $r['sms_phone'], '', '']);
+            $ins->execute([$r['email'], 'sms', '', $smsBody, $r['sms_phone'], 0, '', '']);
             $queued++;
         }
     }
@@ -126,15 +162,39 @@ function process_notification_queue(int $limit = 100): void {
     $items = $rows->fetchAll(PDO::FETCH_ASSOC);
     if (!$items) return;
 
-    $markSent   = $db->prepare("UPDATE notification_queue SET status='sent',   sent_at=datetime('now'), attempts=attempts+1 WHERE id=?");
-    $markFailed = $db->prepare("UPDATE notification_queue SET status='failed', attempts=attempts+1 WHERE id=?");
+    $markSent = $db->prepare("UPDATE notification_queue SET status='sent', sent_at=datetime('now'), attempts=attempts+1 WHERE id=?");
+    // A failed send only becomes permanently 'failed' once it's used up all 3
+    // attempts — otherwise it goes back to 'pending' so the next queue drain
+    // (cron runs every 5 min) retries it. Previously this always set
+    // status='failed' on the very first failure, so the attempts<3 column
+    // and its retry intent were dead code — a transient/rate-limited failure
+    // had no chance to recover and just sat there forever.
+    $markFailed = $db->prepare(
+        "UPDATE notification_queue
+            SET status = CASE WHEN attempts + 1 >= 3 THEN 'failed' ELSE 'pending' END,
+                attempts = attempts + 1
+          WHERE id = ?"
+    );
 
     // A whole-company send queues one row per recipient with identical
     // attachment_ids — cache the resolved (base64-encoded) attachments per
     // distinct id-list so a 300-recipient blast reads each file once, not 300 times.
     $attachCache = [];
 
+    // dispatch_notification_queue() calls this synchronously, in-request,
+    // right before the response is sent — its "let PHP keep running after
+    // the response is flushed" comment assumes fastcgi_finish_request(),
+    // which doesn't exist under this container's Apache/mod_php setup. Without
+    // it, a backlog (each failed send costing up to send_email_sendgrid's own
+    // 15s curl timeout) can block the whole HTTP request for minutes, which
+    // showed up as "Network error" on ticket replies. cron/process_email_queue.php
+    // already drains this queue every 5 minutes regardless, so bail out after
+    // a few seconds of work here and let the cron finish whatever's left —
+    // bounds the worst case instead of processing the full $limit no matter how long it takes.
+    $deadline = microtime(true) + 3.0;
+
     foreach ($items as $item) {
+        if (microtime(true) > $deadline) break;
         try {
             $ok = false;
             if ($item['channel'] === 'email') {
@@ -227,7 +287,12 @@ function notify_onboard_added(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
 
-    $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
+    // $addedBy is only a real notification recipient when it's an actual
+    // email — a webhook caller (advantage-crm) passing a non-email label
+    // would otherwise queue a row that can never be delivered to anyone.
+    if (filter_var($addedBy, FILTER_VALIDATE_EMAIL)) {
+        $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
+    }
 
     $ccEmails = $c['onboard_notify_emails'] ?? [];
     if (is_string($ccEmails)) {
@@ -281,7 +346,11 @@ function notify_offboard_added(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
     );
 
-    $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
+    // Same guard as notify_onboard_added() — $addedBy can be a non-email
+    // webhook label, which must never be queued as a recipient.
+    if (filter_var($addedBy, FILTER_VALIDATE_EMAIL)) {
+        $ins->execute([$addedBy, 'email', $subject, $body, '', $fromEmail, $addedByName]);
+    }
 
     $ccEmails = $c['onboard_notify_emails'] ?? [];
     if (is_string($ccEmails)) {
@@ -306,22 +375,103 @@ function complete_offboard_step(PDO $pdo, int $queueId, string $toolKey, string 
     maybe_notify_next_actionable_step($pdo, 'offboard', $queueId, $doneBy, $doneByName);
 }
 
-// Queue a short confirmation email to the agent when their onboarding is
-// marked complete (api/onboard_action.php's complete_onboarding action).
-function notify_onboard_completed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
-    $subject = "Your onboarding is complete — welcome aboard!";
-    $body    = implode("\n", [
-        "Hi {$agentName},",
-        "",
-        "Your onboarding is complete. Welcome aboard!",
-        "",
-        "— AgentEdge",
-    ]);
+// ── Per-user email signature ───────────────────────────────────────────────────
 
-    $db  = local_db();
-    $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
+// Renders an HTML signature block from the sender's personal email_signatures row
+// (managed via settings_signature.php). Falls back to name + "INNOVATE Real Estate".
+function sender_signature_html(string $senderEmail, string $senderName = ''): string {
+    if ($senderEmail === '') {
+        return '<p style="color:#888;font-size:13px;margin-top:20px">— INNOVATE Real Estate</p>';
+    }
+    try {
+        $st = local_db()->prepare(
+            "SELECT title, phone, calendar_url, website_url, use_custom, custom_html, photo_key FROM email_signatures WHERE email=?"
+        );
+        $st->execute([strtolower($senderEmail)]);
+        $sig = $st->fetch(\PDO::FETCH_ASSOC) ?: null;
+    } catch (\Throwable $e) { $sig = null; }
+
+    if ($sig && !empty($sig['use_custom']) && trim($sig['custom_html'] ?? '') !== '') {
+        return '<div style="margin-top:24px;border-top:1px solid #ddd;padding-top:14px">' . $sig['custom_html'] . '</div>';
+    }
+
+    $displayName = $senderName ?: $senderEmail;
+    $photoKey    = $sig['photo_key'] ?? '';
+    $photoUrl    = ($photoKey !== '') ? 'https://agentedge.innovateonline.com/api/email_image.php?key=' . rawurlencode($photoKey) : '';
+
+    $info  = '<div style="font-weight:700;color:#111;font-size:14px">' . htmlspecialchars($displayName, ENT_QUOTES) . '</div>';
+    if ($sig) {
+        if (!empty($sig['title'])) $info .= '<div style="font-size:12px;color:#666;margin-top:3px">' . htmlspecialchars($sig['title'], ENT_QUOTES) . '</div>';
+        if (!empty($sig['phone'])) $info .= '<div style="font-size:12px;color:#666;margin-top:3px">' . htmlspecialchars($sig['phone'], ENT_QUOTES) . '</div>';
+        $links = [];
+        if (!empty($sig['calendar_url'])) $links[] = '<a href="' . htmlspecialchars($sig['calendar_url'], ENT_QUOTES) . '" style="color:#5b8e0d;text-decoration:underline">Schedule a meeting</a>';
+        if (!empty($sig['website_url']))  $links[] = '<a href="' . htmlspecialchars($sig['website_url'], ENT_QUOTES) . '" style="color:#5b8e0d;text-decoration:underline">' . htmlspecialchars(preg_replace('#^https?://#', '', $sig['website_url']), ENT_QUOTES) . '</a>';
+        if ($links) $info .= '<div style="font-size:12px;margin-top:5px">' . implode(' &nbsp;|&nbsp; ', $links) . '</div>';
+    }
+    $info .= '<div style="font-size:12px;color:#aaa;margin-top:3px">INNOVATE Real Estate</div>';
+
+    if ($photoUrl !== '') {
+        // Signature image is the entire signature — show it alone.
+        $inner = '<img src="' . htmlspecialchars($photoUrl, ENT_QUOTES) . '"'
+               . ' style="max-width:500px;width:100%;display:block;border:0" alt="">';
+    } else {
+        $inner = $info;
+    }
+
+    return '<div style="margin-top:24px;border-top:1px solid #ddd;padding-top:14px">' . $inner . '</div>';
+}
+
+// Wraps an HTML body in the standard branded email shell.
+function notification_email_html(string $contentHtml): string {
+    return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"></head>'
+         . '<body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif">'
+         . '<div style="max-width:600px;margin:0 auto;padding:24px 16px">'
+         . '<div style="background:#82C112;padding:18px 28px;border-radius:8px 8px 0 0">'
+         . '<span style="color:#1a1a1a;font-size:18px;font-weight:800;letter-spacing:-0.3px">INNOVATE Real Estate</span>'
+         . '</div>'
+         . '<div style="background:#ffffff;padding:28px;border-radius:0 0 8px 8px;border:1px solid #e0e0e0;border-top:none">'
+         . $contentHtml
+         . '</div>'
+         . '<p style="text-align:center;font-size:11px;color:#bbb;margin-top:14px">Sent via AgentEdge</p>'
+         . '</div></body></html>';
+}
+
+// ── Onboarding completion notifications ───────────────────────────────────────
+
+// Queue a welcome email to the agent when their onboarding is marked complete.
+function notify_onboard_completed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
+    // Whitney Beadling is the designated sender for all welcome emails.
+    $senderEmail = 'whitney@innovateonline.com';
+    $senderName  = 'Whitney Beadling';
+    $firstName = htmlspecialchars(explode(' ', trim($agentName))[0], ENT_QUOTES);
+    $subject   = 'Welcome to Innovate Real Estate, ' . $agentName . '!';
+    $sig       = sender_signature_html($senderEmail, $senderName);
+    $p         = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 16px"';
+    $li        = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 8px"';
+    $body      = notification_email_html(
+        '<p ' . $p . '>Hi ' . $firstName . ',</p>'
+        . '<p ' . $p . '>Congratulations, and welcome to Innovate Real Estate!</p>'
+        . '<p ' . $p . '>You\'ve officially completed your onboarding, and we\'re excited to have you as part of the Innovate family.</p>'
+        . '<p ' . $p . '>While onboarding may be complete, your journey is just getting started. Over the coming weeks you\'ll begin building relationships, developing your business, and taking advantage of the coaching, training, technology, and support designed to help you succeed.</p>'
+        . '<p style="color:#1a1a1a;font-size:15px;font-weight:700;margin:0 0 10px">Here\'s what\'s next:</p>'
+        . '<ul style="margin:0 0 20px;padding-left:20px">'
+        . '<li ' . $li . '>Watch your inbox for upcoming training opportunities and company updates.</li>'
+        . '<li ' . $li . '>If you\'re enrolled in L.A.U.N.C.H., your facilitator will be reaching out with details on your first session.</li>'
+        . '<li ' . $li . '>Log into AgentEdge regularly to access resources, training, and important announcements.</li>'
+        . '<li ' . $li . '>Connect with your Market Leader and fellow agents. The relationships you build here will become one of your greatest assets.</li>'
+        . '</ul>'
+        . '<p ' . $p . '>Most importantly, remember this:</p>'
+        . '<p style="color:#1a1a1a;font-size:16px;font-weight:700;font-style:italic;margin:0 0 16px;padding:14px 20px;border-left:4px solid #82C112;background:#f9fdf5">You are never expected to figure this business out alone.</p>'
+        . '<p ' . $p . '>Whether you have a question about contracts, technology, marketing, lead generation, negotiations, or simply need someone to bounce an idea off of, we\'re here to help.</p>'
+        . '<p ' . $p . '>We\'re thrilled you\'ve chosen to build your business with Innovate, and we can\'t wait to see what you accomplish.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.75;margin:0 0 24px">Welcome aboard.</p>'
+        . '<a href="https://agentedge.innovateonline.com" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">Log in to AgentEdge &rarr;</a>'
+        . $sig
+    );
+
+    local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    )->execute([$agentEmail, 'email', $subject, $body, '', $senderEmail, $senderName]);
 }
 
 // Queue an email to the Director of Coaching + Launch Facilitator(s) to assign
@@ -334,17 +484,19 @@ function notify_coach_assignment_needed(string $agentName, string $agentEmail, s
     $emails = array_values(array_unique(array_filter(array_map('trim', $st->fetchAll(PDO::FETCH_COLUMN)))));
     if (!$emails) return;
 
-    $subject = "New Agent — Assign Launch Coach & LAUNCH Class: {$agentName}";
-    $body    = implode("\n", [
-        "{$agentName} ({$agentEmail}) is a new agent who just completed onboarding.",
-        "",
-        "Please assign a Launch Coach and enroll them in the next LAUNCH class.",
-        "",
-        "— AgentEdge",
-    ]);
+    $subject = 'New Agent — Assign Launch Coach & LAUNCH Class: ' . $agentName;
+    $eName   = htmlspecialchars($agentName, ENT_QUOTES);
+    $eEmail  = htmlspecialchars($agentEmail, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Coach Assignment Needed</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> (' . $eEmail . ') is a new agent who just completed onboarding.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 20px">Please assign a Launch Coach and enroll them in the next LAUNCH class.</p>'
+        . '<a href="https://agentedge.innovateonline.com/onboarding.php" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">View Onboarding Queue &rarr;</a>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
 
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
     );
     foreach ($emails as $email) {
         $ins->execute([$email, 'email', $subject, $body, '', $fromEmail, $fromName]);
@@ -368,15 +520,18 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
     $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
     if (!$emails) return;
 
-    $subject = "Onboarding Complete: {$agentName}";
-    $body    = implode("\n", [
-        "{$agentName} ({$agentEmail}) has completed onboarding at {$marketCenter}.",
-        "",
-        "— AgentEdge",
-    ]);
+    $subject = 'Onboarding Complete: ' . $agentName;
+    $eName   = htmlspecialchars($agentName, ENT_QUOTES);
+    $eMC     = htmlspecialchars($marketCenter, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Onboarding Complete</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> (' . htmlspecialchars($agentEmail, ENT_QUOTES) . ') has completed onboarding at ' . $eMC . '.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0">They are now active on the roster.</p>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
 
     $ins = $db->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
     );
     foreach ($emails as $email) {
         $ins->execute([$email, 'email', $subject, $body, '', $fromEmail, $fromName]);
@@ -527,6 +682,30 @@ function notify_profile_changed(string $agentName, string $agentEmail, array $ch
     queue_email_to(['whitney@innovateonline.com'], $subject, $body, $agentEmail, $agentName);
 }
 
+// ── Intake form submission notification ─────────────────────────────────────
+
+// Notify the ops team when an agent submits their intake form for the first time.
+function notify_intake_submitted(string $agentName, string $agentEmail): void {
+    $displayName = $agentName ?: $agentEmail;
+    $subject = $displayName . ' completed their intake form';
+    $body = implode("\n", [
+        $displayName . ' (' . $agentEmail . ') has submitted their AgentEdge intake form.',
+        '',
+        'View their profile:',
+        'https://agentedge.innovateonline.com/agent_profile.php?email=' . urlencode($agentEmail),
+        '',
+        '— AgentEdge',
+    ]);
+    $recipients = [
+        'lisa@innovateonline.com',
+        'dominic@innovateonline.com',
+        'darren@innovateonline.com',
+        'abril@innovateonline.com',
+        'whitney@innovateonline.com',
+    ];
+    queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
+}
+
 // ── Support ticket notifications ─────────────────────────────────────────────
 
 // Email addresses of every super_admin. Ticket/suggestion notifications go
@@ -604,7 +783,7 @@ function build_ticket_thread_text(PDO $db, int $ticketId): string {
     $rows->execute([$ticketId]);
     $lines = [];
     foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $m) {
-        $when = date('M j, Y g:i A', strtotime($m['created_at'] . ' UTC'));
+        $when = fmt_dt_et($m['created_at'], 'M j, Y g:i A');
         $who  = $m['is_staff'] ? 'Support Staff (' . $m['author'] . ')' : ($agentName ?: $m['author']);
         $lines[] = "[{$when}] {$who}:";
         $lines[] = $m['body'];

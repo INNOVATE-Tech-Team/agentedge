@@ -243,7 +243,7 @@ foreach ($gradableLessons as $lesson) {
       <div class="cert-card">
         <div class="cert-card-icon">🏆</div>
         <div class="cert-card-title">Certificate Earned!</div>
-        <div class="cert-card-sub">You completed <strong><?= htmlspecialchars($course['title']) ?></strong> on <?= date('F j, Y', strtotime($cert['issued_at'])) ?></div>
+        <div class="cert-card-sub">You completed <strong><?= htmlspecialchars($course['title']) ?></strong> on <?= fmt_dt_et($cert['issued_at'], 'F j, Y') ?></div>
         <div class="cert-card-code"><?= htmlspecialchars($cert['cert_code']) ?></div>
         <a class="btn-cert" href="university_certs.php?print=1&code=<?= urlencode($cert['cert_code']) ?>" target="_blank">Print Certificate</a>
       </div>

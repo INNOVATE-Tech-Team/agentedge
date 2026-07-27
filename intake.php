@@ -193,7 +193,7 @@ $intakeMarketCenters = local_db()
               </div>
               <div class="field">
                 <label>Military</label>
-                <select id="f-is_military" required>
+                <select id="f-is_military">
                   <option value="">Not applicable</option>
                   <option value="veteran">Veteran</option>
                   <option value="active">Active Duty</option>
