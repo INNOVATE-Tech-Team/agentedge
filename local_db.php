@@ -135,6 +135,10 @@ function local_db(): PDO {
     // Migration: add tracking columns to existing installs (no-op if already present)
     try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN state_code         TEXT"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN canonical_agent_id TEXT"); } catch (\Exception $e) {}
+    // Never existed at all until now — phone was silently dropped everywhere
+    // in the onboarding pipeline (intake form, admin add-to-queue, and the
+    // Advantage CRM push all collected it but had nowhere to put it).
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN agent_phone TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Per-step provisioning status for each queued agent
     $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_steps (
@@ -285,6 +289,14 @@ function local_db(): PDO {
     // Migrations for existing installs
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN personal_cal_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN cal_token        TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // A second email some agents use with Darwin/AccountTECH instead of their
+    // roster/login email — lets production-matching (api/team_production.php,
+    // api/backoffice_production.php) resolve to the right person by email
+    // even when Darwin has a different address on file, instead of falling
+    // back to fragile name-matching or requiring the mismatch to be manually
+    // reconciled on one side or the other.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_alt_email ON agent_extra(alt_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
@@ -642,6 +654,26 @@ function local_db(): PDO {
     // the auto photo/phone/links entirely.
     try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN use_custom  INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN custom_html TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE email_signatures ADD COLUMN photo_key   TEXT    NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Per-role signatures — used by transactional notification emails
+    // (onboarding complete, coach assignment, etc.) to brand the sign-off
+    // based on the sender's AgentEdge role rather than their personal profile.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS role_signatures (
+        role         TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL DEFAULT '',
+        title        TEXT NOT NULL DEFAULT '',
+        phone        TEXT NOT NULL DEFAULT '',
+        website_url  TEXT NOT NULL DEFAULT '',
+        use_custom   INTEGER NOT NULL DEFAULT 0,
+        custom_html  TEXT NOT NULL DEFAULT '',
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_by   TEXT NOT NULL DEFAULT ''
+    )");
+    $seedSt = $pdo->prepare("INSERT OR IGNORE INTO role_signatures (role) VALUES (?)");
+    foreach (['default', 'admin', 'staff', 'recruiter', 'mc_leader'] as $seedRole) {
+        $seedSt->execute([$seedRole]);
+    }
 
     // Reusable Company Email templates — personal by default, is_shared=1 makes
     // one visible/loadable by anyone with Company Email access, not just the owner.
@@ -1108,6 +1140,32 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
+    // ── Teams (Team Leader platform) ──────────────────────────────────────────
+    // Distinct from market_centers: a team spans agents across multiple MCs,
+    // led by a single team_leader. leader_email is the source of truth for the
+    // team_leader role (roles.php reads this table directly rather than storing
+    // it in agent_roles.extra_roles_json, which already silently drops scope
+    // data for other extra roles).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS teams (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT    NOT NULL,
+        slug         TEXT    UNIQUE NOT NULL,
+        leader_email TEXT    NOT NULL DEFAULT '',
+        enabled      INTEGER NOT NULL DEFAULT 1,
+        sort_ord     INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_teams_leader ON teams(leader_email)");
+
+    // One team per agent — agent_email is the PK, so adding someone to a new
+    // team silently moves them off any prior one.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS team_members (
+        agent_email TEXT PRIMARY KEY,
+        team_id     INTEGER NOT NULL,
+        added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id)");
+
     // ── Per-state automation status for the State Rosters page.
     $pdo->exec("CREATE TABLE IF NOT EXISTS state_roster_status (
         state_code TEXT PRIMARY KEY,
@@ -1515,6 +1573,47 @@ function local_db(): PDO {
         if ($mmBackfillCheck->fetchColumn() == 0) { $mmBackfillIns->execute($b); }
     }
 
+    // Reconciliation pass 2026-07-27: Carrie's updated "MLS & Assoc" spreadsheet.
+    // Adds memberships not previously captured and corrects/fills fields on a
+    // handful of existing rows whose credentials had gone stale. INSERTs dedupe
+    // like the backfill above; UPDATEs match on stable identifying columns and
+    // simply no-op once applied, so this whole block is safe to re-run.
+    $mm3Check = $pdo->prepare("SELECT COUNT(*) FROM mls_memberships WHERE state=? AND name=? AND username=?");
+    $mm3Ins = $pdo->prepare("INSERT INTO mls_memberships
+        (state,board_or_mls,name,membership_type,office_id,broker_of_record,username,password,login_link,notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?)");
+    $mm3New = [
+        ['NC','MLS','Hive','Flex','552500608','Carrie Kinney','ncr.554031769','Innovate2026!!','https://hivemls.relevateone.com/dashboard','Area: East Coast; Board: BCAR, CFAR; email carriekinneyrealtor@gmail.com'],
+        ['SC','MLS','Coastal Carolinas Assoc of Realtors (CCAR)','Paragon','19197','Carrie Kinney','29819','','https://www.ccarsc.org/','Area: Horry & Georgetown Co; NRDS 554031769; additional CCAR login carrie@innovateonline.com / Innovate2025!!'],
+        ['SC','MLS','CCAR','','42507','Carrie Kinney','31918','','','NRDS 31918'],
+        ['SC','MLS','CCAR','','42508','Carrie Kinney','31919','','','NRDS 31919'],
+    ];
+    foreach ($mm3New as $n) {
+        $mm3Check->execute([$n[0], $n[2], $n[6]]);
+        if ($mm3Check->fetchColumn() == 0) { $mm3Ins->execute($n); }
+    }
+    $mm3Updates = [
+        ["UPDATE mls_memberships SET membership_type=?, office_id=?, broker_of_record=?, username=?, password=?, login_link=?, notes=? WHERE state=? AND name=? AND broker_of_record=''",
+         ['Paragon','81833','Carrie Kinney','kinneycar','Diesel1972!','https://my.doorifymls.com/','Area: Triangle; carrie@innovateonline.com login','NC','Doorify | Raleigh']],
+        ["UPDATE mls_memberships SET membership_type=?, username=?, password=?, notes=? WHERE state=? AND name=? AND office_id=?",
+         ['Matrix','30260','Diesel1972!!','Email: carriekinneyrealtor@gmail.com','NC','Canopy','R03684']],
+        ["UPDATE mls_memberships SET membership_type=?, password=?, notes=? WHERE state=? AND name=? AND username=?",
+         ['Navica','CKinney','Association: CSAOR; https://www.carolinasmokiesrealtors.com/; general Navica login also at https://www.navicamls.net/','NC','Carolina Smokies','CarrieKinney']],
+        ["UPDATE mls_memberships SET membership_type=?, login_link=? WHERE state=? AND name=? AND username=?",
+         ['Navica','https://www.navicamls.net/','NC','Roanoke Valley Lake Gaston','IRE_2025']],
+        ["UPDATE mls_memberships SET membership_type=?, password=? WHERE state=? AND name=? AND username=?",
+         ['Matrix','Innovate25!','NC','High Country','283428']],
+        ["UPDATE mls_memberships SET membership_type=?, login_link=? WHERE state=? AND name=?",
+         ['Flex','https://chsmls.launchdashboard.io/','SC | CHS','CHS Regional MLS']],
+        ["UPDATE mls_memberships SET login_link=? WHERE state=? AND name=?",
+         ['https://bjcrealtors.com/','SC | HH','Beaufort-Jasper County Realtors']],
+        ["UPDATE mls_memberships SET membership_type=?, notes=? WHERE state=? AND name=?",
+         ['Matrix','**Admin Access?? Also carrie@innovateonline.com / alt login https://hhi.clareityiam.net/idp/login. NOTE: Hilton Head is being reassigned to Michael Fries (per latest sheet).','SC | HH','Resides']],
+        ["UPDATE mls_memberships SET username=?, password=?, login_link=? WHERE state=? AND board_or_mls=? AND name=?",
+         ['554031769','Innovate26!!','https://peedeerealtors.com/','SC | HV','Board','Pee Dee Realtor Association ']],
+    ];
+    foreach ($mm3Updates as $u) { $pdo->prepare($u[0])->execute($u[1]); }
+
     // ── Listing Intelligence ──────────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS listing_farms (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1834,7 +1933,7 @@ function local_db(): PDO {
             [1,'Governance','Establish formal audit committee with written charter','Required for OTCQB and NASDAQ listing. Committee members must be independent directors. Charter documents the scope, authority, and meeting cadence.','2027-03-31',80],
             [1,'Finance','Establish monthly financial close process','Books closed by the 15th of each month. Public companies file 10-Qs within 45 days of quarter end — this discipline starts now.','2027-01-31',90],
             [1,'Finance','409A valuation complete','Required before issuing stock options to employees or agents. Sets the fair market value of common stock for tax purposes.','2027-03-31',100],
-            [1,'Growth','Reach 400–500 agents','Company dollar at 300 agents ≈ $2.25M; need $5M–$8M to be taken seriously by investors. Growing to 400–500 agents is the most direct lever. Use Coastline CRM, join.growwithinnovate.com, and social recruiting automation.','2027-06-30',110],
+            [1,'Growth','Reach 400–500 agents','Company dollar at 300 agents ≈ $2.25M; need $5M–$8M to be taken seriously by investors. Growing to 400–500 agents is the most direct lever. Use Coastline CRM, joinme.website.innovateonline.com, and social recruiting automation.','2027-06-30',110],
             // ── Phase 2 — Year 2: Build (Jul 2027 – Jun 2028) ──
             [2,'Compliance','Year 2 PCAOB audit complete','Must have 2 full years of audited financials to file Form 10 (OTCQB registration). If Year 1 audit started by Oct 2026, Year 2 should be complete by mid-2028.','2028-04-30',10],
             [2,'Governance','Seat Compensation Committee (written charter)','Sets executive pay, manages stock option plan. Must include independent directors.','2027-12-31',20],
