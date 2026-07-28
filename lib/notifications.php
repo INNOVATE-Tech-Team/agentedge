@@ -10,6 +10,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/company_email.php';
+require_once __DIR__ . '/crypto.php';
 
 // ── Audience resolution ───────────────────────────────────────────────────────
 
@@ -812,6 +813,123 @@ function notify_upline_intake_submitted(string $agentName, string $agentEmail, s
         $ins->execute([$email, $subject, $body]);
     }
     return count($recipients);
+}
+
+// Market Center Leader(s) for a comma-separated office_location value (an
+// agent can join more than one office). Resolves the leader's display name
+// against the CRM roster, same source Company Email uses, so this never
+// touches the legacy Perfex tables. Returns [['office'=>..,'name'=>..,'email'=>..], ...].
+function office_market_leaders(string $officeLocationCsv): array {
+    $offices = array_values(array_filter(array_map('trim', explode(',', $officeLocationCsv))));
+    if (!$offices) return [];
+
+    $nameByEmail = [];
+    foreach (ce_fetch_crm_roster() as $a) {
+        $e = strtolower(trim($a['email'] ?? ''));
+        if ($e) $nameByEmail[$e] = $a['fullName'] ?? '';
+    }
+
+    $db  = local_db();
+    $out = [];
+    foreach ($offices as $office) {
+        $st = $db->prepare("SELECT mc_leader_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+        $st->execute([$office]);
+        $leaderEmail = strtolower(trim($st->fetchColumn() ?: ''));
+        if ($leaderEmail === '') continue;
+        $out[] = ['office' => $office, 'email' => $leaderEmail, 'name' => $nameByEmail[$leaderEmail] ?? ''];
+    }
+    return $out;
+}
+
+// Full intake-summary email to ops (dominic@/darren@) when an agent submits
+// their intake form for the first time. Tax ID is shown as last-4-only
+// (tax_id_last4(), same masked-display convention used elsewhere in the app)
+// rather than the full decrypted SSN/EIN — a plaintext email is not an
+// appropriate place for the full number. "Corporation Name" has no backing
+// field anywhere in the intake form today, so it's omitted rather than
+// guessed at; "Referring Source" and "Anniversary Date" are intentional
+// duplicates of Recruited By / Start Date, not separate data.
+function notify_intake_summary_admins(string $agentEmail): int {
+    $st = local_db()->prepare("SELECT * FROM agent_intake WHERE email = ?");
+    $st->execute([strtolower(trim($agentEmail))]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return 0;
+
+    $addrParts = array_filter(array_map('trim', [
+        $row['address_line1'] ?? '',
+        $row['address_line2'] ?? '',
+        $row['city'] ?? '',
+        trim(($row['state'] ?? '') . ' ' . ($row['zip'] ?? '')),
+        (($row['country'] ?? '') !== 'United States') ? ($row['country'] ?? '') : '',
+    ]), fn($p) => $p !== '');
+    $address = $addrParts ? implode(', ', $addrParts) : '—';
+
+    $personalLast4 = tax_id_last4($row['personal_tax_id_enc'] ?? '');
+    $corpLast4     = tax_id_last4($row['corporate_tax_id_enc'] ?? '');
+    if ($corpLast4 !== '' && $personalLast4 !== '') {
+        $taxKind = 'Personal & Corporate';
+        $taxId   = "Personal ending {$personalLast4}, Corporate ending {$corpLast4}";
+    } elseif ($corpLast4 !== '') {
+        $taxKind = 'Corporate';
+        $taxId   = "Ending in {$corpLast4}";
+    } elseif ($personalLast4 !== '') {
+        $taxKind = 'Personal';
+        $taxId   = "Ending in {$personalLast4}";
+    } else {
+        $taxKind = '—';
+        $taxId   = '—';
+    }
+
+    $leaders = office_market_leaders($row['office_location'] ?? '');
+    if (!$leaders) {
+        $marketLeader = '—';
+    } else {
+        $parts = array_map(function ($l) use ($leaders) {
+            $label = $l['name'] !== '' ? "{$l['name']} ({$l['email']})" : $l['email'];
+            return count($leaders) > 1 ? "{$l['office']}: {$label}" : $label;
+        }, $leaders);
+        $marketLeader = implode('; ', $parts);
+    }
+
+    $recruitedBy = $row['referring_agent'] !== '' ? $row['referring_agent'] : '—';
+    $startDate   = $row['career_start'] !== '' ? $row['career_start'] : '—';
+    $name        = $row['full_name'] ?: $agentEmail;
+
+    $rowHtml = function (string $label, string $value): string {
+        return '<tr><td style="padding:6px 14px 6px 0;color:#888;font-size:13px;font-weight:700;white-space:nowrap;vertical-align:top">' . htmlspecialchars($label, ENT_QUOTES) . '</td>'
+             . '<td style="padding:6px 0;color:#222;font-size:14px;vertical-align:top">' . htmlspecialchars($value !== '' ? $value : '—', ENT_QUOTES) . '</td></tr>';
+    };
+
+    $subject = "Intake Form Submitted: {$name}";
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 16px;color:#1a1a1a;font-size:20px;font-weight:800">Intake Form Submitted</h2>'
+        . '<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">'
+        . $rowHtml('Name:', $name)
+        . $rowHtml('Office:', $row['office_location'] ?? '')
+        . $rowHtml('Recruited By:', $recruitedBy)
+        . $rowHtml('Email:', $row['email'] ?? $agentEmail)
+        . $rowHtml('Phone Number:', $row['phone'] ?? '')
+        . $rowHtml('Address:', $address)
+        . $rowHtml('Tax ID Number:', $taxId)
+        . $rowHtml('Personal or Corporate:', $taxKind)
+        . $rowHtml('Start Date:', $startDate)
+        . $rowHtml('Anniversary Date:', $startDate)
+        . $rowHtml('Birthday:', $row['birthday'] ?? '')
+        . $rowHtml('Market Leader:', $marketLeader)
+        . $rowHtml('Referring Source:', $recruitedBy)
+        . '</table>'
+        . '<div style="margin-top:20px">'
+        . '<a href="https://agentedge.innovateonline.com/agent_profile.php?email=' . urlencode($agentEmail) . '" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">View Profile &rarr;</a>'
+        . '</div>'
+    );
+
+    $ins = local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', '')"
+    );
+    foreach (['dominic@innovateonline.com', 'darren@innovateonline.com'] as $recipient) {
+        $ins->execute([$recipient, $subject, $body]);
+    }
+    return 2;
 }
 
 // ── Support ticket notifications ─────────────────────────────────────────────
