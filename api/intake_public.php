@@ -148,6 +148,7 @@ try {
     $c = cfg();
     send_email_sendgrid('onboarding@innovateonline.com', $subject, $body, $c);
     send_email_sendgrid('darren@innovateonline.com',     $subject, $body, $c);
+    notify_upline_intake_submitted($submitterName, $submitterEmail, $officeLocation);
 
     echo json_encode(['ok' => true]);
 

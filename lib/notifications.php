@@ -706,6 +706,114 @@ function notify_intake_submitted(string $agentName, string $agentEmail): void {
     queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
 
+// ── Growth network (upline) notifications ────────────────────────────────────
+
+// Returns this agent's sponsor chain — same "sponsored by" relationship shown
+// on the My Network page (network.php/api/network_tree.php) — nearest first:
+// [['name'=>..,'email'=>..,'terminated'=>bool], ...]. Walks the recruit-source
+// parent pointer upward (agent_admin.recruit_source_email override wins when
+// set, same as the Network page) until it runs out or hits a cycle. Uses the
+// *_safe DB helpers so a CRM hiccup degrades to "no upline" instead of taking
+// down whatever triggered this (e.g. an intake form submission).
+function upline_chain(string $agentEmail): array {
+    $root = db_one_safe("SELECT staffid FROM tblstaff WHERE email = ? LIMIT 1", [$agentEmail]);
+    if (!$root) return [];
+    $rootId = (string)$root['staffid'];
+
+    $rows = db_query_safe(
+        "SELECT t.agent_id, t.recruit_source_agent_id, s.firstname, s.lastname, s.email AS agent_email
+         FROM tblre_transaction_agents t
+         LEFT JOIN tblstaff s ON s.staffid = t.agent_id"
+    );
+    if (!$rows) return [];
+
+    $nodes = []; $parents = [];
+    foreach ($rows as $row) {
+        $id    = (string)$row['agent_id'];
+        $email = $row['agent_email'] ?? '';
+        $nodes[$id] = [
+            'name'  => trim(($row['firstname'] ?? '') . ' ' . ($row['lastname'] ?? '')) ?: 'Agent',
+            'email' => $email,
+        ];
+        $parent = (string)($row['recruit_source_agent_id'] ?? '');
+        if ($parent !== '' && $parent !== '0') $parents[$id] = $parent;
+    }
+
+    $emailToId = [];
+    foreach ($nodes as $id => $n) {
+        if (!empty($n['email'])) $emailToId[strtolower($n['email'])] = $id;
+    }
+    try {
+        $overrides = local_db()->query(
+            "SELECT email, recruit_source_email FROM agent_admin WHERE recruit_source_email <> ''"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($overrides as $o) {
+            $childId  = $emailToId[strtolower(trim($o['email']))] ?? null;
+            $sourceId = $emailToId[strtolower(trim($o['recruit_source_email']))] ?? null;
+            if ($childId === null || $sourceId === null || $childId === $sourceId) continue;
+            $parents[$childId] = $sourceId;
+        }
+    } catch (\Exception $e) {}
+
+    $terminated = [];
+    try {
+        $termRows = local_db()->query("SELECT email FROM agent_admin WHERE terminated_date <> ''")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($termRows as $r) {
+            $tid = $emailToId[strtolower(trim($r['email']))] ?? null;
+            if ($tid !== null) $terminated[$tid] = true;
+        }
+    } catch (\Exception $e) {}
+
+    $chain = [];
+    $seen  = [$rootId => true]; // guard against a cycle
+    $cur   = $parents[$rootId] ?? null;
+    while ($cur !== null && isset($nodes[$cur]) && empty($seen[$cur])) {
+        $seen[$cur] = true;
+        $chain[] = [
+            'name'       => $nodes[$cur]['name'],
+            'email'      => $nodes[$cur]['email'],
+            'terminated' => !empty($terminated[$cur]),
+        ];
+        $cur = $parents[$cur] ?? null;
+    }
+    return $chain;
+}
+
+// Congratulates everyone in a newly-submitted agent's upline (their sponsor,
+// their sponsor's sponsor, etc.) when the agent completes their intake form
+// for the first time. Terminated sponsors are skipped as recipients (their
+// inbox likely isn't monitored anymore) but don't break the chain — whoever
+// sponsored THEM still gets notified, same as the Network page keeps showing
+// the recruits below a departed sponsor.
+function notify_upline_intake_submitted(string $agentName, string $agentEmail, string $marketCenter): int {
+    $chain = upline_chain($agentEmail);
+    if (!$chain) return 0;
+
+    $recipients = [];
+    foreach ($chain as $a) {
+        if ($a['terminated']) continue;
+        $e = strtolower(trim($a['email'] ?? ''));
+        if ($e && filter_var($e, FILTER_VALIDATE_EMAIL)) $recipients[$e] = true;
+    }
+    if (!$recipients) return 0;
+
+    $subject = "New Agent in Your Growth Network: {$agentName}";
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 16px;color:#1a1a1a;font-size:20px;font-weight:800">Congratulations!</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 10px">Another agent has been added to your growth network!</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.7;margin:0"><strong>' . htmlspecialchars($agentName, ENT_QUOTES) . '</strong>'
+        . ' out of ' . htmlspecialchars($marketCenter !== '' ? $marketCenter : 'their Market Center', ENT_QUOTES) . '.</p>'
+    );
+
+    $ins = local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', '')"
+    );
+    foreach (array_keys($recipients) as $email) {
+        $ins->execute([$email, $subject, $body]);
+    }
+    return count($recipients);
+}
+
 // ── Support ticket notifications ─────────────────────────────────────────────
 
 // Email addresses of every super_admin. Ticket/suggestion notifications go
