@@ -56,7 +56,14 @@ function default_perms(string $role = 'agent'): array {
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
     if (!function_exists('local_db')) return null;
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
+    // Case-insensitive on purpose — the session email comes from tblstaff's
+    // stored casing (whatever Perfex has on file), which doesn't always match
+    // how the email was typed when the agent_roles row was created, and
+    // SQLite's default TEXT comparison is case-sensitive. A mismatch here
+    // silently drops the local role assignment and falls through to the CRM
+    // lookup instead (see fetch_perms()) — confirmed causing a super_admin's
+    // role to not load when their tblstaff email had different casing.
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE LOWER(email)=LOWER(?)");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
@@ -172,6 +179,11 @@ function can_send_company_email(): bool { return can_post_announcements() || is_
 function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
 // Can create/edit cohorts and reassign coaches (admin or coaching leadership).
 function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
+// Can view (and edit) the LAUNCH Curriculum reference content — coaching
+// staff only, not agents. launch_facilitator is a separate role from
+// launch_coach/director_of_coaching (is_launch_coach()) since a facilitator
+// may run sessions without carrying an active coaching caseload.
+function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coach() || my_role() === 'launch_facilitator'; }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }
