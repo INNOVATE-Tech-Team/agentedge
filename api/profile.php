@@ -61,22 +61,24 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         'matched'  => true,
         'editable' => true,
         'profile'  => [
-            'fullName'     => $fullName,
-            'email'        => $row ? $row['email'] : $myEmail,
-            'phone'        => $phone,
-            'marketCenter' => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
-            'brokerage'    => 'INNOVATE Real Estate',
-            'social'       => (object)$social,
+            'fullName'       => $fullName,
+            'email'          => $row ? $row['email'] : $myEmail,
+            'phone'          => $phone,
+            'marketCenter'   => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
+            'brokerage'      => 'INNOVATE Real Estate',
+            'social'         => (object)$social,
+            'googlePlaceId'  => $intake['google_place_id'] ?? '',
         ],
     ]);
     exit;
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
-$in    = json_decode(file_get_contents('php://input'), true) ?: [];
-$email = strtolower(trim($in['email'] ?? $myEmail));
-$phone = trim($in['phone'] ?? '');
-$name  = trim($in['fullName'] ?? '');
+$in       = json_decode(file_get_contents('php://input'), true) ?: [];
+$email    = strtolower(trim($in['email'] ?? $myEmail));
+$phone    = trim($in['phone'] ?? '');
+$name     = trim($in['fullName'] ?? '');
+$placeId  = trim($in['googlePlaceId'] ?? '');
 
 // Snapshot "before" values for the change-notification email, using the same
 // fallback chain the GET path shows the agent (agent_intake first, then roster).
@@ -86,6 +88,7 @@ $beforeName    = $beforeIntake['full_name'] ?: ($beforeRoster['agent_name'] ?? '
 $beforePhone   = $beforeIntake['phone']     ?: ($beforeRoster['phone']      ?? '');
 $beforeSocial  = [];
 foreach ($SOCIAL_KEYS as $k) $beforeSocial[$k] = $beforeIntake[$k] ?? '';
+$beforePlaceId = $beforeIntake['google_place_id'] ?? '';
 
 // Dual-write: keep innovate_roster in sync (Advantage/coastline-server's CRM
 // roster export/sync reads this table directly, not agent_intake).
@@ -109,24 +112,26 @@ foreach ($SOCIAL_KEYS as $k) $social[$k] = trim($in[$k] ?? '');
 // matching this page's prior behavior against innovate_roster/agent_extra.
 $db->prepare(
     "INSERT INTO agent_intake
-        (email, full_name, phone, facebook, instagram, linkedin, twitter, youtube, tiktok, website, blog, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        (email, full_name, phone, facebook, instagram, linkedin, twitter, youtube, tiktok, website, blog, google_place_id, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
-        full_name  = CASE WHEN excluded.full_name <> '' THEN excluded.full_name ELSE agent_intake.full_name END,
-        phone      = excluded.phone,
-        facebook   = excluded.facebook,
-        instagram  = excluded.instagram,
-        linkedin   = excluded.linkedin,
-        twitter    = excluded.twitter,
-        youtube    = excluded.youtube,
-        tiktok     = excluded.tiktok,
-        website    = excluded.website,
-        blog       = excluded.blog,
-        updated_at = excluded.updated_at"
+        full_name       = CASE WHEN excluded.full_name <> '' THEN excluded.full_name ELSE agent_intake.full_name END,
+        phone           = excluded.phone,
+        facebook        = excluded.facebook,
+        instagram       = excluded.instagram,
+        linkedin        = excluded.linkedin,
+        twitter         = excluded.twitter,
+        youtube         = excluded.youtube,
+        tiktok          = excluded.tiktok,
+        website         = excluded.website,
+        blog            = excluded.blog,
+        google_place_id = excluded.google_place_id,
+        updated_at      = excluded.updated_at"
 )->execute([
     $myEmail, $name, $phone,
     $social['facebook'], $social['instagram'], $social['linkedin'], $social['twitter'],
     $social['youtube'], $social['tiktok'], $social['website'], $social['blog'],
+    $placeId,
 ]);
 
 // Dual-write: agent_extra.social_json still backs the roster social-icon
@@ -153,6 +158,7 @@ $socialLabels = [
 foreach ($SOCIAL_KEYS as $k) {
     if ($social[$k] !== $beforeSocial[$k]) $changes[$socialLabels[$k]] = [$beforeSocial[$k], $social[$k]];
 }
+if ($placeId !== $beforePlaceId) $changes['Google Place ID'] = [$beforePlaceId, $placeId];
 notify_profile_changed($effectiveName ?: $myEmail, $myEmail, $changes);
 
 echo json_encode(['ok' => true]);

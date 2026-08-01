@@ -99,6 +99,16 @@ return [
     // app.regrid.com → Account → API. Leave blank to show the "coming soon" banner.
     'regrid_api_key' => '',
 
+    // Google Places API — powers the Google Business Audit dashboard (rating,
+    // review count, open/closed status per agent's self-entered Place ID).
+    // Setup: console.cloud.google.com → APIs & Services → enable "Places API" →
+    // Credentials → Create API Key. No approval process (unlike the separate
+    // Business Profile Management API, which this app does NOT use) — just
+    // billing enabled on the project. Restrict the key to the Places API and,
+    // if possible, to the Lightsail server's IP. Leave blank to disable the
+    // audit sync (rows stay "Not checked").
+    'google_places_key' => '',
+
     // SendGrid — transactional email for announcements and other agent notifications.
     // Get API key at: app.sendgrid.com → Settings → API Keys → Create API Key (Mail Send)
     // Verified sender domain: innovateonline.com (domain auth already complete).

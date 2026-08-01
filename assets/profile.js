@@ -1,7 +1,7 @@
 // My Profile — load the agent's record, let them edit contact + social links.
 const SOCIAL_KEYS = ['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'website', 'blog'];
 const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal'];
-const FIELDS = ['fullName', 'email', 'phone', 'marketCenter', 'brokerage', ...SOCIAL_KEYS];
+const FIELDS = ['fullName', 'email', 'phone', 'marketCenter', 'brokerage', ...SOCIAL_KEYS, 'googlePlaceId'];
 
 function set(id, v) { const el = document.getElementById('f-' + id); if (el) el.value = v || ''; }
 function get(id) { const el = document.getElementById('f-' + id); return el ? el.value.trim() : ''; }
@@ -22,6 +22,7 @@ function fill(p) {
   set('marketCenter', p.marketCenter); set('brokerage', p.brokerage);
   const s = p.social || {};
   SOCIAL_KEYS.forEach(k => set(k, s[k]));
+  set('googlePlaceId', p.googlePlaceId);
 }
 
 // Load CRM profile + local extra fields in parallel

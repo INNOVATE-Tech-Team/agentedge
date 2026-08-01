@@ -12,6 +12,19 @@ $agent = require_login();
   <title>My Profile — AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
+  <style>
+    .hs-grid { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+    .hs-thumb { position:relative; width:110px; height:110px; border-radius:8px; overflow:hidden; border:1px solid var(--border); }
+    .hs-thumb img { width:100%; height:100%; object-fit:cover; }
+    .hs-del { position:absolute; top:4px; right:4px; background:rgba(0,0,0,.55); color:#fff; border:0; border-radius:50%; width:22px; height:22px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; }
+    .hs-del:hover { background:rgba(200,0,0,.8); }
+    .hs-upload-label { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:#f0f5e8; border:1px dashed #82C112; border-radius:7px; font-size:13px; font-weight:700; color:#5b8e0d; cursor:pointer; }
+    .hs-upload-label:hover { background:#e4f0d8; }
+    .hs-upload-label.disabled { opacity:.5; cursor:not-allowed; }
+    #hs-file { display:none; }
+    .hs-note { font-size:11px; color:var(--faint); margin-top:6px; }
+    .hs-msg { font-size:12px; color:var(--faint); margin-top:6px; min-height:16px; }
+  </style>
 </head>
 <body>
   <div class="layout">
@@ -49,12 +62,31 @@ $agent = require_login();
               <div class="field"><label>TikTok</label><input id="f-tiktok" type="url" placeholder="https://tiktok.com/@…"></div>
               <div class="field"><label>Website</label><input id="f-website" type="url" placeholder="https://…"></div>
               <div class="field"><label>Blog</label><input id="f-blog" type="url" placeholder="https://…"></div>
+
+              <div class="section-h">Google Business Profile</div>
+              <div class="field full">
+                <label>Google Place ID</label>
+                <input id="f-googlePlaceId" type="text" placeholder="ChIJ...">
+                <div class="hs-note">Find yours at <a href="https://developers.google.com/maps/documentation/places/web-service/place-id" target="_blank" rel="noopener">Google's Place ID Finder</a> — search your business name, copy the Place ID. Used to check your listing's status and to link clients straight to your review page.</div>
+              </div>
             </div>
             <div class="form-actions">
               <button type="submit" class="btn-save" id="save-btn" disabled>Save changes</button>
               <span class="form-msg" id="form-msg"></span>
             </div>
           </form>
+        </section>
+
+        <section class="card" style="margin-top:20px">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Profile Photo</h2>
+          <p class="form-sub" style="margin:0 0 18px">Shown on the agent roster and your profile across INNOVATE.</p>
+          <div class="hs-grid" id="hs-grid"></div>
+          <label class="hs-upload-label" id="hs-upload-label" for="hs-file">
+            <span>&#43; Upload Photo</span>
+          </label>
+          <input type="file" id="hs-file" accept="image/*">
+          <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
+          <div class="hs-msg" id="hs-msg"></div>
         </section>
 
         <section class="card" style="margin-top:20px">
@@ -92,14 +124,14 @@ $agent = require_login();
               <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer">
                 <div>
                   <div style="font-size:13px;font-weight:700">Text (SMS) notifications</div>
-                  <div style="font-size:12px;color:#888">Short announcement alerts to your mobile</div>
+                  <div style="font-size:12px;color:#888">Optional — short announcement alerts to your mobile. Not required to use AgentEdge.</div>
                 </div>
                 <input type="checkbox" id="notif-sms" style="width:18px;height:18px;accent-color:#82C112;cursor:pointer" onchange="togglePhoneField()">
               </label>
               <div id="phone-field" style="margin-top:10px;display:none">
                 <input type="tel" id="notif-phone" placeholder="(843) 555-1234"
                   style="padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box">
-                <div style="font-size:11px;color:#aaa;margin-top:4px">US numbers only. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="privacy.php#sms" target="_blank" style="color:#82C112">SMS terms</a>.</div>
+                <div style="font-size:11px;color:#aaa;margin-top:6px">By checking this box and providing your number, you agree to receive recurring automated SMS announcement alerts from INNOVATE Real Estate. This is entirely optional and is not a condition of using AgentEdge or any other service. US numbers only. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="privacy.php#sms" target="_blank" style="color:#82C112">SMS terms</a>.</div>
               </div>
             </div>
           </div>
@@ -122,6 +154,83 @@ $agent = require_login();
       if(d.sms_phone) document.getElementById('notif-phone').value = d.sms_phone;
       togglePhoneField();
     }).catch(()=>{});
+  })();
+
+  // ── Profile photo ────────────────────────────────────────────────────────────
+  (function(){
+    const grid = document.getElementById('hs-grid');
+    const msg  = document.getElementById('hs-msg');
+    const lbl  = document.getElementById('hs-upload-label');
+    const inp  = document.getElementById('hs-file');
+
+    function hsCount(){ return grid.querySelectorAll('.hs-thumb').length; }
+    function syncUploadState(){
+      const full = hsCount() >= 5;
+      lbl.classList.toggle('disabled', full);
+      inp.disabled = full;
+    }
+    function addThumb(fileKey){
+      const wrap = document.createElement('div');
+      wrap.className = 'hs-thumb';
+      wrap.dataset.key = fileKey;
+      const img = document.createElement('img');
+      img.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(fileKey);
+      img.alt = 'Profile photo';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hs-del';
+      btn.textContent = '✕';
+      btn.addEventListener('click', function(){ deletePhoto(fileKey, wrap); });
+      wrap.appendChild(img);
+      wrap.appendChild(btn);
+      grid.appendChild(wrap);
+    }
+    function deletePhoto(fileKey, wrap){
+      msg.textContent = 'Deleting…';
+      fetch('api/intake.php?action=delete_file', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: fileKey }),
+      }).then(r => r.json()).then(res => {
+        if (res.ok) {
+          wrap.remove();
+          syncUploadState();
+          msg.textContent = 'Deleted.';
+          setTimeout(() => msg.textContent = '', 2000);
+        } else {
+          msg.textContent = res.error || 'Delete failed.';
+        }
+      }).catch(() => { msg.textContent = 'Network error.'; });
+    }
+
+    inp.addEventListener('change', function(){
+      const file = this.files[0];
+      this.value = '';
+      if (!file) return;
+      if (hsCount() >= 5) { msg.textContent = 'Maximum 5 photos reached.'; return; }
+      if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
+
+      msg.textContent = 'Uploading…';
+      const fd = new FormData();
+      fd.append('headshot', file);
+      fetch('api/intake.php?action=upload', {
+        method: 'POST', credentials: 'same-origin', body: fd,
+      }).then(r => r.json()).then(res => {
+        if (res.ok && res.file_key) {
+          addThumb(res.file_key);
+          syncUploadState();
+          msg.textContent = 'Uploaded.';
+          setTimeout(() => msg.textContent = '', 2000);
+        } else {
+          msg.textContent = res.error || 'Upload failed.';
+        }
+      }).catch(() => { msg.textContent = 'Network error.'; });
+    });
+
+    fetch('api/intake.php', { credentials: 'same-origin' }).then(r => r.json()).then(data => {
+      (data.headshots || []).forEach(h => addThumb(h.file_key));
+      syncUploadState();
+    }).catch(() => {});
   })();
 
   // ── Password change ─────────────────────────────────────────────────────────

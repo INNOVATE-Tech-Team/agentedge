@@ -19,6 +19,7 @@ function local_db(): PDO {
     $pdo = new PDO('sqlite:' . $dir . '/agentedge.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("PRAGMA journal_mode=WAL");
+    $pdo->exec("PRAGMA busy_timeout=15000"); // wait up to 15s for a lock instead of failing immediately
 
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
@@ -116,6 +117,94 @@ function local_db(): PDO {
         access_token  TEXT,
         refresh_token TEXT,
         expires_at    INTEGER
+    )");
+
+    // Company-wide DotLoop loop cache. DotLoop's per-agent individual profiles
+    // return zero loops (confirmed live) — all real transaction data lives on
+    // the company profile, so this is synced once via the shared admin
+    // connection (see dotloop_shared_email() in lib/dotloop.php) rather than
+    // per agent. "My Transactions" filters this cache by participant email
+    // instead of hitting DotLoop live per page view.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_loops (
+        loop_id          TEXT PRIMARY KEY,
+        name             TEXT NOT NULL DEFAULT '',
+        status           TEXT NOT NULL DEFAULT '',
+        deal_stage       TEXT NOT NULL DEFAULT '',
+        transaction_type TEXT NOT NULL DEFAULT '',
+        dl_created       TEXT NOT NULL DEFAULT '',
+        dl_updated       TEXT NOT NULL DEFAULT '',
+        loop_url         TEXT NOT NULL DEFAULT '',
+        synced_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_loops_updated ON dotloop_loops(dl_updated)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_loops_stage ON dotloop_loops(deal_stage)");
+
+    // Carolina Property Insurance quote-request flag, read from DotLoop's native
+    // "New Insurance Quote Request" Detail field. NULL means "not checked yet"
+    // (distinct from '' / 'No'), which is what drives the one-time backfill in
+    // dotloop_sync_company_loops() — see lib/dotloop.php.
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_requested TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_notified_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Participants per loop — the only way to know which agent a loop belongs
+    // to, since DotLoop's loop-list response has no participant/email data.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_loop_participants (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        loop_id TEXT NOT NULL,
+        email   TEXT NOT NULL DEFAULT '',
+        name    TEXT NOT NULL DEFAULT '',
+        role    TEXT NOT NULL DEFAULT '',
+        UNIQUE(loop_id, email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_participants_email ON dotloop_loop_participants(email)");
+
+    // Sync watermarks (last dl_updated seen per deal_stage bucket) for
+    // incremental cron runs after the initial full sync.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_sync_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    )");
+
+    // Google review requests — one row per closed (SOLD) loop, queued for
+    // admin approval before a "please leave us a review" email goes out to
+    // the client. Populated by queue_review_request_for_loop() in
+    // lib/dotloop.php when dotloop_sync_company_loops() detects a loop's
+    // deal_stage transitioning into SOLD (see review_request_backfill_done
+    // in dotloop_sync_state, same one-time-backfill idiom as
+    // insurance_quote_backfill_done above — prevents historical SOLD loops
+    // from flooding the queue the first time this ships).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS review_request_queue (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        loop_id          TEXT UNIQUE NOT NULL,
+        loop_name        TEXT NOT NULL DEFAULT '',
+        agent_email      TEXT NOT NULL DEFAULT '',
+        recipient_emails TEXT NOT NULL DEFAULT '',
+        recipient_names  TEXT NOT NULL DEFAULT '',
+        place_id         TEXT NOT NULL DEFAULT '',
+        subject          TEXT NOT NULL DEFAULT '',
+        body             TEXT NOT NULL DEFAULT '',
+        status           TEXT NOT NULL DEFAULT 'awaiting_approval',
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        actioned_by      TEXT,
+        actioned_at      TEXT,
+        sent_at          TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_review_request_status ON review_request_queue(status)");
+
+    // Google Business Profile audit cache — one row per agent with a Place ID
+    // on file (self-entered on their profile page, see agent_intake.google_place_id
+    // below). Populated by google_business_sync_all() in lib/google_business.php,
+    // nightly via cron/sync_google_audit.php and on-demand from the "Refresh Now"
+    // button on backoffice_google_audit.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS google_business_audit (
+        email           TEXT PRIMARY KEY,
+        place_id        TEXT NOT NULL DEFAULT '',
+        business_name   TEXT NOT NULL DEFAULT '',
+        business_status TEXT NOT NULL DEFAULT '',
+        rating          REAL,
+        review_count    INTEGER NOT NULL DEFAULT 0,
+        last_checked_at TEXT,
+        last_error      TEXT NOT NULL DEFAULT ''
     )");
 
     // Onboarding queue — one row per agent being onboarded
@@ -422,6 +511,10 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN youtube             TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN tiktok              TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN blog                TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Migration: Google Business Profile Place ID, self-entered by the agent on
+    // their own profile page — drives the Google Business Audit dashboard and
+    // the review-request link (search.google.com/local/writereview?placeid=...).
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN google_place_id     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
@@ -1364,6 +1457,14 @@ function local_db(): PDO {
         created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
+    // Feed Type — separate from feed_type above, which is actually the feed
+    // *source*/vendor (RETS, Trestle, Spark, etc.). These two flags capture
+    // what kind of data the feed actually delivers: BBO (full broker
+    // back-office feed, feeds Advantage) and/or IDX (public listing display
+    // feed, feeds the website) — an integration can be either, both, or neither.
+    try { $pdo->exec("ALTER TABLE mls_integrations ADD COLUMN feed_bbo INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_integrations ADD COLUMN feed_idx INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+
     // Seed known MLS integrations on fresh installs
     if ($pdo->query("SELECT COUNT(*) FROM mls_integrations")->fetchColumn() == 0) {
         $mi = $pdo->prepare("INSERT INTO mls_integrations
@@ -2166,6 +2267,112 @@ function local_db(): PDO {
         sent_at       TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_acl_agent ON agent_comms_log(agent_email)");
+
+    // ── LAUNCH Curriculum: facilitator-facing reference content for the 8-week
+    // program (distinct from the cohorts/KPI tables above, which track live
+    // agent activity, not the session content itself). One row per session;
+    // content_md is the full facilitator guide + participant content as
+    // markdown, rendered by lib/markdown.php on launch_session.php.
+    //
+    // Renamed from launch_weeks/week_number to launch_sessions/session_number
+    // (2026-07-30) when LAUNCH moved from a 1x/week to 2x/week cadence — a
+    // pre-existing install still has the old table, so rename it in place
+    // before the CREATE below (a no-op once already renamed).
+    try { $pdo->exec("ALTER TABLE launch_weeks RENAME TO launch_sessions"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE launch_sessions RENAME COLUMN week_number TO session_number"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE TABLE IF NOT EXISTS launch_sessions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_number INTEGER NOT NULL UNIQUE,
+        title          TEXT    NOT NULL DEFAULT '',
+        theme_quote    TEXT    NOT NULL DEFAULT '',
+        the_goal       TEXT    NOT NULL DEFAULT '',
+        primary_jobs   TEXT    NOT NULL DEFAULT '',
+        content_md     TEXT    NOT NULL DEFAULT '',
+        updated_by     TEXT    NOT NULL DEFAULT '',
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    // One-time seed from lib/launch_curriculum_seed.php — only runs on an
+    // empty table, so facilitator edits made afterward via launch_session.php
+    // are never overwritten by a re-run of this migration.
+    if ($pdo->query("SELECT COUNT(*) FROM launch_sessions")->fetchColumn() == 0) {
+        require_once __DIR__ . '/lib/launch_curriculum_seed.php';
+        $ins = $pdo->prepare(
+            "INSERT INTO launch_sessions (session_number,title,theme_quote,the_goal,primary_jobs,content_md)
+             VALUES (?,?,?,?,?,?)"
+        );
+        foreach (launch_curriculum_seed() as $sessionNum => $w) {
+            $ins->execute([$sessionNum, $w['title'], $w['theme_quote'], $w['the_goal'], $w['primary_jobs'], $w['content_md']]);
+        }
+    }
+
+    // Single-row master framework doc ("Program-Level Accountability
+    // System") that every week's KPI/Accountability section cites by name.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS launch_framework (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        title       TEXT    NOT NULL DEFAULT '',
+        content_md  TEXT    NOT NULL DEFAULT '',
+        updated_by  TEXT    NOT NULL DEFAULT '',
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    if ($pdo->query("SELECT COUNT(*) FROM launch_framework")->fetchColumn() == 0) {
+        require_once __DIR__ . '/lib/launch_curriculum_seed.php';
+        $fw = launch_framework_seed();
+        $pdo->prepare("INSERT INTO launch_framework (id,title,content_md) VALUES (1,?,?)")
+            ->execute([$fw['title'], $fw['content_md']]);
+    }
+
+    // Launch Coaching / Launch Schedule roster — a lightweight per-agent
+    // tracker (name, office, coach, notes, start date, graduation status)
+    // separate from the cohorts/KPI system above. Deals-to-graduate can be
+    // linked to a real Darwin agent (darwin_agent_person_id -> reads
+    // darwin_sales_volume.ytd_transaction_count) or set by hand via
+    // deals_override when the YTD figure predates the agent joining LAUNCH.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS launch_roster (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_name              TEXT    NOT NULL,
+        agent_email             TEXT    NOT NULL DEFAULT '',
+        state                   TEXT    NOT NULL DEFAULT '',
+        office                  TEXT    NOT NULL DEFAULT '',
+        coach                   TEXT    NOT NULL DEFAULT '',
+        start_date              TEXT    NOT NULL DEFAULT '',
+        status                  TEXT    NOT NULL DEFAULT 'active',
+        notes                   TEXT    NOT NULL DEFAULT '',
+        darwin_agent_person_id  INTEGER,
+        deals_override          INTEGER,
+        graduated_at            TEXT    NOT NULL DEFAULT '',
+        created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at              TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lr_start_date ON launch_roster(start_date)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lr_status     ON launch_roster(status)");
+
+    // Individually logged deals — a durable record of each closed transaction
+    // toward the 3-deal graduation mark. Darwin's synced ytd_transaction_count
+    // is a YTD figure that resets every January, so any agent whose LAUNCH
+    // stint crosses a calendar year boundary needs this log instead of (or
+    // alongside) the Darwin link to keep an accurate running total.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS launch_roster_deals (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        roster_id   INTEGER NOT NULL,
+        deal_date   TEXT    NOT NULL,
+        notes       TEXT    NOT NULL DEFAULT '',
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_lrd_roster ON launch_roster_deals(roster_id)");
+    // One-time seed from lib/launch_roster_seed.php (the "Lead Team, Coaches,
+    // etc — New Agents" sheet + the Aug 10 2026 start-date list) — only runs
+    // on an empty table, same guard pattern as launch_sessions above.
+    if ($pdo->query("SELECT COUNT(*) FROM launch_roster")->fetchColumn() == 0) {
+        require_once __DIR__ . '/lib/launch_roster_seed.php';
+        $ins = $pdo->prepare(
+            "INSERT INTO launch_roster (agent_name,state,office,coach,start_date,notes)
+             VALUES (?,?,?,?,?,?)"
+        );
+        foreach (launch_roster_seed() as $r) {
+            $ins->execute([$r['agent_name'], $r['state'], $r['office'], $r['coach'] ?? '', $r['start_date'] ?? '', $r['notes'] ?? '']);
+        }
+    }
 
     return $pdo;
 }
