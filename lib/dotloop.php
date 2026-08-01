@@ -133,6 +133,16 @@ function dotloop_api(string $email, string $method, string $path, ?array $body =
         $result = _dotloop_request($token, $method, $path, $body);
     }
 
+    // On 429, back off and retry — DotLoop's real rate limit is much
+    // tighter than expected, so this is hit routinely during a full sync.
+    $attempt = 0;
+    while (!$result['ok'] && ($result['status'] ?? 0) === 429 && $attempt < 6) {
+        $wait = $result['retry_after'] ?? (2 ** $attempt);
+        sleep(max(1, (int)$wait));
+        $result = _dotloop_request($token, $method, $path, $body);
+        $attempt++;
+    }
+
     return $result;
 }
 
@@ -156,12 +166,16 @@ function _dotloop_request(string $token, string $method, string $path, ?array $b
     $ctx = stream_context_create(['http' => $opts]);
     $raw = @file_get_contents($url, false, $ctx);
 
-    // Parse HTTP status from $http_response_header
-    $status = 200;
+    // Parse HTTP status (and Retry-After, for 429 backoff) from $http_response_header
+    $status     = 200;
+    $retryAfter = null;
     if (isset($http_response_header) && is_array($http_response_header)) {
         foreach ($http_response_header as $h) {
             if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) {
                 $status = (int)$m[1];
+            }
+            if (preg_match('#^Retry-After:\s*(\d+)#i', $h, $m)) {
+                $retryAfter = (int)$m[1];
             }
         }
     }
@@ -173,7 +187,7 @@ function _dotloop_request(string $token, string $method, string $path, ?array $b
     if ($status >= 400) {
         $errBody = json_decode($raw, true);
         $errMsg  = $errBody['message'] ?? $errBody['error'] ?? "HTTP {$status}";
-        return ['ok' => false, 'error' => $errMsg, 'status' => $status];
+        return ['ok' => false, 'error' => $errMsg, 'status' => $status, 'retry_after' => $retryAfter];
     }
 
     $data = json_decode($raw, true);
