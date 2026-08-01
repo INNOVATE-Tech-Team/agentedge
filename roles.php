@@ -56,7 +56,14 @@ function default_perms(string $role = 'agent'): array {
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
     if (!function_exists('local_db')) return null;
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
+    // Case-insensitive on purpose — the session email comes from tblstaff's
+    // stored casing (whatever Perfex has on file), which doesn't always match
+    // how the email was typed when the agent_roles row was created, and
+    // SQLite's default TEXT comparison is case-sensitive. A mismatch here
+    // silently drops the local role assignment and falls through to the CRM
+    // lookup instead (see fetch_perms()) — confirmed causing a super_admin's
+    // role to not load when their tblstaff email had different casing.
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE LOWER(email)=LOWER(?)");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
@@ -150,15 +157,15 @@ function my_team_id(): ?int       { $t = current_perms()['team_id'] ?? null; ret
 // The team this agent is a member of (not leading it) — via team_members.
 function my_own_team_id(): ?int   { $t = current_perms()['own_team_id'] ?? null; return $t !== null ? (int)$t : null; }
 
-function is_super_admin(): bool    { return !empty(current_perms()['isSuperAdmin']); }
-function is_admin(): bool          { return !empty(current_perms()['isAdmin']); }
-function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
-function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
+function is_super_admin(): bool    { return in_array('super_admin', my_roles(), true); }
+function is_admin(): bool          { return is_super_admin() || in_array('staff', my_roles(), true); }
+function is_bic(): bool            { return in_array('bic', my_roles(), true); }
+function is_mc_leader(): bool      { return in_array('mc_leader', my_roles(), true); }
 // NOTE: deliberately not folded into is_leader() below — that gate is checked
 // by unrelated features (announcements, company email audiences) not part of
 // this build. Team-specific pages check is_team_leader() explicitly instead.
 function is_team_leader(): bool   { return my_team_id() !== null; }
-function is_recruiter(): bool      { return (current_perms()['role'] ?? '') === 'recruiter'; }
+function is_recruiter(): bool      { return in_array('recruiter', my_roles(), true); }
 // Can view "Leaders & Recruiters" visibility docs (super_admin, mc_leader, bic, recruiter)
 function can_view_leader_docs(): bool { return is_super_admin() || is_mc_leader() || is_bic() || is_recruiter(); }
 function is_leader(): bool         { return is_admin() || is_bic() || is_mc_leader(); }
@@ -169,9 +176,16 @@ function can_post_announcements(): bool { return is_admin() || is_mc_leader() ||
 // coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
 function can_send_company_email(): bool { return can_post_announcements() || is_launch_coach(); }
 // LAUNCH coaching staff (coach or the director role above them).
-function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
+function is_launch_coach(): bool { return !empty(array_intersect(['launch_coach', 'director_of_coaching'], my_roles())); }
 // Can create/edit cohorts and reassign coaches (admin or coaching leadership).
 function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
+// Can view (and edit) the LAUNCH Curriculum reference content — coaching
+// staff only, not agents. launch_facilitator is a separate role from
+// launch_coach/director_of_coaching (is_launch_coach()) since a facilitator
+// may run sessions without carrying an active coaching caseload.
+function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coach() || my_role() === 'launch_facilitator'; }
+// Can manage the Launch Schedule / Launch Coaching roster (admin or coaching leadership).
+function can_manage_launch_roster(): bool { return is_admin() || is_launch_coach(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }

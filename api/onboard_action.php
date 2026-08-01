@@ -69,14 +69,16 @@ if ($action === 'list_queue') {
         $rows = $pdo->query(
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q ORDER BY q.added_at DESC"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $st = $pdo->prepare(
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q WHERE q.status=? ORDER BY q.added_at DESC"
         );
         $st->execute([$filter]);
@@ -387,6 +389,12 @@ if ($action === 'complete_onboarding') {
         json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
     }
 
+    $intakeCheck = $pdo->prepare("SELECT submitted FROM agent_intake WHERE email = ?");
+    $intakeCheck->execute([$row['agent_email'] ?? '']);
+    if (!(int)$intakeCheck->fetchColumn()) {
+        json_out(['ok'=>false,'error'=>'This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.']);
+    }
+
     add_or_reactivate_roster_agent(
         $pdo,
         $row['agent_name'],
@@ -405,7 +413,7 @@ if ($action === 'complete_onboarding') {
     try {
         require_once __DIR__ . '/../lib/notifications.php';
         notify_onboard_completed($row['agent_name'], $row['agent_email'], $agent['email'], $agent['name'] ?? '');
-        notify_bic_ml_onboard_complete($row['agent_name'], $row['agent_email'], $row['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
+        notify_mc_assigned($row['agent_name'], $row['agent_email'], $row['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
 
         // Step 11 (Coach/LAUNCH assignment) is new-agents-only — determined by
         // whether the intake form shows a prior brokerage; blank means new.

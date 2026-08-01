@@ -286,6 +286,14 @@ if ($action === 'add_to_queue') {
             $agent['email'],
             $agent['name'] ?? ''
         );
+        notify_offboard_system_tasks(
+            $name,
+            $email,
+            $mc,
+            trim($body['last_day'] ?? ''),
+            $agent['email'],
+            $agent['name'] ?? ''
+        );
         notify_step_assignees_on_create('offboard', $name, $email, offboard_tools(), $agent['email'], $agent['name'] ?? '');
         maybe_notify_next_actionable_step($pdo, 'offboard', $queueId, $agent['email'], $agent['name'] ?? '');
     } catch (\Throwable $e) {}
@@ -407,6 +415,24 @@ if ($action === 'complete_offboarding') {
     $queueId = (int)($body['queue_id'] ?? 0);
     $upd = $pdo->prepare("UPDATE offboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);
+
+    try {
+        require_once __DIR__ . '/../lib/notifications.php';
+        $row = $pdo->prepare("SELECT agent_name, agent_email, market_center FROM offboard_queue WHERE id=?");
+        $row->execute([$queueId]);
+        $row = $row->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            notify_offboard_complete(
+                $row['agent_name'],
+                $row['agent_email'],
+                $row['market_center'] ?? '',
+                $agent['email'],
+                $agent['name'] ?? ''
+            );
+            dispatch_notification_queue();
+        }
+    } catch (\Throwable $e) {}
+
     json_out(['ok'=>true]);
 }
 

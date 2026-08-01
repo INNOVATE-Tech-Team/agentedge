@@ -333,14 +333,6 @@ $intakeMarketCenters = local_db()
           </select>
         </div>
         <div class="field">
-          <label>Are you a military veteran?</label>
-          <select id="f-is_military" name="is_military">
-            <option value="">— Select —</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div class="field">
           <label>Are you a first responder?</label>
           <select id="f-first_responder" name="first_responder">
             <option value="">— Select —</option>
@@ -591,7 +583,6 @@ $intakeMarketCenters = local_db()
       zip:             el('f-zip').value.trim(),
       country:         el('f-country').value.trim(),
       tshirt_size:     el('f-tshirt_size').value.trim(),
-      is_military:     el('f-is_military').value.trim(),
       first_responder: el('f-first_responder').value.trim(),
       is_teacher:      el('f-is_teacher').value.trim(),
       referring_agent: el('f-referring_agent').value.trim(),

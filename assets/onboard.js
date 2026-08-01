@@ -272,7 +272,7 @@
 
     const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
       <div class="ob-footer">
-        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${entry.market_center ? '1' : '0'}"
+        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${entry.market_center ? '1' : '0'}" data-has-intake="${entry.intake_submitted ? '1' : '0'}"
                 onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
@@ -500,10 +500,12 @@
 
   // ── Complete / Cancel queue entry ──────────────────────────────────────────
   window.completeOnboarding = function (queueId, btn) {
-    const hasState = btn.dataset.hasState === '1';
-    const hasMc    = btn.dataset.hasMc === '1';
+    const hasState  = btn.dataset.hasState === '1';
+    const hasMc     = btn.dataset.hasMc === '1';
+    const hasIntake = btn.dataset.hasIntake === '1';
     if (!hasState) { alert('Set a license state for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
     if (!hasMc) { alert('Set a Market Center for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
+    if (!hasIntake) { alert('This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.'); return; }
     if (!confirm('Mark this agent\'s onboarding as complete?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=complete_onboarding', { queue_id: queueId })

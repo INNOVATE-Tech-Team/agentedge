@@ -1313,8 +1313,13 @@ function renderPermissionForm(d) {
     `<option value="${esc(b.email)}"${d.bic_email===b.email?' selected':''}>${esc(b.name)} (${esc(b.email)})</option>`).join('');
   const mcChecks = Object.keys(d.mc_opts).map(slug =>
     `<label class="mc-check"><input type="checkbox" value="${esc(slug)}"${d.mc_slugs.includes(slug)?' checked':''}> ${esc(d.mc_opts[slug])}</label>`).join('');
+  const extraRoleOpts = '<option value="">— none —</option>' + Object.keys(d.extra_role_options).map(k =>
+    `<option value="${esc(k)}"${d.extra_role===k?' selected':''}>${esc(d.extra_role_options[k])}</option>`).join('');
+  const extraMcChecks = Object.keys(d.mc_opts).map(slug =>
+    `<label class="mc-check"><input type="checkbox" value="${esc(slug)}"${d.extra_mc_slugs.includes(slug)?' checked':''}> ${esc(d.mc_opts[slug])}</label>`).join('');
   const bicRowHidden = STAFF_ROLES.includes(d.role);
   const mcLedVisible = LEADER_ROLES.includes(d.role);
+  const extraMcLedVisible = LEADER_ROLES.includes(d.extra_role);
 
   wrap.innerHTML = `
     <div class="form-grid-perm">
@@ -1335,6 +1340,16 @@ function renderPermissionForm(d) {
       <div class="field-label">Market Centers They Lead</div>
       <div class="mc-checks" id="perm-mc-checks">${mcChecks}</div>
     </div>
+    <div class="form-grid-perm" style="margin-top:16px;border-top:1px solid var(--border,#eee);padding-top:16px">
+      <div>
+        <div class="field-label">Additional Role</div>
+        <select id="perm-extra-role" class="field-select">${extraRoleOpts}</select>
+      </div>
+    </div>
+    <div id="perm-extra-mc-led" class="mc-led-section${extraMcLedVisible?' visible':''}" style="margin-top:12px">
+      <div class="field-label">Market Centers They Lead (Additional Role)</div>
+      <div class="mc-checks" id="perm-extra-mc-checks">${extraMcChecks}</div>
+    </div>
     <div style="margin-top:16px">
       <button type="button" class="btn-detail-link" onclick="savePermission()">Save</button>
       <button type="button" class="btn-detail-link" onclick="removePermission()">Clear Role / Placement</button>
@@ -1346,12 +1361,16 @@ function renderPermissionForm(d) {
     document.getElementById('perm-mc-led').classList.toggle('visible', LEADER_ROLES.includes(role));
     document.getElementById('perm-bic-row').style.display = STAFF_ROLES.includes(role) ? 'none' : '';
   });
+  document.getElementById('perm-extra-role').addEventListener('change', function () {
+    document.getElementById('perm-extra-mc-led').classList.toggle('visible', LEADER_ROLES.includes(this.value));
+  });
 }
 
 window.savePermission = function () {
   const msg = document.getElementById('perm-save-msg');
   msg.textContent = 'Saving…';
   const mcSlugs = Array.from(document.querySelectorAll('#perm-mc-checks input:checked')).map(el => el.value);
+  const extraMcSlugs = Array.from(document.querySelectorAll('#perm-extra-mc-checks input:checked')).map(el => el.value);
   const bicEl = document.getElementById('perm-bic-email');
   fetch('api/agent_roles.php', {
     method: 'POST', credentials: 'same-origin',
@@ -1361,7 +1380,9 @@ window.savePermission = function () {
       role: document.getElementById('perm-role').value,
       own_mc_slug: document.getElementById('perm-own-mc').value,
       bic_email: bicEl ? bicEl.value : '',
-      mc_slugs: mcSlugs
+      mc_slugs: mcSlugs,
+      extra_role: document.getElementById('perm-extra-role').value,
+      extra_mc_slugs: extraMcSlugs
     })
   })
     .then(r => r.json())

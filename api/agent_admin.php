@@ -37,6 +37,15 @@ $fv = fn($k) => trim($body[$k] ?? '');
 $now = date('Y-m-d H:i:s');
 $adminEmail = strtolower(trim($agent['email'] ?? ''));
 
+// Read the current sponsor before overwriting it, so we can tell afterward
+// whether this save actually changed it — this is the "Recruit Source"
+// override (api/network_tree.php / upline_chain() treat this column, not
+// agent_intake.referring_agent, as the real sponsor relationship).
+$prevSponsorStmt = $pdo->prepare("SELECT recruit_source_email FROM agent_admin WHERE email=?");
+$prevSponsorStmt->execute([$email]);
+$prevSponsor = strtolower(trim($prevSponsorStmt->fetchColumn() ?: ''));
+$newSponsor  = strtolower($fv('recruit_source_email'));
+
 $pdo->prepare(
     "INSERT INTO agent_admin
         (email, tax_1099_type, gets_1099, terminated_date, agent_team, coached_by, managed_by, recruit_source_email, updated_by, updated_at)
@@ -59,9 +68,29 @@ $pdo->prepare(
     $fv('agent_team'),
     $fv('coached_by'),
     $fv('managed_by'),
-    strtolower($fv('recruit_source_email')),
+    $newSponsor,
     $adminEmail,
     $now,
 ]);
 
+// A new (or changed) sponsor means this agent just joined someone's growth
+// network — notify that sponsor and everyone above them in turn, same
+// message already used when an agent's own first-time intake submission
+// triggers it (lib/notifications.php's notify_upline_intake_submitted());
+// this endpoint just never called it for a staff-made reassignment before.
+if ($newSponsor !== '' && $newSponsor !== $prevSponsor) {
+    try {
+        require_once __DIR__ . '/../lib/notifications.php';
+        $ai = $pdo->prepare("SELECT full_name, office_location FROM agent_intake WHERE email=?");
+        $ai->execute([$email]);
+        $intake = $ai->fetch(PDO::FETCH_ASSOC) ?: [];
+        notify_upline_intake_submitted($intake['full_name'] ?: $email, $email, $intake['office_location'] ?? '');
+    } catch (\Throwable $e) {}
+}
+
 echo json_encode(['ok' => true]);
+try {
+    require_once __DIR__ . '/../lib/notifications.php';
+    dispatch_notification_queue();
+} catch (\Throwable $e) {}
+exit;

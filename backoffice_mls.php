@@ -121,10 +121,10 @@ $superAdmin = is_super_admin();
                 <th>MLS Name</th>
                 <th>Code</th>
                 <th>Region / States</th>
+                <th>Feed Source</th>
                 <th>Feed Type</th>
                 <th>Status</th>
                 <th>Monthly Fee</th>
-                <th>Go-Live</th>
                 <th>Products</th>
                 <th></th>
               </tr>
@@ -165,22 +165,31 @@ $superAdmin = is_super_admin();
             </select>
           </div>
           <div class="field field-full"><label>Region / States Covered</label><input type="text" id="f-region" placeholder="e.g. NH, VT, ME, MA"></div>
-          <div class="field"><label>Feed Type</label>
-            <select id="f-feed-type">
+          <div class="field"><label>Feed Source</label>
+            <select id="f-feed-source">
               <option value="RETS">RETS</option>
               <option value="OIDH">OIDH / Bridge Interactive</option>
               <option value="Trestle">Trestle (CoreLogic)</option>
               <option value="Spark">Spark Platform</option>
-              <option value="Other">Other</option>
+              <option value="Bridge">Bridge</option>
+              <option value="Self">Self</option>
             </select>
           </div>
           <div class="field"><label>Monthly Fee ($)</label><input type="number" id="f-fee" min="0" step="0.01" placeholder="0.00"></div>
         </div>
         <div style="margin-top:10px">
+          <div class="field"><label>Feed Type</label>
+            <div class="check-group">
+              <label class="check-item"><input type="checkbox" id="f-feed-bbo"> BBO</label>
+              <label class="check-item"><input type="checkbox" id="f-feed-idx"> IDX</label>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:10px">
           <div class="field"><label>Products Using This MLS</label>
             <div class="check-group">
-              <label class="check-item"><input type="checkbox" id="f-prod-idx" value="idx"> website.innovateonline.com (IDX)</label>
-              <label class="check-item"><input type="checkbox" id="f-prod-crm" value="crm"> advantage.innovateonline.com (CRM)</label>
+              <label class="check-item"><input type="checkbox" id="f-prod-idx" value="idx"> Website</label>
+              <label class="check-item"><input type="checkbox" id="f-prod-crm" value="crm"> Advantage</label>
             </div>
           </div>
         </div>
@@ -189,10 +198,9 @@ $superAdmin = is_super_admin();
       <!-- Timeline -->
       <div class="form-section">
         <div class="form-section-title">Timeline</div>
-        <div class="field-grid cols-3">
+        <div class="field-grid">
           <div class="field"><label>Application Date</label><input type="date" id="f-app-date"></div>
           <div class="field"><label>Approval Date</label><input type="date" id="f-appr-date"></div>
-          <div class="field"><label>Go-Live Date</label><input type="date" id="f-live-date"></div>
         </div>
       </div>
 
@@ -269,8 +277,15 @@ function fmt(d){if(!d)return'—';const p=d.split('-');return p[1]+'/'+p[2]+'/'+
 function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+'/mo';}
 
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
-const FEED_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark','Other':'Other'};
-const PROD_LABELS={idx:'website.innovateonline.com',crm:'advantage.innovateonline.com'};
+const FEED_SOURCE_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark',Bridge:'Bridge',Self:'Self'};
+const PROD_LABELS={idx:'Website',crm:'Advantage'};
+
+function feedTypeLabel(r){
+  const parts=[];
+  if(r.feed_bbo==1||r.feed_bbo===true) parts.push('BBO');
+  if(r.feed_idx==1||r.feed_idx===true) parts.push('IDX');
+  return parts.join(', ')||'—';
+}
 
 let allRows = [];
 let viewId = null;
@@ -304,10 +319,10 @@ function renderTable(rows){
       <td><strong>${esc(r.mls_name)}</strong></td>
       <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.mls_code||'—')}</code></td>
       <td style="color:#555">${esc(r.region||'—')}</td>
-      <td style="color:#555">${esc(FEED_LABELS[r.feed_type]||r.feed_type||'—')}</td>
+      <td style="color:#555">${esc(FEED_SOURCE_LABELS[r.feed_type]||r.feed_type||'—')}</td>
+      <td style="color:#555">${feedTypeLabel(r)}</td>
       <td><span class="badge badge-${esc(r.status)}">${esc(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td class="fee-val">${fmtFee(r.monthly_fee)}</td>
-      <td style="color:#555">${fmt(r.go_live_date)}</td>
       <td style="font-size:11px;color:#777">${esc(prods)}</td>
       <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openModal(${r.id})">Edit</button>`:''}
       </td>
@@ -336,8 +351,12 @@ function viewRow(id){
         <div>${esc(r.region||'—')}</div>
       </div>
       <div>
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Feed Source</div>
+        <div>${esc(FEED_SOURCE_LABELS[r.feed_type]||r.feed_type||'—')}</div>
+      </div>
+      <div>
         <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Feed Type</div>
-        <div>${esc(FEED_LABELS[r.feed_type]||r.feed_type||'—')}</div>
+        <div>${feedTypeLabel(r)}</div>
       </div>
       <div>
         <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Monthly Fee</div>
@@ -354,10 +373,6 @@ function viewRow(id){
       <div>
         <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Approval Date</div>
         <div>${fmt(r.approval_date)}</div>
-      </div>
-      <div>
-        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Go-Live Date</div>
-        <div>${fmt(r.go_live_date)}</div>
       </div>
       <div>
         <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px">Agreement</div>
@@ -410,15 +425,15 @@ function openModal(id){
   if(del) del.style.display = editing ? '' : 'none';
 
   // Clear
-  ['f-id','f-name','f-code','f-region','f-fee','f-app-date','f-appr-date','f-live-date',
+  ['f-id','f-name','f-code','f-region','f-fee','f-app-date','f-appr-date',
    'f-agreement-url','f-contact-name','f-contact-org','f-contact-email','f-contact-phone',
    'f-api-url','f-api-user','f-api-secret','f-api-key','f-notes'].forEach(k=>{
     const el=document.getElementById(k);
     if(el)el.value='';
   });
   document.getElementById('f-status').value='researching';
-  document.getElementById('f-feed-type').value='RETS';
-  ['f-prod-idx','f-prod-crm'].forEach(k=>document.getElementById(k).checked=false);
+  document.getElementById('f-feed-source').value='RETS';
+  ['f-prod-idx','f-prod-crm','f-feed-bbo','f-feed-idx'].forEach(k=>document.getElementById(k).checked=false);
 
   if(editing){
     const r=allRows.find(x=>x.id===id);
@@ -428,11 +443,12 @@ function openModal(id){
     document.getElementById('f-code').value=r.mls_code||'';
     document.getElementById('f-region').value=r.region||'';
     document.getElementById('f-status').value=r.status||'researching';
-    document.getElementById('f-feed-type').value=r.feed_type||'RETS';
+    document.getElementById('f-feed-source').value=r.feed_type||'RETS';
+    document.getElementById('f-feed-bbo').checked=(r.feed_bbo==1||r.feed_bbo===true);
+    document.getElementById('f-feed-idx').checked=(r.feed_idx==1||r.feed_idx===true);
     document.getElementById('f-fee').value=r.monthly_fee||'';
     document.getElementById('f-app-date').value=r.application_date||'';
     document.getElementById('f-appr-date').value=r.approval_date||'';
-    document.getElementById('f-live-date').value=r.go_live_date||'';
     document.getElementById('f-agreement-url').value=r.agreement_url||'';
     document.getElementById('f-contact-name').value=r.contact_name||'';
     document.getElementById('f-contact-org').value=r.contact_org||'';
@@ -464,12 +480,13 @@ function saveMls(){
     mls_code:    document.getElementById('f-code').value.trim(),
     region:      document.getElementById('f-region').value.trim(),
     status:      document.getElementById('f-status').value,
-    feed_type:   document.getElementById('f-feed-type').value,
+    feed_type:   document.getElementById('f-feed-source').value,
+    feed_bbo:    document.getElementById('f-feed-bbo').checked,
+    feed_idx:    document.getElementById('f-feed-idx').checked,
     monthly_fee: parseFloat(document.getElementById('f-fee').value)||0,
     products:    prods,
     application_date: document.getElementById('f-app-date').value||null,
     approval_date:    document.getElementById('f-appr-date').value||null,
-    go_live_date:     document.getElementById('f-live-date').value||null,
     agreement_url:    document.getElementById('f-agreement-url').value.trim()||null,
     contact_name:     document.getElementById('f-contact-name').value.trim(),
     contact_org:      document.getElementById('f-contact-org').value.trim(),

@@ -187,6 +187,32 @@ function darwin_sync_cap_progress(): array {
     if ($watermark) $filter .= ' and capStatusModifyDate>=' . darwin_quote_str($watermark);
 
     $rows = darwin_fetch_all('customAPI_InnovateCapProgress', $filter, 200);
+
+    // Read each incoming agent's PRIOR amount_left_to_cap before the upsert
+    // below overwrites it, so a not-capped -> capped transition can be
+    // detected. Only rows Darwin reports as changed (capStatusModifyDate
+    // advanced) come through here at all, so this naturally fires once per
+    // cap event rather than re-checking every active agent daily.
+    $priorStmt = $db->prepare("SELECT amount_left_to_cap FROM darwin_cap_progress WHERE agent_person_id = ?");
+    $newlyCapped = [];
+    foreach ($rows as $r) {
+        $capAmount = darwin_parse_currency($r['capAmount'] ?? null);
+        $leftNow   = darwin_parse_currency($r['amountLeftToCap'] ?? null);
+        if ($capAmount <= 0 || $leftNow > 0) continue; // no real cap, or not capped as of this row
+
+        $priorStmt->execute([(int)$r['agentPersonId']]);
+        $leftBefore = $priorStmt->fetchColumn();
+        $wasCapped  = $leftBefore !== false && (float)$leftBefore <= 0;
+        if (!$wasCapped) {
+            $newlyCapped[] = [
+                'agent_name'    => $r['agentName'] ?? '',
+                'agent_email'   => $r['agentEmail'] ?? '',
+                'office_name'   => $r['officeName'] ?? '',
+                'cap_amount'    => $capAmount,
+            ];
+        }
+    }
+
     $stmt = $db->prepare("INSERT INTO darwin_cap_progress
         (agent_person_id, agent_first_name, agent_last_name, agent_name, agent_email,
          commission_plan_id, commission_plan_name, cap_amount, cap_earned, amount_left_to_cap,
@@ -222,7 +248,17 @@ function darwin_sync_cap_progress(): array {
             (int)($r['isActiveAgent'] ?? 1), $r['capStatusModifyDate'] ?? '',
         ]);
     }
-    return ['synced' => count($rows), 'incremental' => (bool)$watermark];
+
+    if ($newlyCapped) {
+        require_once __DIR__ . '/notifications.php';
+        foreach ($newlyCapped as $nc) {
+            try {
+                notify_agent_capped($nc['agent_name'], $nc['agent_email'], $nc['office_name']);
+            } catch (\Throwable $e) {}
+        }
+    }
+
+    return ['synced' => count($rows), 'incremental' => (bool)$watermark, 'newly_capped' => count($newlyCapped)];
 }
 
 // ── Revenue share (growth network) ──────────────────────────────────────────

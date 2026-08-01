@@ -41,7 +41,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 $allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
 $stateNames = ['FL'=>'Florida','GA'=>'Georgia','MD'=>'Maryland','MA'=>'Massachusetts','NC'=>'North Carolina','NJ'=>'New Jersey','NH'=>'New Hampshire','OH'=>'Ohio','PA'=>'Pennsylvania','RI'=>'Rhode Island','SC'=>'South Carolina','TN'=>'Tennessee','VA'=>'Virginia','DE'=>'Delaware'];
-$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','staff'=>'Staff','super_admin'=>'Super Admin'];
+$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','launch_coach'=>'Launch Coach','staff'=>'Staff','super_admin'=>'Super Admin'];
 
 $courseInviteOnly  = (int)($course['invite_only']  ?? 0);
 $courseStateFilter = json_decode($course['state_filter'] ?? '[]', true) ?: [];
@@ -577,6 +577,7 @@ if ($courseId) {
 <div id="bg-upload" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;z-index:9999;min-width:320px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.3)">
   <div id="bg-upload-text">Uploading…</div>
   <progress id="bg-upload-bar" max="100" value="0" style="width:100%;margin-top:8px;height:5px;accent-color:#82C112"></progress>
+  <div style="font-size:11px;color:#f5a623;margin-top:6px">⚠ Don't close this tab or navigate away until the upload finishes</div>
 </div>
 
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
@@ -894,6 +895,11 @@ function deleteAttachment(id, lessonId) {
   api({action:'delete_lesson_attachment', id}).then(d => { if (d.ok) loadAttachments(lessonId); });
 }
 
+let lessonUploadInProgress = false;
+window.addEventListener('beforeunload', function (e) {
+  if (lessonUploadInProgress) { e.preventDefault(); e.returnValue = ''; }
+});
+
 function saveLesson() {
   const title = document.getElementById('l-title').value.trim();
   if (!title) { alert('Title required'); return; }
@@ -928,6 +934,7 @@ function saveLesson() {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', 'api/uni_action.php', true);
       xhr.withCredentials = true;
+      lessonUploadInProgress = true;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           bar.value = Math.round(e.loaded / e.total * 100);
@@ -935,6 +942,7 @@ function saveLesson() {
         }
       };
       xhr.onload = () => {
+        lessonUploadInProgress = false;
         indicator.style.display = 'none';
         try {
           const d = JSON.parse(xhr.responseText);
@@ -942,7 +950,7 @@ function saveLesson() {
           else toast('Upload failed: ' + (d.error || 'unknown'));
         } catch(e) { toast('Upload error'); }
       };
-      xhr.onerror = () => { indicator.style.display = 'none'; toast('Upload failed — network error'); };
+      xhr.onerror = () => { lessonUploadInProgress = false; indicator.style.display = 'none'; toast('Upload failed — network error'); };
       xhr.send(fd);
     } else {
       location.reload();

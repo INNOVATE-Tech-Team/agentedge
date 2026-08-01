@@ -25,7 +25,6 @@ const REQUIRED_INTAKE_FIELDS = [
     'emergency_name'  => 'Emergency Contact Name',
     'emergency_phone' => 'Emergency Contact Phone',
     'bio'             => 'Bio',
-    'is_military'      => 'Military Status',
 ];
 
 // Bonus fields shown alongside the required ones on the completion form, but

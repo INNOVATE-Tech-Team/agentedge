@@ -58,22 +58,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         return ['email' => $be, 'name' => $rosterByEmail[$be]['name'] ?? $be];
     }, $bicEmails);
 
-    $st = $pdo->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email FROM agent_roles WHERE email=?");
+    $st = $pdo->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
     $st->execute([$email]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
 
     $role     = canonical_role($row['role'] ?? 'agent');
     $mc_slugs = $row ? (json_decode($row['mc_slugs'] ?? '[]', true) ?: []) : [];
 
+    // Optional second role, same mechanism admin_roles.php already uses --
+    // stored as a one-element array so the column can grow to hold more later.
+    $extra        = $row ? (json_decode($row['extra_roles_json'] ?? '[]', true) ?: []) : [];
+    $extraRole    = !empty($extra[0]['role']) ? canonical_role($extra[0]['role']) : '';
+    $extraMcSlugs = !empty($extra[0]['mc_slugs']) ? (array)$extra[0]['mc_slugs'] : [];
+    $extraRoleOptions = array_filter(ROLE_LABELS, fn($k) => !in_array($k, ['agent', 'super_admin'], true), ARRAY_FILTER_USE_KEY);
+
     echo json_encode([
-        'ok'          => true,
-        'role'        => $role,
-        'mc_slugs'    => $mc_slugs,
-        'own_mc_slug' => $row['own_mc_slug'] ?? '',
-        'bic_email'   => $row['bic_email']   ?? '',
-        'mc_opts'     => $mc_opts,
-        'bic_list'    => $bicList,
-        'role_labels' => ROLE_LABELS,
+        'ok'                 => true,
+        'role'               => $role,
+        'mc_slugs'           => $mc_slugs,
+        'own_mc_slug'        => $row['own_mc_slug'] ?? '',
+        'bic_email'          => $row['bic_email']   ?? '',
+        'mc_opts'            => $mc_opts,
+        'bic_list'           => $bicList,
+        'role_labels'        => ROLE_LABELS,
+        'extra_role'         => $extraRole,
+        'extra_mc_slugs'     => $extraMcSlugs,
+        'extra_role_options' => $extraRoleOptions,
     ]);
     exit;
 }
@@ -103,6 +113,24 @@ if (in_array($role, ['bic', 'mc_leader'], true) && !empty($body['mc_slugs'])) {
     }
 }
 
+// Optional second role -- same rules as admin_roles.php: can't be 'agent' or a
+// duplicate of the primary role, and 'super_admin' isn't offered as an extra
+// (keep it as someone's primary so role='super_admin' SQL scans still find them).
+$extraRole = preg_replace('/[^a-z_]/', '', $body['extra_role'] ?? '');
+if (!isset(ROLE_LABELS[$extraRole]) || $extraRole === 'agent' || $extraRole === $role) {
+    $extraRole = '';
+}
+$extraMcs = [];
+if ($extraRole && !empty($body['extra_mc_slugs'])) {
+    foreach ((array)$body['extra_mc_slugs'] as $s) {
+        $s = preg_replace('/[^a-z0-9\-]/', '', $s);
+        if ($s) $extraMcs[] = $s;
+    }
+}
+$extraRolesJson = ($extraRole !== '')
+    ? json_encode([['role' => $extraRole, 'mc_slugs' => array_values(array_unique($extraMcs))]])
+    : '[]';
+
 $ownMcSlug = preg_replace('/[^a-z0-9\-]/', '', $body['own_mc_slug'] ?? '');
 $bicEmail  = strtolower(trim($body['bic_email'] ?? ''));
 // Only agents get a bic_email assignment; leaders/admins don't need one.
@@ -112,16 +140,17 @@ if (in_array($role, ['super_admin', 'staff', 'mc_leader', 'bic', 'recruiter'], t
 
 $json = json_encode(array_values(array_unique($mcs)));
 $pdo->prepare(
-    "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, bic_email, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, bic_email, extra_roles_json, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
        role=excluded.role, mc_slugs=excluded.mc_slugs,
        own_mc_slug=excluded.own_mc_slug, bic_email=excluded.bic_email,
+       extra_roles_json=excluded.extra_roles_json,
        updated_by=excluded.updated_by, updated_at=excluded.updated_at"
-)->execute([$email, $role, $json, $ownMcSlug, $bicEmail, strtolower($agent['email'])]);
+)->execute([$email, $role, $json, $ownMcSlug, $bicEmail, $extraRolesJson, strtolower($agent['email'])]);
 
-if ($role === 'agent' && $ownMcSlug === '' && $bicEmail === '') {
+if ($role === 'agent' && $ownMcSlug === '' && $bicEmail === '' && $extraRolesJson === '[]') {
     $pdo->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
 }
 
-echo json_encode(['ok' => true, 'role' => $role, 'mc_slugs' => json_decode($json, true), 'own_mc_slug' => $ownMcSlug, 'bic_email' => $bicEmail]);
+echo json_encode(['ok' => true, 'role' => $role, 'mc_slugs' => json_decode($json, true), 'own_mc_slug' => $ownMcSlug, 'bic_email' => $bicEmail, 'extra_role' => $extraRole, 'extra_mc_slugs' => $extraMcs]);

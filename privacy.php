@@ -59,17 +59,18 @@
     <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:default">
       <div>
         <div style="font-size:13px;font-weight:700;color:#222">Text (SMS) notifications</div>
-        <div style="font-size:12px;color:#888">Short announcement alerts to your mobile</div>
+        <div style="font-size:12px;color:#888">Optional — short announcement alerts to your mobile. Not required to use AgentEdge.</div>
       </div>
       <input type="checkbox" checked disabled style="width:18px;height:18px;accent-color:#82C112">
     </label>
     <div style="margin-top:10px">
       <input type="tel" value="(843) 555-1234" disabled
         style="padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;color:#222;background:#fff">
-      <div style="font-size:11px;color:#aaa;margin-top:4px">US numbers only. Msg &amp; data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help. See our <a href="privacy.php#sms" style="color:#82C112">SMS terms</a>.</div>
+      <div style="font-size:11px;color:#aaa;margin-top:6px">By checking this box and providing your number, you agree to receive recurring automated SMS announcement alerts from INNOVATE Real Estate. This is entirely optional and is not a condition of using AgentEdge or any other service. US numbers only. Msg &amp; data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help. See our <a href="privacy.php#sms" style="color:#82C112">SMS terms</a>.</div>
     </div>
   </div>
-  <p style="margin-top:14px"><strong>Opt-in confirmation.</strong> The moment an agent enables the toggle above, they immediately receive this text: <em>"INNOVATE Real Estate: You're opted in for account &amp; company text notifications. Msg frequency varies (a few/month). Msg&amp;Data rates may apply. Reply STOP to cancel, HELP for help."</em> That confirms the number, restates the program, and repeats opt-out instructions before any other message is ever sent.</p>
+  <p style="margin-top:14px"><strong>This is not required.</strong> The checkbox above is unchecked by default and lives entirely inside optional Notification Preferences — every other AgentEdge feature (login, transactions, University, tickets, etc.) works identically whether or not it's ever turned on. Enabling it is the only thing that constitutes consent; nothing else on AgentEdge depends on it.</p>
+  <p><strong>Opt-in confirmation.</strong> The moment an agent enables the toggle above, they immediately receive this text: <em>"INNOVATE Real Estate: You're opted in for account &amp; company text notifications. Msg frequency varies (a few/month). Msg&amp;Data rates may apply. Reply STOP to cancel, HELP for help."</em> That confirms the number, restates the program, and repeats opt-out instructions before any other message is ever sent.</p>
   <p><strong>Who this applies to.</strong> Only INNOVATE agents and staff with an active AgentEdge login who have affirmatively enabled this toggle. This is not used for cold outreach or marketing to the public.</p>
   <p><strong>What you'll receive.</strong> Short alerts when a new company announcement is posted, e.g.: <em>"INNOVATE: Office closed Friday for training — see AgentEdge for details."</em> Roughly a few messages per month, tied to real announcement volume.</p>
   <p><strong>Opting out.</strong> Reply <strong>STOP</strong> to any message to unsubscribe immediately, or uncheck the toggle in My Profile at any time. Reply <strong>HELP</strong> for assistance.</p>

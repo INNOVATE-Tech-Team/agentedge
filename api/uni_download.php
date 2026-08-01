@@ -155,7 +155,9 @@ if (isset($_SERVER['HTTP_RANGE'])) {
     header("Content-Range: bytes $start-$end/$size");
 }
 
-$disp = str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/') ? 'inline' : 'attachment';
+$forceDownload = !empty($_GET['download']);
+$isInline = str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/') || $mime === 'application/pdf';
+$disp = (!$forceDownload && $isInline) ? 'inline' : 'attachment';
 header("Content-Type: $mime");
 header("Content-Length: " . ($end - $start + 1));
 header("Accept-Ranges: bytes");

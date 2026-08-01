@@ -30,23 +30,27 @@ switch ($action) {
     case 'add': {
         $name = trim($body['mls_name'] ?? '');
         if (!$name) { echo json_encode(['ok'=>false,'error'=>'mls_name required']); exit; }
+        // go_live_date is intentionally not part of this insert/update anymore
+        // (dropped from the UI) — any value already on a row is preserved by
+        // simply never touching the column here, rather than writing null.
         $s = $db->prepare("INSERT INTO mls_integrations
-            (mls_name,mls_code,region,feed_type,status,monthly_fee,products,
-             application_date,approval_date,go_live_date,agreement_url,
+            (mls_name,mls_code,region,feed_type,feed_bbo,feed_idx,status,monthly_fee,products,
+             application_date,approval_date,agreement_url,
              contact_name,contact_org,contact_email,contact_phone,
              api_base_url,api_username,api_secret,api_key,notes,created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         $s->execute([
             $name,
             trim($body['mls_code'] ?? ''),
             trim($body['region']   ?? ''),
             trim($body['feed_type']?? 'RETS'),
+            !empty($body['feed_bbo']) ? 1 : 0,
+            !empty($body['feed_idx']) ? 1 : 0,
             trim($body['status']   ?? 'researching'),
             (float)($body['monthly_fee'] ?? 0),
             trim($body['products'] ?? ''),
             $body['application_date'] ?: null,
             $body['approval_date']    ?: null,
-            $body['go_live_date']     ?: null,
             $body['agreement_url']    ?: null,
             trim($body['contact_name']  ?? ''),
             trim($body['contact_org']   ?? ''),
@@ -69,8 +73,8 @@ switch ($action) {
         $name = trim($body['mls_name'] ?? '');
         if (!$name) { echo json_encode(['ok'=>false,'error'=>'mls_name required']); exit; }
         $s = $db->prepare("UPDATE mls_integrations SET
-            mls_name=?,mls_code=?,region=?,feed_type=?,status=?,monthly_fee=?,products=?,
-            application_date=?,approval_date=?,go_live_date=?,agreement_url=?,
+            mls_name=?,mls_code=?,region=?,feed_type=?,feed_bbo=?,feed_idx=?,status=?,monthly_fee=?,products=?,
+            application_date=?,approval_date=?,agreement_url=?,
             contact_name=?,contact_org=?,contact_email=?,contact_phone=?,
             api_base_url=?,api_username=?,api_secret=?,api_key=?,notes=?,
             updated_at=datetime('now')
@@ -80,12 +84,13 @@ switch ($action) {
             trim($body['mls_code'] ?? ''),
             trim($body['region']   ?? ''),
             trim($body['feed_type']?? 'RETS'),
+            !empty($body['feed_bbo']) ? 1 : 0,
+            !empty($body['feed_idx']) ? 1 : 0,
             trim($body['status']   ?? 'researching'),
             (float)($body['monthly_fee'] ?? 0),
             trim($body['products'] ?? ''),
             $body['application_date'] ?: null,
             $body['approval_date']    ?: null,
-            $body['go_live_date']     ?: null,
             $body['agreement_url']    ?: null,
             trim($body['contact_name']  ?? ''),
             trim($body['contact_org']   ?? ''),

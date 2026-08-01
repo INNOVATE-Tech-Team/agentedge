@@ -17,6 +17,17 @@ try {
     $tm->execute([strtolower(trim($agent['email'] ?? ''))]);
     $isTeamMember = (bool)$tm->fetchColumn();
 } catch (\Throwable $e) {}
+
+// Company-email opt-out banner: only show when the agent has an explicit
+// notification_prefs row with notify_email=0 -- no row means they've never
+// touched the toggle, which api/notify_prefs.php treats as opted-in by default.
+$hasOptedOutEmail = false;
+try {
+    $npStmt = local_db()->prepare("SELECT notify_email FROM notification_prefs WHERE email = ?");
+    $npStmt->execute([strtolower(trim($agent['email'] ?? ''))]);
+    $npVal = $npStmt->fetchColumn();
+    $hasOptedOutEmail = ($npVal !== false && (int)$npVal === 0);
+} catch (\Throwable $e) {}
 ?>
 <!doctype html>
 <html lang="en">
@@ -73,6 +84,35 @@ try {
 
       <main class="wrap">
         <div id="sample-banner" class="banner" hidden></div>
+
+        <?php if ($hasOptedOutEmail): ?>
+        <div id="opt-out-banner" class="banner">You have chosen to opt out of company emails. <a href="#" onclick="optBackIntoEmail(); return false;" style="color:#8a6d1f;font-weight:800;text-decoration:underline">Click here to opt back in</a></div>
+        <script>
+        function optBackIntoEmail() {
+          fetch('api/notify_prefs.php', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(prefs => fetch('api/notify_prefs.php', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                notify_email: 1,
+                notify_sms: prefs.notify_sms,
+                sms_phone: prefs.sms_phone
+              })
+            }))
+            .then(r => r.json())
+            .then(res => {
+              if (res.ok) {
+                document.getElementById('opt-out-banner').style.display = 'none';
+                if (typeof toast === 'function') toast('You are opted back in to company emails ✓');
+              } else {
+                alert(res.error || 'Failed to update preference.');
+              }
+            })
+            .catch(() => alert('Network error — please try again.'));
+        }
+        </script>
+        <?php endif; ?>
 
         <div id="profile-reminder-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
           <div style="background:#fff;border-radius:12px;width:min(440px,95vw);padding:26px;position:relative">

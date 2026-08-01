@@ -76,23 +76,7 @@
       bio: 'textarea',
     };
 
-    // Fields that render as a dropdown instead of a plain input, keyed by
-    // field name -> its option list. is_military must offer a real,
-    // non-blank "not applicable" value — leaving it as an empty string would
-    // fail the backend's required-field check and block the whole save.
-    const SELECT_OPTIONS = {
-      is_military: [
-        ['not_applicable', 'Not Applicable'],
-        ['veteran', 'Veteran'],
-        ['active', 'Active Duty'],
-      ],
-    };
-
     function fieldHtml(f) {
-      if (SELECT_OPTIONS[f.key]) {
-        const opts = SELECT_OPTIONS[f.key].map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
-        return `<select id="f-${esc(f.key)}" name="${esc(f.key)}">${opts}</select>`;
-      }
       if (INPUT_TYPE[f.key] === 'textarea') {
         return `<textarea id="f-${esc(f.key)}" name="${esc(f.key)}"></textarea>`;
       }
