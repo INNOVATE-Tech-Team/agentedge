@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Audit tab data ────────────────────────────────────────────────────────────
 $auditRows = $db->query(
-    "SELECT r.agent_name, r.email, i.google_place_id, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
+    "SELECT r.agent_name, r.email, i.google_place_id, i.review_requests_opt_in, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
      FROM innovate_roster r
      LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
      LEFT JOIN google_business_audit g ON LOWER(TRIM(g.email)) = LOWER(TRIM(r.email))
@@ -77,9 +77,17 @@ $auditRows = $db->query(
 )->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Review Requests tab data ──────────────────────────────────────────────────
-$pending = $db->query("SELECT * FROM review_request_queue WHERE status='awaiting_approval' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
-$blocked = $db->query("SELECT * FROM review_request_queue WHERE status='blocked_no_place_id' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
-$history = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent','skipped') ORDER BY actioned_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+$pending    = $db->query("SELECT * FROM review_request_queue WHERE status='awaiting_approval' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+$blocked    = $db->query("SELECT * FROM review_request_queue WHERE status='blocked_no_place_id' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+$notOptedIn = $db->query("SELECT * FROM review_request_queue WHERE status='blocked_not_opted_in' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+$history    = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent','skipped') ORDER BY actioned_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+
+// ── Google Place candidates awaiting the agent's own confirmation ────────────
+$pendingCandidates = $db->query(
+    "SELECT c.*, r.agent_name FROM google_place_candidates c
+     LEFT JOIN innovate_roster r ON LOWER(TRIM(r.email)) = LOWER(TRIM(c.email))
+     WHERE c.status = 'pending' ORDER BY c.match_score DESC"
+)->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!doctype html>
 <html lang="en">
@@ -159,7 +167,7 @@ $history = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent
           </div>
           <table class="ga-table">
             <thead><tr>
-              <th>Agent</th><th>Place ID</th><th>Status</th><th>Rating</th><th>Reviews</th><th>Last Checked</th>
+              <th>Agent</th><th>Place ID</th><th>Review Requests</th><th>Status</th><th>Rating</th><th>Reviews</th><th>Last Checked</th>
             </tr></thead>
             <tbody>
             <?php foreach ($auditRows as $row): $placeId = trim($row['google_place_id'] ?? ''); ?>
@@ -170,6 +178,13 @@ $history = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent
                     <span class="badge bad">Missing</span>
                   <?php else: ?>
                     <span class="badge ok">On file</span>
+                  <?php endif; ?>
+                </td>
+                <td>
+                  <?php if (!empty($row['review_requests_opt_in'])): ?>
+                    <span class="badge ok">Opted in</span>
+                  <?php else: ?>
+                    <span class="badge muted">Not opted in</span>
                   <?php endif; ?>
                 </td>
                 <td>
@@ -189,10 +204,30 @@ $history = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent
               </tr>
             <?php endforeach; ?>
             <?php if (!$auditRows): ?>
-              <tr><td colspan="6" class="empty-note">No active agents found.</td></tr>
+              <tr><td colspan="7" class="empty-note">No active agents found.</td></tr>
             <?php endif; ?>
             </tbody>
           </table>
+
+          <?php if ($pendingCandidates): ?>
+            <h3 style="font-size:13px;font-weight:800;margin:24px 0 10px">Discovered Listings Awaiting Agent Confirmation (<?= count($pendingCandidates) ?>)</h3>
+            <p style="font-size:12px;color:#888;margin:0 0 14px">These are automated guesses (Places API text search) — nothing is used until the agent confirms it's really them on their own My Profile page.</p>
+            <table class="ga-table">
+              <thead><tr><th>Agent</th><th>Candidate Business</th><th>Rating</th><th>Reviews</th><th>Address</th><th>Match Score</th></tr></thead>
+              <tbody>
+              <?php foreach ($pendingCandidates as $c): ?>
+                <tr>
+                  <td><?= h($c['agent_name'] ?: $c['email']) ?></td>
+                  <td><?= h($c['candidate_name']) ?></td>
+                  <td><?= $c['rating'] !== null ? h($c['rating']) : '—' ?></td>
+                  <td><?= (int)$c['review_count'] ?></td>
+                  <td><?= h($c['formatted_addr']) ?></td>
+                  <td><?= (int)$c['match_score'] ?></td>
+                </tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          <?php endif; ?>
         </div>
 
         <!-- ── Review Requests tab ── -->
@@ -225,6 +260,19 @@ $history = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent
               </form>
             </div>
           <?php endforeach; ?>
+
+          <?php if ($notOptedIn): ?>
+            <h3 style="font-size:13px;font-weight:800;margin:24px 0 10px">Blocked — Agent Hasn't Opted In</h3>
+            <?php foreach ($notOptedIn as $r): ?>
+              <div class="rr-card">
+                <div class="rr-meta">
+                  <?= h($r['loop_name']) ?> — agent: <?= h($r['agent_email']) ?> — to: <?= h($r['recipient_emails']) ?>
+                  (<?= h($r['recipient_names']) ?>) — closed <?= h($r['created_at']) ?>
+                </div>
+                <div style="font-size:12px;color:#b45309">This agent hasn't checked the "Send automatic Google review requests" box on their My Profile page yet.</div>
+              </div>
+            <?php endforeach; ?>
+          <?php endif; ?>
 
           <?php if ($blocked): ?>
             <h3 style="font-size:13px;font-weight:800;margin:24px 0 10px">Blocked — Agent Missing Google Place ID</h3>

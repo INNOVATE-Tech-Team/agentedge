@@ -24,6 +24,8 @@ $agent = require_login();
     #hs-file { display:none; }
     .hs-note { font-size:11px; color:var(--faint); margin-top:6px; }
     .hs-msg { font-size:12px; color:var(--faint); margin-top:6px; min-height:16px; }
+    .btn-ghost { background:white; border:1px solid #ccc; color:#555; padding:8px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
+    .btn-ghost:hover { border-color:#82C112; color:#5b8e0d; }
   </style>
 </head>
 <body>
@@ -37,6 +39,17 @@ $agent = require_login();
       <main class="wrap">
         <section class="card">
           <div id="profile-note" class="banner" hidden></div>
+
+          <div id="gbp-candidate-banner" hidden style="border:1px solid #c3dfa8;background:#f9fdf5;border-radius:10px;padding:16px 18px;margin-bottom:18px">
+            <div style="font-weight:800;font-size:13px;margin-bottom:6px">We found a Google Business listing that might be yours</div>
+            <div id="gbp-candidate-details" style="font-size:13px;color:#444;margin-bottom:12px"></div>
+            <div style="display:flex;gap:8px">
+              <button type="button" class="btn-save" onclick="confirmCandidate()">Yes, that's me — use it</button>
+              <button type="button" class="btn-ghost" onclick="dismissCandidate()">No, not me</button>
+            </div>
+            <div id="gbp-candidate-msg" style="font-size:12px;color:#888;margin-top:8px"></div>
+          </div>
+
           <p class="form-sub">This is the information shown to your office and across INNOVATE.
             Market Center and brokerage are managed by your office.</p>
 
@@ -68,6 +81,13 @@ $agent = require_login();
                 <label>Google Place ID</label>
                 <input id="f-googlePlaceId" type="text" placeholder="ChIJ...">
                 <div class="hs-note">Find yours at <a href="https://developers.google.com/maps/documentation/places/web-service/place-id" target="_blank" rel="noopener">Google's Place ID Finder</a> — search your business name, copy the Place ID. Used to check your listing's status and to link clients straight to your review page.</div>
+              </div>
+              <div class="field full">
+                <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+                  <input type="checkbox" id="f-reviewRequestsOptIn" style="width:16px;height:16px;accent-color:#82C112;cursor:pointer">
+                  Send automatic Google review requests to my clients when a transaction closes
+                </label>
+                <div class="hs-note">When a dotloop transaction of yours closes, a draft review-request email is prepared for staff to review and send — nothing goes out automatically without this checked, and every send is still approved by staff before it reaches your client.</div>
               </div>
             </div>
             <div class="form-actions">

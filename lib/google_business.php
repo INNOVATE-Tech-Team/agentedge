@@ -7,6 +7,14 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 
 const GOOGLE_PLACES_DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/json';
+const GOOGLE_PLACES_TEXTSEARCH_URL = 'https://maps.googleapis.com/maps/api/place/textsearch/json';
+
+// Generic words that don't help disambiguate a name match against a business
+// name — "real estate", brand words, and state abbreviations all show up
+// constantly and would otherwise count as false "overlap".
+const GOOGLE_PLACE_MATCH_STOPWORDS = ['realtor', 'real', 'estate', 'realty', 'team', 'group',
+    'llc', 'inc', 'the', 'innovate', 'brg', 'with', 'at', 'of', 'and', 'a', 'agent',
+    'properties', 'property', 'homes', 'home'];
 
 /** API key from config.php — cfg()['google_places_key']. Empty until Darren creates one in Google Cloud Console. */
 function google_places_api_key(): string {
@@ -107,4 +115,127 @@ function google_business_sync_all(): array {
 /** Build the direct "write a review" link for an agent's Google Business Profile. */
 function google_review_link(string $placeId): string {
     return 'https://search.google.com/local/writereview?placeid=' . rawurlencode($placeId);
+}
+
+/**
+ * Places API Text Search — used to *discover* a candidate listing for an
+ * agent who hasn't self-entered a Place ID (unlike google_places_lookup(),
+ * which looks up an already-known Place ID). Returns
+ * ['ok'=>true, 'results'=>[...]] or ['ok'=>false, 'error'=>...].
+ */
+function google_places_text_search(string $query): array {
+    $key = google_places_api_key();
+    if ($key === '') return ['ok' => false, 'error' => 'No Google Places API key configured', 'results' => []];
+
+    $url = GOOGLE_PLACES_TEXTSEARCH_URL . '?' . http_build_query(['query' => $query, 'key' => $key]);
+    $ctx = stream_context_create(['http' => ['timeout' => 15, 'ignore_errors' => true]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) return ['ok' => false, 'error' => 'Request to Google Places API failed', 'results' => []];
+
+    $d = json_decode($raw, true);
+    $status = $d['status'] ?? 'UNKNOWN_ERROR';
+    if ($status !== 'OK') return ['ok' => false, 'error' => $status, 'results' => []];
+
+    return ['ok' => true, 'results' => $d['results'] ?? []];
+}
+
+/** Lowercase word tokens, stripped of the generic stopwords above. */
+function google_place_name_tokens(string $s): array {
+    preg_match_all("/[a-z']+/", strtolower($s), $m);
+    return array_values(array_diff($m[0], GOOGLE_PLACE_MATCH_STOPWORDS));
+}
+
+/**
+ * Text-similarity score (0-100) between an agent's name and a candidate
+ * business name, purely for ranking candidates from the same Text Search
+ * response against each other — NOT a confidence measure on its own (a
+ * same-named stranger elsewhere scores just as high). Real confidence comes
+ * from combining this with a state match and a real name-token overlap, see
+ * google_place_candidate_discover_all().
+ */
+function google_place_name_score(string $agentName, string $businessName): float {
+    similar_text(strtolower($agentName), strtolower($businessName), $pct);
+    return $pct;
+}
+
+/**
+ * Find candidate Google Business listings for every active roster agent who
+ * doesn't already have a google_place_id on file and doesn't already have a
+ * decided (confirmed/dismissed) candidate. For each, runs a Text Search for
+ * "<name> real estate <market center> <state>" and keeps the best result
+ * only if: same state as the agent's roster row, score >= $minScore, and the
+ * business name shares at least one real (non-stopword, 3+ char) token with
+ * the agent's name — first name alone is not enough (too many collisions),
+ * this needs at least one distinguishing token.
+ *
+ * Writes to google_place_candidates with status='pending' — never touches
+ * agent_intake.google_place_id directly. The agent has to confirm it
+ * themselves on their profile page (see api/profile.php) before it becomes
+ * real. Re-running this is safe: existing pending rows get refreshed,
+ * confirmed/dismissed rows are left alone (WHERE clause below).
+ *
+ * Returns ['ok'=>true, 'checked'=>N, 'candidates_found'=>N].
+ */
+function google_place_candidate_discover_all(int $minScore = 40): array {
+    $db = local_db();
+    $rows = $db->query(
+        "SELECT r.agent_name AS name, r.email, r.market_center AS mc, r.state_code AS state
+         FROM innovate_roster r
+         LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
+         LEFT JOIN google_place_candidates c ON LOWER(TRIM(c.email)) = LOWER(TRIM(r.email))
+         WHERE r.active = 1
+           AND TRIM(r.email) <> ''
+           AND TRIM(COALESCE(i.google_place_id, '')) = ''
+           AND (c.email IS NULL OR c.status = 'pending')"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $upsert = $db->prepare(
+        "INSERT INTO google_place_candidates
+            (email, candidate_name, place_id, rating, review_count, formatted_addr, match_score, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
+         ON CONFLICT(email) DO UPDATE SET
+            candidate_name = excluded.candidate_name, place_id = excluded.place_id,
+            rating = excluded.rating, review_count = excluded.review_count,
+            formatted_addr = excluded.formatted_addr, match_score = excluded.match_score,
+            created_at = excluded.created_at
+         WHERE google_place_candidates.status = 'pending'"
+    );
+
+    $checked = 0;
+    $found   = 0;
+    foreach ($rows as $r) {
+        $checked++;
+        $query = "{$r['name']} real estate {$r['mc']} {$r['state']}";
+        $res = google_places_text_search($query);
+        usleep(200000); // light throttle
+
+        if (!$res['ok'] || empty($res['results'])) continue;
+
+        $nameTokens = array_filter(google_place_name_tokens($r['name']), fn($t) => strlen($t) >= 3);
+        $best = null; $bestScore = 0;
+        foreach ($res['results'] as $place) {
+            $score = google_place_name_score($r['name'], $place['name'] ?? '');
+            if ($score > $bestScore) { $bestScore = $score; $best = $place; }
+        }
+        if (!$best || $bestScore < $minScore) continue;
+
+        // State check: agent's roster state must appear in the result's formatted address.
+        $addr = (string)($best['formatted_address'] ?? '');
+        if ($r['state'] && stripos($addr, ", {$r['state']} ") === false && !preg_match('/,\s*' . preg_quote($r['state'], '/') . '\s*\d{5}/', $addr)) {
+            continue;
+        }
+
+        // Real name-token overlap check.
+        $bizTokens = array_filter(google_place_name_tokens($best['name'] ?? ''), fn($t) => strlen($t) >= 3);
+        if (!array_intersect($nameTokens, $bizTokens)) continue;
+
+        $upsert->execute([
+            $r['email'], $best['name'] ?? '', $best['place_id'] ?? '',
+            isset($best['rating']) ? (float)$best['rating'] : null,
+            (int)($best['user_ratings_total'] ?? 0), $addr, (int)round($bestScore),
+        ]);
+        $found++;
+    }
+
+    return ['ok' => true, 'checked' => $checked, 'candidates_found' => $found];
 }

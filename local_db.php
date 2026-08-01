@@ -183,7 +183,7 @@ function local_db(): PDO {
         place_id         TEXT NOT NULL DEFAULT '',
         subject          TEXT NOT NULL DEFAULT '',
         body             TEXT NOT NULL DEFAULT '',
-        status           TEXT NOT NULL DEFAULT 'awaiting_approval',
+        status           TEXT NOT NULL DEFAULT 'awaiting_approval', -- awaiting_approval | blocked_no_place_id | blocked_not_opted_in | approved | skipped | sent | failed
         created_at       TEXT NOT NULL DEFAULT (datetime('now')),
         actioned_by      TEXT,
         actioned_at      TEXT,
@@ -205,6 +205,29 @@ function local_db(): PDO {
         review_count    INTEGER NOT NULL DEFAULT 0,
         last_checked_at TEXT,
         last_error      TEXT NOT NULL DEFAULT ''
+    )");
+
+    // Candidate Google Business listings discovered for agents who haven't
+    // self-entered a Place ID yet — see google_place_candidate_discover_all()
+    // in lib/google_business.php (Places API Text Search on "<name> real
+    // estate <market center> <state>", filtered to same-state results whose
+    // business name shares at least one real name token with the agent).
+    // Never auto-applied: the agent has to look at it themselves and confirm
+    // "yes that's me" on their profile page (see api/profile.php) before it
+    // becomes their real google_place_id — a wrong guess here would otherwise
+    // mean a real client's review-request link points at a stranger's
+    // business, so this is deliberately opt-in, not silent.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS google_place_candidates (
+        email           TEXT PRIMARY KEY,
+        candidate_name  TEXT NOT NULL DEFAULT '',
+        place_id        TEXT NOT NULL DEFAULT '',
+        rating          REAL,
+        review_count    INTEGER NOT NULL DEFAULT 0,
+        formatted_addr  TEXT NOT NULL DEFAULT '',
+        match_score     INTEGER NOT NULL DEFAULT 0,
+        status          TEXT NOT NULL DEFAULT 'pending', -- pending | confirmed | dismissed
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        decided_at      TEXT
     )");
 
     // Onboarding queue — one row per agent being onboarded
@@ -515,6 +538,12 @@ function local_db(): PDO {
     // their own profile page — drives the Google Business Audit dashboard and
     // the review-request link (search.google.com/local/writereview?placeid=...).
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN google_place_id     TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Migration: explicit opt-in to the Google review-request feature — set
+    // when the agent confirms a discovered candidate (or self-enters a Place
+    // ID and checks the box). queue_review_request_for_loop() in
+    // lib/dotloop.php will not draft a review request for a closed loop
+    // unless this is 1, even if a Place ID is on file.
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN review_requests_opt_in INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (

@@ -503,13 +503,22 @@ function queue_review_request_for_loop(string $loopId, string $loopName, string 
     $agentEmail = strtolower(trim((string)($agentStmt->fetchColumn() ?: '')));
 
     $placeId = '';
+    $optedIn = false;
     if ($agentEmail !== '') {
-        $placeStmt = $db->prepare("SELECT google_place_id FROM agent_intake WHERE email = ?");
+        $placeStmt = $db->prepare("SELECT google_place_id, review_requests_opt_in FROM agent_intake WHERE email = ?");
         $placeStmt->execute([$agentEmail]);
-        $placeId = trim((string)($placeStmt->fetchColumn() ?: ''));
+        $agentRow = $placeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $placeId  = trim((string)($agentRow['google_place_id'] ?? ''));
+        $optedIn  = !empty($agentRow['review_requests_opt_in']);
     }
 
-    $status = $placeId === '' ? 'blocked_no_place_id' : 'awaiting_approval';
+    // Opt-in gates this regardless of whether a Place ID is on file — an
+    // agent has to explicitly turn this on (either by self-entering a Place
+    // ID and checking the box, or by confirming a discovered candidate,
+    // which sets both at once — see api/profile.php).
+    $status = !$optedIn
+        ? 'blocked_not_opted_in'
+        : ($placeId === '' ? 'blocked_no_place_id' : 'awaiting_approval');
 
     $firstNames = trim($recipientNames) !== '' ? explode(',', $recipientNames)[0] : 'there';
     $subject = "Would you mind leaving us a quick review?";

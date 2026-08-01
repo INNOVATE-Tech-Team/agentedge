@@ -10,6 +10,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../lib/notifications.php';
+require_once __DIR__ . '/../lib/google_business.php';
 header('Content-Type: application/json');
 
 $me = current_agent();
@@ -32,12 +33,56 @@ function get_intake(object $db, string $email): array {
     return $s->fetch(PDO::FETCH_ASSOC) ?: [];
 }
 
+function get_pending_candidate(object $db, string $email): ?array {
+    $s = $db->prepare("SELECT * FROM google_place_candidates WHERE email=? AND status='pending' LIMIT 1");
+    $s->execute([$email]);
+    return $s->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+
 $SOCIAL_KEYS = ['facebook','instagram','linkedin','twitter','youtube','tiktok','website','blog'];
+
+// ── Candidate confirm/dismiss — short-circuits before the general save flow ──
+// This is how a discovered Google Business listing (see
+// google_place_candidate_discover_all() in lib/google_business.php) actually
+// becomes the agent's real google_place_id: they have to look at it and say
+// yes themselves. Confirming also sets review_requests_opt_in=1 in the same
+// step, since there's nothing to send review requests for without a place
+// ID anyway — the agent can still uncheck the opt-in box afterward without
+// losing the place ID.
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $actionIn = json_decode(file_get_contents('php://input'), true) ?: [];
+    $action   = $actionIn['action'] ?? '';
+
+    if ($action === 'confirm_candidate' || $action === 'dismiss_candidate') {
+        $candidate = get_pending_candidate($db, $myEmail);
+        if (!$candidate) { echo json_encode(['error' => 'No pending candidate found.']); exit; }
+
+        if ($action === 'confirm_candidate') {
+            $db->prepare(
+                "INSERT INTO agent_intake (email, google_place_id, review_requests_opt_in, updated_at)
+                 VALUES (?, ?, 1, datetime('now'))
+                 ON CONFLICT(email) DO UPDATE SET
+                    google_place_id = excluded.google_place_id,
+                    review_requests_opt_in = 1,
+                    updated_at = excluded.updated_at"
+            )->execute([$myEmail, $candidate['place_id']]);
+            $db->prepare("UPDATE google_place_candidates SET status='confirmed', decided_at=datetime('now') WHERE email=?")
+               ->execute([$myEmail]);
+            notify_profile_changed($myEmail, $myEmail, ['Google Place ID' => ['', $candidate['place_id']], 'Review Requests Opt-In' => ['0', '1']]);
+        } else {
+            $db->prepare("UPDATE google_place_candidates SET status='dismissed', decided_at=datetime('now') WHERE email=?")
+               ->execute([$myEmail]);
+        }
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     // ── Load ──────────────────────────────────────────────────────────────────
-    $intake = get_intake($db, $myEmail);
-    $row    = find_roster_row($db, $myEmail);
+    $intake    = get_intake($db, $myEmail);
+    $row       = find_roster_row($db, $myEmail);
+    $candidate = get_pending_candidate($db, $myEmail);
 
     // Name/phone: agent_intake first (source of truth), falling back to
     // innovate_roster / tblstaff for an agent who hasn't touched their intake
@@ -61,14 +106,21 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         'matched'  => true,
         'editable' => true,
         'profile'  => [
-            'fullName'       => $fullName,
-            'email'          => $row ? $row['email'] : $myEmail,
-            'phone'          => $phone,
-            'marketCenter'   => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
-            'brokerage'      => 'INNOVATE Real Estate',
-            'social'         => (object)$social,
-            'googlePlaceId'  => $intake['google_place_id'] ?? '',
+            'fullName'            => $fullName,
+            'email'               => $row ? $row['email'] : $myEmail,
+            'phone'               => $phone,
+            'marketCenter'        => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
+            'brokerage'           => 'INNOVATE Real Estate',
+            'social'              => (object)$social,
+            'googlePlaceId'       => $intake['google_place_id'] ?? '',
+            'reviewRequestsOptIn' => !empty($intake['review_requests_opt_in']),
         ],
+        'candidate' => $candidate ? [
+            'name'      => $candidate['candidate_name'],
+            'rating'    => $candidate['rating'],
+            'reviews'   => (int)$candidate['review_count'],
+            'address'   => $candidate['formatted_addr'],
+        ] : null,
     ]);
     exit;
 }
@@ -79,6 +131,7 @@ $email    = strtolower(trim($in['email'] ?? $myEmail));
 $phone    = trim($in['phone'] ?? '');
 $name     = trim($in['fullName'] ?? '');
 $placeId  = trim($in['googlePlaceId'] ?? '');
+$reviewOptIn = !empty($in['reviewRequestsOptIn']) ? 1 : 0;
 
 // Snapshot "before" values for the change-notification email, using the same
 // fallback chain the GET path shows the agent (agent_intake first, then roster).
@@ -89,6 +142,7 @@ $beforePhone   = $beforeIntake['phone']     ?: ($beforeRoster['phone']      ?? '
 $beforeSocial  = [];
 foreach ($SOCIAL_KEYS as $k) $beforeSocial[$k] = $beforeIntake[$k] ?? '';
 $beforePlaceId = $beforeIntake['google_place_id'] ?? '';
+$beforeOptIn   = !empty($beforeIntake['review_requests_opt_in']);
 
 // Dual-write: keep innovate_roster in sync (Advantage/coastline-server's CRM
 // roster export/sync reads this table directly, not agent_intake).
@@ -112,26 +166,27 @@ foreach ($SOCIAL_KEYS as $k) $social[$k] = trim($in[$k] ?? '');
 // matching this page's prior behavior against innovate_roster/agent_extra.
 $db->prepare(
     "INSERT INTO agent_intake
-        (email, full_name, phone, facebook, instagram, linkedin, twitter, youtube, tiktok, website, blog, google_place_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        (email, full_name, phone, facebook, instagram, linkedin, twitter, youtube, tiktok, website, blog, google_place_id, review_requests_opt_in, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
-        full_name       = CASE WHEN excluded.full_name <> '' THEN excluded.full_name ELSE agent_intake.full_name END,
-        phone           = excluded.phone,
-        facebook        = excluded.facebook,
-        instagram       = excluded.instagram,
-        linkedin        = excluded.linkedin,
-        twitter         = excluded.twitter,
-        youtube         = excluded.youtube,
-        tiktok          = excluded.tiktok,
-        website         = excluded.website,
-        blog            = excluded.blog,
-        google_place_id = excluded.google_place_id,
-        updated_at      = excluded.updated_at"
+        full_name              = CASE WHEN excluded.full_name <> '' THEN excluded.full_name ELSE agent_intake.full_name END,
+        phone                  = excluded.phone,
+        facebook               = excluded.facebook,
+        instagram              = excluded.instagram,
+        linkedin               = excluded.linkedin,
+        twitter                = excluded.twitter,
+        youtube                = excluded.youtube,
+        tiktok                 = excluded.tiktok,
+        website                = excluded.website,
+        blog                   = excluded.blog,
+        google_place_id        = excluded.google_place_id,
+        review_requests_opt_in = excluded.review_requests_opt_in,
+        updated_at             = excluded.updated_at"
 )->execute([
     $myEmail, $name, $phone,
     $social['facebook'], $social['instagram'], $social['linkedin'], $social['twitter'],
     $social['youtube'], $social['tiktok'], $social['website'], $social['blog'],
-    $placeId,
+    $placeId, $reviewOptIn,
 ]);
 
 // Dual-write: agent_extra.social_json still backs the roster social-icon
@@ -159,6 +214,7 @@ foreach ($SOCIAL_KEYS as $k) {
     if ($social[$k] !== $beforeSocial[$k]) $changes[$socialLabels[$k]] = [$beforeSocial[$k], $social[$k]];
 }
 if ($placeId !== $beforePlaceId) $changes['Google Place ID'] = [$beforePlaceId, $placeId];
+if ($reviewOptIn !== (int)$beforeOptIn) $changes['Review Requests Opt-In'] = [(int)$beforeOptIn, $reviewOptIn];
 notify_profile_changed($effectiveName ?: $myEmail, $myEmail, $changes);
 
 echo json_encode(['ok' => true]);

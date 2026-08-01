@@ -23,7 +23,39 @@ function fill(p) {
   const s = p.social || {};
   SOCIAL_KEYS.forEach(k => set(k, s[k]));
   set('googlePlaceId', p.googlePlaceId);
+  const optIn = document.getElementById('f-reviewRequestsOptIn');
+  if (optIn) optIn.checked = !!p.reviewRequestsOptIn;
 }
+
+function showCandidate(c) {
+  const banner = document.getElementById('gbp-candidate-banner');
+  if (!c) { banner.hidden = true; return; }
+  const details = document.getElementById('gbp-candidate-details');
+  const reviewsTxt = c.reviews ? `${c.reviews} review${c.reviews === 1 ? '' : 's'}` : 'no reviews yet';
+  const ratingTxt = c.rating ? `${c.rating}★` : '';
+  details.textContent = `${c.name}${ratingTxt ? ' — ' + ratingTxt : ''} (${reviewsTxt}) at ${c.address}`;
+  banner.hidden = false;
+}
+
+function candidateAction(action) {
+  const msgEl = document.getElementById('gbp-candidate-msg');
+  msgEl.textContent = 'Saving…';
+  fetch('api/profile.php', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  }).then(r => r.json()).then(res => {
+    if (res.ok) {
+      document.getElementById('gbp-candidate-banner').hidden = true;
+      if (action === 'confirm_candidate') location.reload(); // refresh Place ID + opt-in fields
+    } else {
+      msgEl.textContent = res.error || 'Something went wrong.';
+    }
+  }).catch(() => { msgEl.textContent = 'Network error — please try again.'; });
+}
+
+function confirmCandidate() { candidateAction('confirm_candidate'); }
+function dismissCandidate() { candidateAction('dismiss_candidate'); }
 
 // Load CRM profile + local extra fields in parallel
 Promise.allSettled([
@@ -34,6 +66,7 @@ Promise.allSettled([
   const x = extraRes.status === 'fulfilled' ? extraRes.value : {};
 
   if (d.profile) fill(d.profile);
+  showCandidate(d.candidate);
   EXTRA_KEYS.forEach(k => { const el = document.getElementById('f-' + k); if (el) el.value = x[k] || ''; });
 
   const btn = document.getElementById('save-btn');
@@ -54,6 +87,7 @@ document.getElementById('profile-form').addEventListener('submit', e => {
 
   const crmBody = {};
   FIELDS.forEach(k => { crmBody[k] = get(k); });
+  crmBody.reviewRequestsOptIn = !!document.getElementById('f-reviewRequestsOptIn')?.checked;
 
   const extraBody = {};
   EXTRA_KEYS.forEach(k => { extraBody[k] = (document.getElementById('f-' + k)?.value || '').trim(); });
