@@ -1,5 +1,10 @@
 <?php
 // DotLoop — POST action endpoint. Returns JSON.
+// All calls use the shared admin DotLoop connection (see dotloop_shared_email()
+// in lib/dotloop.php) rather than the viewing agent's own token — agents don't
+// have individual DotLoop connections. Access is instead checked per-loop
+// against the local participant cache, so an agent can only touch loops
+// they're actually on.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../lib/dotloop.php';
@@ -19,14 +24,15 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$email  = $agent['email'];
-$action = $_GET['action'] ?? '';
+$email       = strtolower(trim($agent['email']));
+$sharedEmail = dotloop_shared_email();
+$action      = $_GET['action'] ?? '';
 
-// ── action=disconnect ─────────────────────────────────────────────────────────
-if ($action === 'disconnect') {
-    local_db()->prepare("DELETE FROM dotloop_tokens WHERE agent_email = ?")->execute([$email]);
-    echo json_encode(['ok' => true]);
-    exit;
+/** Is $email a participant on $loopId, per the synced local cache? */
+function dotloop_agent_owns_loop(string $loopId, string $email): bool {
+    $stmt = local_db()->prepare("SELECT 1 FROM dotloop_loop_participants WHERE loop_id = ? AND email = ?");
+    $stmt->execute([$loopId, $email]);
+    return (bool)$stmt->fetchColumn();
 }
 
 // Remaining actions require a JSON body
@@ -46,11 +52,9 @@ if ($action === 'update_loop_detail') {
         exit;
     }
 
-    // Verify the agent owns this profile_id
-    $tokens = dotloop_get_tokens($email);
-    if (!$tokens || (string)$tokens['profile_id'] !== $profileId) {
+    if (!dotloop_agent_owns_loop($loopId, $email)) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Profile ID does not match your connected DotLoop account']);
+        echo json_encode(['ok' => false, 'error' => 'You are not a participant on this transaction']);
         exit;
     }
 
@@ -65,7 +69,7 @@ if ($action === 'update_loop_detail') {
         exit;
     }
 
-    $result = dotloop_api($email, 'PATCH', "/profile/{$profileId}/loop/{$loopId}/detail", $payload);
+    $result = dotloop_api($sharedEmail, 'PATCH', "/profile/{$profileId}/loop/{$loopId}/detail", $payload);
     echo json_encode($result['ok']
         ? ['ok' => true]
         : ['ok' => false, 'error' => $result['error'] ?? 'Update failed']
@@ -83,14 +87,13 @@ if ($action === 'get_folders') {
         exit;
     }
 
-    $tokens = dotloop_get_tokens($email);
-    if (!$tokens || (string)$tokens['profile_id'] !== $profileId) {
+    if (!dotloop_agent_owns_loop($loopId, $email)) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Profile ID mismatch']);
+        echo json_encode(['ok' => false, 'error' => 'You are not a participant on this transaction']);
         exit;
     }
 
-    $result = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/folder");
+    $result = dotloop_api($sharedEmail, 'GET', "/profile/{$profileId}/loop/{$loopId}/folder");
     if (!$result['ok']) {
         echo json_encode(['ok' => false, 'error' => $result['error'] ?? 'Failed to load folders']);
         exit;
@@ -112,14 +115,13 @@ if ($action === 'get_documents') {
         exit;
     }
 
-    $tokens = dotloop_get_tokens($email);
-    if (!$tokens || (string)$tokens['profile_id'] !== $profileId) {
+    if (!dotloop_agent_owns_loop($loopId, $email)) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Profile ID mismatch']);
+        echo json_encode(['ok' => false, 'error' => 'You are not a participant on this transaction']);
         exit;
     }
 
-    $result = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/folder/{$folderId}/document");
+    $result = dotloop_api($sharedEmail, 'GET', "/profile/{$profileId}/loop/{$loopId}/folder/{$folderId}/document");
     if (!$result['ok']) {
         echo json_encode(['ok' => false, 'error' => $result['error'] ?? 'Failed to load documents']);
         exit;

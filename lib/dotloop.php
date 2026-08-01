@@ -184,6 +184,116 @@ function _dotloop_request(string $token, string $method, string $path, ?array $b
     return ['ok' => true, 'data' => $data];
 }
 
+// ── Company-wide sync (shared connection) ───────────────────────────────────────
+// DotLoop's per-agent individual profiles return zero loops (confirmed live) —
+// all real transaction data lives on the company profile. Rather than every
+// agent doing their own OAuth connect (which wouldn't show their own loops
+// anyway), one shared admin connection is synced here into a local cache, and
+// "My Transactions" reads from that cache filtered by participant email.
+
+/** The AgentEdge email holding the shared admin DotLoop connection. */
+function dotloop_shared_email(): string {
+    $c = cfg();
+    return $c['dotloop_shared_email'] ?? 'darren@innovateonline.com';
+}
+
+/**
+ * Pull company loops (via the shared admin connection) for the given deal
+ * stages into the local cache, along with each loop's participants.
+ *
+ * $sinceDate bounds the pull with DotLoop's updated_min filter — best-effort:
+ * if DotLoop ignores it, the sync just takes longer, it doesn't break anything.
+ *
+ * Returns ['ok' => bool, 'stages' => ['STAGE' => count], 'total_loops' => N, 'errors' => [...]].
+ */
+function dotloop_sync_company_loops(
+    array $stages = ['ACTIVE_LISTING', 'UNDER_CONTRACT', 'SOLD', 'WITHDRAWN'],
+    ?string $sinceDate = null
+): array {
+    $email  = dotloop_shared_email();
+    $tokens = dotloop_get_tokens($email);
+    if (!$tokens || empty($tokens['profile_id'])) {
+        return ['ok' => false, 'error' => "Shared DotLoop connection not set up for {$email}"];
+    }
+    $profileId = $tokens['profile_id'];
+    $sinceDate = $sinceDate ?? date('Y-m-d', strtotime('-2 years'));
+    $db = local_db();
+
+    $upsertLoop = $db->prepare(
+        "INSERT INTO dotloop_loops (loop_id, name, status, deal_stage, transaction_type, dl_created, dl_updated, loop_url, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(loop_id) DO UPDATE SET
+            name=excluded.name, status=excluded.status, deal_stage=excluded.deal_stage,
+            transaction_type=excluded.transaction_type, dl_created=excluded.dl_created,
+            dl_updated=excluded.dl_updated, loop_url=excluded.loop_url, synced_at=excluded.synced_at"
+    );
+    $upsertParticipant = $db->prepare(
+        "INSERT OR REPLACE INTO dotloop_loop_participants (loop_id, email, name, role) VALUES (?, ?, ?, ?)"
+    );
+    $clearParticipants = $db->prepare("DELETE FROM dotloop_loop_participants WHERE loop_id = ?");
+
+    $summary = ['ok' => true, 'stages' => [], 'total_loops' => 0, 'errors' => []];
+
+    foreach ($stages as $stage) {
+        $page = 1;
+        $seen = 0;
+        while (true) {
+            $path = "/profile/{$profileId}/loop?" . http_build_query([
+                'batch_number' => $page,
+                'batch_size'   => 100,
+            ]) . '&filter=' . rawurlencode("transaction_status={$stage}")
+              . '&updated_min=' . rawurlencode($sinceDate . 'T00:00:00Z');
+            $result = dotloop_api($email, 'GET', $path);
+            if (!$result['ok']) {
+                $summary['errors'][] = "{$stage} page {$page}: " . ($result['error'] ?? 'unknown error');
+                break;
+            }
+            $rows = $result['data']['data'] ?? [];
+            if (empty($rows)) break;
+
+            foreach ($rows as $loop) {
+                $loopId = (string)($loop['id'] ?? '');
+                if ($loopId === '') continue;
+                $upsertLoop->execute([
+                    $loopId,
+                    (string)($loop['name'] ?? ''),
+                    (string)($loop['status'] ?? ''),
+                    $stage,
+                    (string)($loop['transactionType'] ?? ''),
+                    (string)($loop['created'] ?? ''),
+                    (string)($loop['updated'] ?? ''),
+                    (string)($loop['loopUrl'] ?? ''),
+                ]);
+
+                $partResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/participant");
+                if ($partResult['ok']) {
+                    $clearParticipants->execute([$loopId]);
+                    $participants = $partResult['data']['data'] ?? [];
+                    foreach ($participants as $p) {
+                        $pEmail = strtolower(trim((string)($p['email'] ?? '')));
+                        if ($pEmail === '') continue;
+                        $upsertParticipant->execute([
+                            $loopId, $pEmail, (string)($p['fullName'] ?? ''), (string)($p['role'] ?? ''),
+                        ]);
+                    }
+                }
+                usleep(100000); // light throttle on the participant call above
+                $seen++;
+            }
+
+            $total = (int)($result['data']['meta']['total'] ?? 0);
+            if ($page * 100 >= $total) break;
+            $page++;
+        }
+        $summary['stages'][$stage] = $seen;
+        $summary['total_loops'] += $seen;
+    }
+
+    $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('last_full_sync', datetime('now'))")->execute();
+
+    return $summary;
+}
+
 // ── Folder helpers ────────────────────────────────────────────────────────────
 
 /**
