@@ -4,6 +4,7 @@
 // call file_get_contents / curl against DotLoop directly.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/notifications.php';
 
 const DOTLOOP_API_BASE  = 'https://api-gateway.dotloop.com/public/v2';
 const DOTLOOP_TOKEN_URL = 'https://auth.dotloop.com/oauth/token';
@@ -233,6 +234,58 @@ function dotloop_email_group(string $email): array {
     return [$email];
 }
 
+/** Who to notify when a loop's DotLoop "Insurance Quote Request" field is Yes. */
+function dotloop_insurance_notify_email(): string {
+    $c = cfg();
+    return $c['carolina_insurance_notify_email'] ?? 'amanda@carolinapropertyinsurance.com';
+}
+
+/**
+ * Find the "Insurance Quote Request" answer in a DotLoop loop Detail response
+ * (from GET /profile/{id}/loop/{id}/detail). DotLoop nests custom Detail
+ * fields under section objects, e.g. {"New Insurance Quote Request":
+ * {"SC Insurance Quote Request": "Yes"}} — search every section/field rather
+ * than hardcoding the exact section/field label, since it varies by state
+ * (SC/NC). Returns the raw value (e.g. "Yes"/"No"), or null if not found.
+ */
+function dotloop_extract_insurance_quote(array $detail): ?string {
+    foreach ($detail as $section) {
+        if (!is_array($section)) continue;
+        foreach ($section as $fieldLabel => $value) {
+            if (stripos((string)$fieldLabel, 'insurance quote request') !== false) {
+                return trim((string)$value);
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Email dotloop_insurance_notify_email() about a loop that just came back
+ * with an Insurance Quote Request of "Yes". Pulls buyer contact info from
+ * the already-synced local participant cache.
+ */
+function dotloop_send_insurance_quote_notification(string $loopId, string $loopName, string $loopUrl): void {
+    $db   = local_db();
+    $stmt = $db->prepare(
+        "SELECT name, email, role FROM dotloop_loop_participants WHERE loop_id = ? AND role LIKE '%buyer%'"
+    );
+    $stmt->execute([$loopId]);
+    $buyers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $buyerLines = $buyers
+        ? implode('<br>', array_map(fn($b) => htmlspecialchars($b['name'] ?: $b['email']) . ' — ' . htmlspecialchars($b['email']), $buyers))
+        : '(no buyer participant on file)';
+
+    $body = "<p>A buyer on the following INNOVATE transaction requested a Carolina Property Insurance quote in DotLoop:</p>"
+          . "<p><strong>" . htmlspecialchars($loopName) . "</strong></p>"
+          . "<p>{$buyerLines}</p>"
+          . ($loopUrl ? "<p><a href=\"" . htmlspecialchars($loopUrl) . "\">View in DotLoop</a></p>" : '');
+
+    $c = cfg();
+    send_email_sendgrid(dotloop_insurance_notify_email(), 'Insurance Quote Requested: ' . $loopName, $body, $c, true);
+}
+
 /**
  * Pull company loops (via the shared admin connection) for the given deal
  * stages into the local cache, along with each loop's participants.
@@ -268,6 +321,22 @@ function dotloop_sync_company_loops(
     );
     $clearParticipants = $db->prepare("DELETE FROM dotloop_loop_participants WHERE loop_id = ?");
 
+    $existingStmt = $db->prepare(
+        "SELECT dl_updated, insurance_quote_requested, insurance_quote_notified_at
+         FROM dotloop_loops WHERE loop_id = ?"
+    );
+    $updateInsuranceStmt = $db->prepare(
+        "UPDATE dotloop_loops SET insurance_quote_requested = ?, insurance_quote_notified_at = ? WHERE loop_id = ?"
+    );
+
+    // First run after this feature shipped: every loop's insurance field is
+    // still NULL, so the per-loop check below fetches detail for all of them
+    // once. Notifications stay off for that one pass — those "Yes" answers
+    // are historical, not new — then this flips on for all runs after.
+    $backfillDone = (bool)$db->query(
+        "SELECT value FROM dotloop_sync_state WHERE key = 'insurance_quote_backfill_done'"
+    )->fetchColumn();
+
     $summary = ['ok' => true, 'stages' => [], 'total_loops' => 0, 'errors' => []];
 
     foreach ($stages as $stage) {
@@ -290,16 +359,46 @@ function dotloop_sync_company_loops(
             foreach ($rows as $loop) {
                 $loopId = (string)($loop['id'] ?? '');
                 if ($loopId === '') continue;
+
+                $existing  = $existingStmt->execute([$loopId]) ? $existingStmt->fetch(PDO::FETCH_ASSOC) : null;
+                $newLoopName = (string)($loop['name'] ?? '');
+                $newDlUpdated = (string)($loop['updated'] ?? '');
+
                 $upsertLoop->execute([
                     $loopId,
-                    (string)($loop['name'] ?? ''),
+                    $newLoopName,
                     (string)($loop['status'] ?? ''),
                     $stage,
                     (string)($loop['transactionType'] ?? ''),
                     (string)($loop['created'] ?? ''),
-                    (string)($loop['updated'] ?? ''),
+                    $newDlUpdated,
                     (string)($loop['loopUrl'] ?? ''),
                 ]);
+
+                // Only spend an extra API call on Detail for loops that are new
+                // or changed since last sync (or, on the very first run of this
+                // feature, everything — see $backfillDone above).
+                $needsDetailCheck = !$existing
+                    || $existing['dl_updated'] !== $newDlUpdated
+                    || $existing['insurance_quote_requested'] === null;
+
+                if ($needsDetailCheck) {
+                    $detailResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/detail");
+                    if ($detailResult['ok']) {
+                        $quote = dotloop_extract_insurance_quote($detailResult['data']['data'] ?? []);
+                        $wasYes = $existing && strtolower((string)$existing['insurance_quote_requested']) === 'yes';
+                        $isYes  = $quote !== null && strtolower($quote) === 'yes';
+                        $notifiedAt = $existing['insurance_quote_notified_at'] ?? '';
+
+                        if ($backfillDone && $isYes && !$wasYes && $notifiedAt === '') {
+                            dotloop_send_insurance_quote_notification($loopId, $newLoopName, (string)($loop['loopUrl'] ?? ''));
+                            $notifiedAt = date('Y-m-d H:i:s');
+                        }
+
+                        $updateInsuranceStmt->execute([$quote, $notifiedAt, $loopId]);
+                    }
+                    usleep(100000); // light throttle on the detail call above
+                }
 
                 $partResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/participant");
                 if ($partResult['ok']) {
@@ -326,6 +425,9 @@ function dotloop_sync_company_loops(
     }
 
     $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('last_full_sync', datetime('now'))")->execute();
+    if (!$backfillDone) {
+        $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('insurance_quote_backfill_done', '1')")->execute();
+    }
 
     return $summary;
 }

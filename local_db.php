@@ -19,6 +19,7 @@ function local_db(): PDO {
     $pdo = new PDO('sqlite:' . $dir . '/agentedge.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("PRAGMA journal_mode=WAL");
+    $pdo->exec("PRAGMA busy_timeout=5000"); // wait up to 5s for a lock instead of failing immediately
 
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
@@ -116,6 +117,52 @@ function local_db(): PDO {
         access_token  TEXT,
         refresh_token TEXT,
         expires_at    INTEGER
+    )");
+
+    // Company-wide DotLoop loop cache. DotLoop's per-agent individual profiles
+    // return zero loops (confirmed live) — all real transaction data lives on
+    // the company profile, so this is synced once via the shared admin
+    // connection (see dotloop_shared_email() in lib/dotloop.php) rather than
+    // per agent. "My Transactions" filters this cache by participant email
+    // instead of hitting DotLoop live per page view.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_loops (
+        loop_id          TEXT PRIMARY KEY,
+        name             TEXT NOT NULL DEFAULT '',
+        status           TEXT NOT NULL DEFAULT '',
+        deal_stage       TEXT NOT NULL DEFAULT '',
+        transaction_type TEXT NOT NULL DEFAULT '',
+        dl_created       TEXT NOT NULL DEFAULT '',
+        dl_updated       TEXT NOT NULL DEFAULT '',
+        loop_url         TEXT NOT NULL DEFAULT '',
+        synced_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_loops_updated ON dotloop_loops(dl_updated)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_loops_stage ON dotloop_loops(deal_stage)");
+
+    // Carolina Property Insurance quote-request flag, read from DotLoop's native
+    // "New Insurance Quote Request" Detail field. NULL means "not checked yet"
+    // (distinct from '' / 'No'), which is what drives the one-time backfill in
+    // dotloop_sync_company_loops() — see lib/dotloop.php.
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_requested TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_notified_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Participants per loop — the only way to know which agent a loop belongs
+    // to, since DotLoop's loop-list response has no participant/email data.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_loop_participants (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        loop_id TEXT NOT NULL,
+        email   TEXT NOT NULL DEFAULT '',
+        name    TEXT NOT NULL DEFAULT '',
+        role    TEXT NOT NULL DEFAULT '',
+        UNIQUE(loop_id, email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_participants_email ON dotloop_loop_participants(email)");
+
+    // Sync watermarks (last dl_updated seen per deal_stage bucket) for
+    // incremental cron runs after the initial full sync.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_sync_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
     )");
 
     // Onboarding queue — one row per agent being onboarded
