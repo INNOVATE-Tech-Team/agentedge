@@ -2,12 +2,15 @@
 /**
  * Manually-triggered digest: email every pending (UNDER_CONTRACT) transaction
  * flagged "Yes" on DotLoop's Insurance Quote Request field, closing on or
- * after a given date, to dotloop_insurance_notify_emails().
+ * after a given date, to dotloop_insurance_notify_emails() (or an override
+ * recipient list, for previewing before a wider send).
  *
  * Run via:
  *   docker exec agentedge php /var/www/html/cron/send_insurance_quote_digest.php 2026-08-15
+ *   docker exec agentedge php /var/www/html/cron/send_insurance_quote_digest.php 2000-01-01 darren@innovateonline.com
  *
- * (date argument defaults to today if omitted)
+ * (date argument defaults to today if omitted; recipient argument is an
+ * optional comma-separated override, defaulting to dotloop_insurance_notify_emails())
  */
 define('AGENTEDGE_CRON', true);
 chdir(dirname(__DIR__));
@@ -121,8 +124,11 @@ $body = '<p>' . count($rows) . ' pending transaction(s) flagged for a Carolina P
       . '</table>';
 
 $c = cfg();
+$recipients = isset($argv[2]) && trim($argv[2]) !== ''
+    ? array_map('trim', explode(',', $argv[2]))
+    : dotloop_insurance_notify_emails();
 $subject = count($rows) . ' Pending Insurance Quote Requests (closing on/after ' . date('M j, Y', $cutoff) . ')';
-foreach (dotloop_insurance_notify_emails() as $recipient) {
+foreach ($recipients as $recipient) {
     $ok = send_email_sendgrid($recipient, $subject, $body, $c, true);
     echo ($ok ? 'sent' : 'FAILED') . ' to ' . $recipient . "\n";
 }
