@@ -26,23 +26,37 @@ local_db(); // ensure dotloop_loops / dotloop_loop_participants tables exist
 $now = date('Y-m-d H:i:s');
 echo "[{$now}] DotLoop sync starting\n";
 
-try {
-    $result = dotloop_sync_company_loops();
-    if (!$result['ok']) {
-        echo "  ERROR: " . $result['error'] . "\n";
+// The sync is safely re-runnable (loops already up to date are skipped via the
+// dl_updated/NULL-sentinel checks in dotloop_sync_company_loops()), so on a
+// SQLite lock collision with another process just retry a few times rather
+// than losing the whole run.
+$maxAttempts = 3;
+for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+    try {
+        $result = dotloop_sync_company_loops();
+        if (!$result['ok']) {
+            echo "  ERROR: " . $result['error'] . "\n";
+            exit(1);
+        }
+        foreach ($result['stages'] as $stage => $count) {
+            echo "  {$stage}: {$count} loops synced\n";
+        }
+        echo "  total: {$result['total_loops']} loops\n";
+        if (!empty($result['errors'])) {
+            echo "  errors encountered:\n";
+            foreach ($result['errors'] as $e) echo "    - {$e}\n";
+        }
+        break;
+    } catch (\Throwable $e) {
+        $isLocked = stripos($e->getMessage(), 'database is locked') !== false;
+        if ($isLocked && $attempt < $maxAttempts) {
+            echo "  database locked (attempt {$attempt}/{$maxAttempts}), retrying in 10s...\n";
+            sleep(10);
+            continue;
+        }
+        echo "  ERROR: " . $e->getMessage() . "\n";
         exit(1);
     }
-    foreach ($result['stages'] as $stage => $count) {
-        echo "  {$stage}: {$count} loops synced\n";
-    }
-    echo "  total: {$result['total_loops']} loops\n";
-    if (!empty($result['errors'])) {
-        echo "  errors encountered:\n";
-        foreach ($result['errors'] as $e) echo "    - {$e}\n";
-    }
-} catch (\Throwable $e) {
-    echo "  ERROR: " . $e->getMessage() . "\n";
-    exit(1);
 }
 
 echo "[" . date('Y-m-d H:i:s') . "] DotLoop sync finished\n";

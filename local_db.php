@@ -19,7 +19,7 @@ function local_db(): PDO {
     $pdo = new PDO('sqlite:' . $dir . '/agentedge.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("PRAGMA journal_mode=WAL");
-    $pdo->exec("PRAGMA busy_timeout=5000"); // wait up to 5s for a lock instead of failing immediately
+    $pdo->exec("PRAGMA busy_timeout=15000"); // wait up to 15s for a lock instead of failing immediately
 
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
