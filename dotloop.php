@@ -45,7 +45,9 @@ $offset  = ($page - 1) * $perPage;
 // emails as a participant still counts/lists exactly once.
 $emailGroup   = dotloop_email_group($email);
 $placeholders = implode(',', array_fill(0, count($emailGroup), '?'));
-$where  = "EXISTS (SELECT 1 FROM dotloop_loop_participants p WHERE p.loop_id = dl.loop_id AND p.email IN ({$placeholders}))";
+// Exclude loops the agent/admin archived in DotLoop directly — this is the
+// loop's own status field, a separate concept from the deal_stage tabs above.
+$where  = "UPPER(dl.status) != 'ARCHIVED' AND EXISTS (SELECT 1 FROM dotloop_loop_participants p WHERE p.loop_id = dl.loop_id AND p.email IN ({$placeholders}))";
 $params = $emailGroup;
 if ($statusFilter !== 'ALL' && isset($dotloopStatusMap[$statusFilter])) {
     $where   .= " AND dl.deal_stage = ?";
