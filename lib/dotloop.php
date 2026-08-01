@@ -212,6 +212,28 @@ function dotloop_shared_email(): string {
 }
 
 /**
+ * Return every email that should be treated as the same person as $email when
+ * matching dotloop_loop_participants — some agents get added to loops under
+ * more than one address. Configure via config.php's 'dotloop_email_groups':
+ * an array of email lists, e.g. [['darren@innovateonline.com', 'darren@darrenwoodard.com']].
+ * Always includes $email itself. Falls back to just [$email] if unconfigured
+ * or $email isn't in any group.
+ */
+function dotloop_email_group(string $email): array {
+    $email  = strtolower(trim($email));
+    $groups = cfg()['dotloop_email_groups'] ?? [];
+    foreach ($groups as $group) {
+        $normalized = array_values(array_unique(array_map(
+            fn($e) => strtolower(trim($e)), $group
+        )));
+        if (in_array($email, $normalized, true)) {
+            return $normalized;
+        }
+    }
+    return [$email];
+}
+
+/**
  * Pull company loops (via the shared admin connection) for the given deal
  * stages into the local cache, along with each loop's participants.
  *

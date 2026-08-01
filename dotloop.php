@@ -41,24 +41,25 @@ $page    = max(1, (int)($_GET['pg'] ?? 1));
 $perPage = 20;
 $offset  = ($page - 1) * $perPage;
 
-$where  = "p.email = ?";
-$params = [$email];
+// EXISTS (not JOIN) so a loop with more than one of this agent's grouped
+// emails as a participant still counts/lists exactly once.
+$emailGroup   = dotloop_email_group($email);
+$placeholders = implode(',', array_fill(0, count($emailGroup), '?'));
+$where  = "EXISTS (SELECT 1 FROM dotloop_loop_participants p WHERE p.loop_id = dl.loop_id AND p.email IN ({$placeholders}))";
+$params = $emailGroup;
 if ($statusFilter !== 'ALL' && isset($dotloopStatusMap[$statusFilter])) {
     $where   .= " AND dl.deal_stage = ?";
     $params[] = $dotloopStatusMap[$statusFilter];
 }
 
 $countStmt = $db->prepare(
-    "SELECT COUNT(*) FROM dotloop_loops dl
-     JOIN dotloop_loop_participants p ON p.loop_id = dl.loop_id
-     WHERE {$where}"
+    "SELECT COUNT(*) FROM dotloop_loops dl WHERE {$where}"
 );
 $countStmt->execute($params);
 $total = (int)$countStmt->fetchColumn();
 
 $listStmt = $db->prepare(
     "SELECT dl.* FROM dotloop_loops dl
-     JOIN dotloop_loop_participants p ON p.loop_id = dl.loop_id
      WHERE {$where}
      ORDER BY dl.dl_updated DESC
      LIMIT {$perPage} OFFSET {$offset}"

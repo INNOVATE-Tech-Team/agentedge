@@ -28,10 +28,14 @@ $email       = strtolower(trim($agent['email']));
 $sharedEmail = dotloop_shared_email();
 $action      = $_GET['action'] ?? '';
 
-/** Is $email a participant on $loopId, per the synced local cache? */
+/** Is $email (or any email in its dotloop_email_groups group) a participant on $loopId? */
 function dotloop_agent_owns_loop(string $loopId, string $email): bool {
-    $stmt = local_db()->prepare("SELECT 1 FROM dotloop_loop_participants WHERE loop_id = ? AND email = ?");
-    $stmt->execute([$loopId, $email]);
+    $emails       = dotloop_email_group($email);
+    $placeholders = implode(',', array_fill(0, count($emails), '?'));
+    $stmt = local_db()->prepare(
+        "SELECT 1 FROM dotloop_loop_participants WHERE loop_id = ? AND email IN ({$placeholders})"
+    );
+    $stmt->execute(array_merge([$loopId], $emails));
     return (bool)$stmt->fetchColumn();
 }
 
