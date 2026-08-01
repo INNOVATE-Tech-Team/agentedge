@@ -287,6 +287,27 @@ function dotloop_send_insurance_quote_notification(string $loopId, string $loopN
 }
 
 /**
+ * Execute a write statement, retrying briefly on SQLite's "database is
+ * locked" — Apache/mod_php workers here are long-lived, so a brief write
+ * collision is common during a sync this write-heavy. Retrying a single
+ * statement is far cheaper than restarting the whole multi-thousand-loop
+ * sync, which is why this exists instead of only retrying at the top level.
+ */
+function dotloop_execute_with_retry(PDOStatement $stmt, array $params, int $maxAttempts = 15, int $delayMs = 300): bool {
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        try {
+            return $stmt->execute($params);
+        } catch (\PDOException $e) {
+            if (stripos($e->getMessage(), 'database is locked') === false || $attempt === $maxAttempts) {
+                throw $e;
+            }
+            usleep($delayMs * 1000);
+        }
+    }
+    return false;
+}
+
+/**
  * Pull company loops (via the shared admin connection) for the given deal
  * stages into the local cache, along with each loop's participants.
  *
@@ -360,11 +381,11 @@ function dotloop_sync_company_loops(
                 $loopId = (string)($loop['id'] ?? '');
                 if ($loopId === '') continue;
 
-                $existing  = $existingStmt->execute([$loopId]) ? $existingStmt->fetch(PDO::FETCH_ASSOC) : null;
+                $existing  = dotloop_execute_with_retry($existingStmt, [$loopId]) ? $existingStmt->fetch(PDO::FETCH_ASSOC) : null;
                 $newLoopName = (string)($loop['name'] ?? '');
                 $newDlUpdated = (string)($loop['updated'] ?? '');
 
-                $upsertLoop->execute([
+                dotloop_execute_with_retry($upsertLoop, [
                     $loopId,
                     $newLoopName,
                     (string)($loop['status'] ?? ''),
@@ -395,19 +416,19 @@ function dotloop_sync_company_loops(
                             $notifiedAt = date('Y-m-d H:i:s');
                         }
 
-                        $updateInsuranceStmt->execute([$quote, $notifiedAt, $loopId]);
+                        dotloop_execute_with_retry($updateInsuranceStmt, [$quote, $notifiedAt, $loopId]);
                     }
                     usleep(100000); // light throttle on the detail call above
                 }
 
                 $partResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/participant");
                 if ($partResult['ok']) {
-                    $clearParticipants->execute([$loopId]);
+                    dotloop_execute_with_retry($clearParticipants, [$loopId]);
                     $participants = $partResult['data']['data'] ?? [];
                     foreach ($participants as $p) {
                         $pEmail = strtolower(trim((string)($p['email'] ?? '')));
                         if ($pEmail === '') continue;
-                        $upsertParticipant->execute([
+                        dotloop_execute_with_retry($upsertParticipant, [
                             $loopId, $pEmail, (string)($p['fullName'] ?? ''), (string)($p['role'] ?? ''),
                         ]);
                     }
@@ -424,9 +445,13 @@ function dotloop_sync_company_loops(
         $summary['total_loops'] += $seen;
     }
 
-    $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('last_full_sync', datetime('now'))")->execute();
+    dotloop_execute_with_retry(
+        $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('last_full_sync', datetime('now'))"), []
+    );
     if (!$backfillDone) {
-        $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('insurance_quote_backfill_done', '1')")->execute();
+        dotloop_execute_with_retry(
+            $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('insurance_quote_backfill_done', '1')"), []
+        );
     }
 
     return $summary;
