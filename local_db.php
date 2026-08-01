@@ -146,6 +146,16 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_requested TEXT"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN insurance_quote_notified_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
+    // Extra Detail fields for the Insurance Quote Requests report (property
+    // address, MLS number, closing date, purchase price). property_address is
+    // NULL until first checked (same NULL-sentinel backfill idiom as
+    // insurance_quote_requested) — the others are set alongside it in the same
+    // pass, so only one column needs to drive the "needs a detail fetch" check.
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN property_address TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN mls_number TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN closing_date TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE dotloop_loops ADD COLUMN purchase_price TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
     // Participants per loop — the only way to know which agent a loop belongs
     // to, since DotLoop's loop-list response has no participant/email data.
     $pdo->exec("CREATE TABLE IF NOT EXISTS dotloop_loop_participants (
@@ -157,6 +167,8 @@ function local_db(): PDO {
         UNIQUE(loop_id, email)
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dotloop_participants_email ON dotloop_loop_participants(email)");
+    // Phone number, for the Insurance Quote Requests report's client contact info.
+    try { $pdo->exec("ALTER TABLE dotloop_loop_participants ADD COLUMN phone TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Sync watermarks (last dl_updated seen per deal_stage bucket) for
     // incremental cron runs after the initial full sync.

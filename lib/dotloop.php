@@ -241,23 +241,28 @@ function dotloop_insurance_notify_email(): string {
 }
 
 /**
- * Find the "Insurance Quote Request" answer in a DotLoop loop Detail response
- * (from GET /profile/{id}/loop/{id}/detail). DotLoop nests custom Detail
- * fields under section objects, e.g. {"New Insurance Quote Request":
- * {"SC Insurance Quote Request": "Yes"}} — search every section/field rather
- * than hardcoding the exact section/field label, since it varies by state
- * (SC/NC). Returns the raw value (e.g. "Yes"/"No"), or null if not found.
+ * Find a field in a DotLoop loop Detail response (from GET
+ * /profile/{id}/loop/{id}/detail) by a substring of its label, rather than an
+ * exact section/field name — DotLoop's custom Detail fields are nested under
+ * section objects, e.g. {"New Insurance Quote Request": {"SC Insurance Quote
+ * Request": "Yes"}}, and exact labels vary by state (SC/NC). Returns the
+ * first matching field's raw value, or null if nothing matches.
  */
-function dotloop_extract_insurance_quote(array $detail): ?string {
+function dotloop_extract_detail_field(array $detail, string $labelContains): ?string {
     foreach ($detail as $section) {
         if (!is_array($section)) continue;
         foreach ($section as $fieldLabel => $value) {
-            if (stripos((string)$fieldLabel, 'insurance quote request') !== false) {
+            if (stripos((string)$fieldLabel, $labelContains) !== false) {
                 return trim((string)$value);
             }
         }
     }
     return null;
+}
+
+/** Find the "Insurance Quote Request" answer (e.g. "Yes"/"No") in a Detail response. */
+function dotloop_extract_insurance_quote(array $detail): ?string {
+    return dotloop_extract_detail_field($detail, 'insurance quote request');
 }
 
 /**
@@ -268,18 +273,23 @@ function dotloop_extract_insurance_quote(array $detail): ?string {
 function dotloop_send_insurance_quote_notification(string $loopId, string $loopName, string $loopUrl): void {
     $db   = local_db();
     $stmt = $db->prepare(
-        "SELECT name, email, role FROM dotloop_loop_participants WHERE loop_id = ? AND role LIKE '%buyer%'"
+        "SELECT name, email, phone, role FROM dotloop_loop_participants
+         WHERE loop_id = ? AND (role LIKE '%buyer%' OR role LIKE '%seller%')"
     );
     $stmt->execute([$loopId]);
-    $buyers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $buyerLines = $buyers
-        ? implode('<br>', array_map(fn($b) => htmlspecialchars($b['name'] ?: $b['email']) . ' — ' . htmlspecialchars($b['email']), $buyers))
-        : '(no buyer participant on file)';
+    $clientLines = $clients
+        ? implode('<br>', array_map(
+            fn($c) => htmlspecialchars($c['name'] ?: $c['email']) . ' — ' . htmlspecialchars($c['email'])
+                . ($c['phone'] ? ' — ' . htmlspecialchars($c['phone']) : ''),
+            $clients
+          ))
+        : '(no buyer/seller participant on file)';
 
-    $body = "<p>A buyer on the following INNOVATE transaction requested a Carolina Property Insurance quote in DotLoop:</p>"
+    $body = "<p>A client on the following INNOVATE transaction requested a Carolina Property Insurance quote in DotLoop:</p>"
           . "<p><strong>" . htmlspecialchars($loopName) . "</strong></p>"
-          . "<p>{$buyerLines}</p>"
+          . "<p>{$clientLines}</p>"
           . ($loopUrl ? "<p><a href=\"" . htmlspecialchars($loopUrl) . "\">View in DotLoop</a></p>" : '');
 
     $c = cfg();
@@ -338,16 +348,18 @@ function dotloop_sync_company_loops(
             dl_updated=excluded.dl_updated, loop_url=excluded.loop_url, synced_at=excluded.synced_at"
     );
     $upsertParticipant = $db->prepare(
-        "INSERT OR REPLACE INTO dotloop_loop_participants (loop_id, email, name, role) VALUES (?, ?, ?, ?)"
+        "INSERT OR REPLACE INTO dotloop_loop_participants (loop_id, email, name, role, phone) VALUES (?, ?, ?, ?, ?)"
     );
     $clearParticipants = $db->prepare("DELETE FROM dotloop_loop_participants WHERE loop_id = ?");
 
     $existingStmt = $db->prepare(
-        "SELECT dl_updated, insurance_quote_requested, insurance_quote_notified_at
+        "SELECT dl_updated, insurance_quote_requested, insurance_quote_notified_at, property_address
          FROM dotloop_loops WHERE loop_id = ?"
     );
-    $updateInsuranceStmt = $db->prepare(
-        "UPDATE dotloop_loops SET insurance_quote_requested = ?, insurance_quote_notified_at = ? WHERE loop_id = ?"
+    $updateDetailStmt = $db->prepare(
+        "UPDATE dotloop_loops SET insurance_quote_requested = ?, insurance_quote_notified_at = ?,
+            property_address = ?, mls_number = ?, closing_date = ?, purchase_price = ?
+         WHERE loop_id = ?"
     );
 
     // First run after this feature shipped: every loop's insurance field is
@@ -409,12 +421,14 @@ function dotloop_sync_company_loops(
                 // feature, everything — see $backfillDone above).
                 $needsDetailCheck = !$existing
                     || $existing['dl_updated'] !== $newDlUpdated
-                    || $existing['insurance_quote_requested'] === null;
+                    || $existing['insurance_quote_requested'] === null
+                    || $existing['property_address'] === null;
 
                 if ($needsDetailCheck) {
                     $detailResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/detail");
                     if ($detailResult['ok']) {
-                        $quote = dotloop_extract_insurance_quote($detailResult['data']['data'] ?? []);
+                        $detailData = $detailResult['data']['data'] ?? [];
+                        $quote = dotloop_extract_insurance_quote($detailData);
                         $wasYes = $existing && strtolower((string)$existing['insurance_quote_requested']) === 'yes';
                         $isYes  = $quote !== null && strtolower($quote) === 'yes';
                         $notifiedAt = $existing['insurance_quote_notified_at'] ?? '';
@@ -424,7 +438,14 @@ function dotloop_sync_company_loops(
                             $notifiedAt = date('Y-m-d H:i:s');
                         }
 
-                        dotloop_execute_with_retry($updateInsuranceStmt, [$quote, $notifiedAt, $loopId]);
+                        $propertyAddress = dotloop_extract_detail_field($detailData, 'full address') ?? '';
+                        $mlsNumber       = dotloop_extract_detail_field($detailData, 'mls number') ?? '';
+                        $closingDate     = dotloop_extract_detail_field($detailData, 'closing date') ?? '';
+                        $purchasePrice   = dotloop_extract_detail_field($detailData, 'purchase') ?? '';
+
+                        dotloop_execute_with_retry($updateDetailStmt, [
+                            $quote, $notifiedAt, $propertyAddress, $mlsNumber, $closingDate, $purchasePrice, $loopId,
+                        ]);
                     }
                     usleep(100000); // light throttle on the detail call above
                 }
@@ -438,6 +459,7 @@ function dotloop_sync_company_loops(
                         if ($pEmail === '') continue;
                         dotloop_execute_with_retry($upsertParticipant, [
                             $loopId, $pEmail, (string)($p['fullName'] ?? ''), (string)($p['role'] ?? ''),
+                            (string)($p['Phone'] ?? ''),
                         ]);
                     }
                 }
