@@ -235,9 +235,13 @@ function dotloop_email_group(string $email): array {
 }
 
 /** Who to notify when a loop's DotLoop "Insurance Quote Request" field is Yes. */
-function dotloop_insurance_notify_email(): string {
+function dotloop_insurance_notify_emails(): array {
     $c = cfg();
-    return $c['carolina_insurance_notify_email'] ?? 'amanda@carolinapropertyinsurance.com';
+    return $c['carolina_insurance_notify_emails'] ?? [
+        'thomas@carolinapropertyinsurance.com',
+        'darren@innovateonline.com',
+        'april@innovateonline.com',
+    ];
 }
 
 /**
@@ -266,9 +270,9 @@ function dotloop_extract_insurance_quote(array $detail): ?string {
 }
 
 /**
- * Email dotloop_insurance_notify_email() about a loop that just came back
- * with an Insurance Quote Request of "Yes". Pulls buyer contact info from
- * the already-synced local participant cache.
+ * Email every address in dotloop_insurance_notify_emails() about a loop that
+ * just came back with an Insurance Quote Request of "Yes". Pulls buyer
+ * contact info from the already-synced local participant cache.
  */
 function dotloop_send_insurance_quote_notification(string $loopId, string $loopName, string $loopUrl): void {
     $db   = local_db();
@@ -293,7 +297,9 @@ function dotloop_send_insurance_quote_notification(string $loopId, string $loopN
           . ($loopUrl ? "<p><a href=\"" . htmlspecialchars($loopUrl) . "\">View in DotLoop</a></p>" : '');
 
     $c = cfg();
-    send_email_sendgrid(dotloop_insurance_notify_email(), 'Insurance Quote Requested: ' . $loopName, $body, $c, true);
+    foreach (dotloop_insurance_notify_emails() as $recipient) {
+        send_email_sendgrid($recipient, 'Insurance Quote Requested: ' . $loopName, $body, $c, true);
+    }
 }
 
 /**

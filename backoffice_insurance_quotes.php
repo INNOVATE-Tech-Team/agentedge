@@ -111,7 +111,7 @@ function fmt_price(string $val): string {
 
       <div class="iq-hero">
         <div class="iq-hero-title">Carolina Property Insurance Leads — Pending</div>
-        <p class="iq-hero-sub">Pending (under contract) transactions that answered "Yes" to DotLoop's Insurance Quote Request field. A new "Yes" auto-emails <?= h(dotloop_insurance_notify_email()) ?>.</p>
+        <p class="iq-hero-sub">Pending (under contract) transactions that answered "Yes" to DotLoop's Insurance Quote Request field. A new "Yes" auto-emails <?= h(implode(', ', dotloop_insurance_notify_emails())) ?>.</p>
       </div>
 
       <?php if (!$rows): ?>
