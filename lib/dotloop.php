@@ -382,6 +382,14 @@ function dotloop_sync_company_loops(
                 if ($loopId === '') continue;
 
                 $existing  = dotloop_execute_with_retry($existingStmt, [$loopId]) ? $existingStmt->fetch(PDO::FETCH_ASSOC) : null;
+                // Close the cursor immediately — this statement is reused across
+                // every loop, and each iteration is followed by slow DotLoop API
+                // calls (seconds, longer under 429 backoff). In WAL mode, a
+                // fetched-but-not-closed SELECT cursor keeps a read snapshot
+                // pinned open for that whole stretch, blocking WAL checkpoints
+                // until it accumulates enough to make writes fail with
+                // "database is locked" even with no other process involved.
+                $existingStmt->closeCursor();
                 $newLoopName = (string)($loop['name'] ?? '');
                 $newDlUpdated = (string)($loop['updated'] ?? '');
 
