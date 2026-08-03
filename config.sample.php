@@ -132,6 +132,37 @@ return [
     // spending and generate savings recommendations. Get a key at console.anthropic.com.
     'anthropic_api_key' => '',
 
+    // Facebook Page cross-posting for the Referral Network — posting a new
+    // company-wide referral request also shares it to this Page, and comments
+    // on that post get pulled back in (via webhook) as responses + an email
+    // nudge to the requester. Requires a Facebook Developer App you already
+    // administer the target Page with (posting to a PAGE is a standard,
+    // well-supported use case — unlike posting to a GROUP, which Meta locks
+    // down hard behind App Review and group-admin approval).
+    //
+    // Setup, all in developers.facebook.com → your app:
+    //   1. Add the "Facebook Login for Business" or just use Graph API Explorer
+    //      to generate a User Access Token for an admin of the target Page,
+    //      with pages_manage_posts + pages_read_engagement permissions.
+    //   2. Exchange it for a long-lived Page Access Token (Graph API Explorer →
+    //      select the Page → "Get Token" → "Page Access Token", then use the
+    //      "Access Token Debugger" to extend it, or exchange via
+    //      /oauth/access_token?grant_type=fb_exchange_token). Long-lived Page
+    //      tokens effectively don't expire as long as the app stays active.
+    //   3. fb_page_id: found under the Page's About info, or via
+    //      GET /me/accounts with your user token.
+    //   4. fb_app_secret: App Dashboard → Settings → Basic → App Secret.
+    //   5. fb_webhook_verify_token: make up any random string — you'll enter
+    //      the SAME string in step 6.
+    //   6. App Dashboard → Webhooks → Page → Callback URL:
+    //      https://agents.innovateonline.com/api/facebook_webhook.php,
+    //      Verify Token = the string from step 5, then subscribe to the
+    //      "feed" field so new comments get delivered here.
+    'fb_page_id'              => '',
+    'fb_page_access_token'    => '',
+    'fb_app_secret'           => '',
+    'fb_webhook_verify_token' => '',
+
     // Onboarding / offboarding notifications — comma-separated list of email addresses
     // that receive a copy of every new onboarding or offboarding email (fires whenever
     // an agent is moved into the onboarding queue, via notify_onboard_added() in

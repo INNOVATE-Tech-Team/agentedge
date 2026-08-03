@@ -2230,6 +2230,10 @@ function local_db(): PDO {
     // buyer | seller | other — drives the templated dashboard/social copy
     // ("{name} has a {type} referral in {metro}").
     try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN referral_type TEXT NOT NULL DEFAULT 'other'"); } catch (\Exception $e) {}
+    // Facebook Page post id ("{page_id}_{post_id}") once cross-posted, so
+    // api/facebook_webhook.php can match an incoming comment back to its request.
+    try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN fb_post_id TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_fb_post ON referral_requests(fb_post_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_status ON referral_requests(status)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_metro ON referral_requests(metro_id)");
 
@@ -2250,9 +2254,17 @@ function local_db(): PDO {
         'shared_partner_phone'     => "TEXT NOT NULL DEFAULT ''",
         'shared_partner_email'     => "TEXT NOT NULL DEFAULT ''",
         'shared_partner_specialty' => "TEXT NOT NULL DEFAULT ''",
+        // Facebook-comment-sourced responses (see api/facebook_webhook.php):
+        // source distinguishes them from in-app responses; fb_comment_id is
+        // checked before insert (not a UNIQUE constraint) so a redelivered
+        // webhook — Facebook retries on anything but a 200 — never double-posts.
+        'source'            => "TEXT NOT NULL DEFAULT 'agentedge'",
+        'fb_comment_id'     => "TEXT NOT NULL DEFAULT ''",
+        'fb_commenter_name' => "TEXT NOT NULL DEFAULT ''",
     ] as $col => $def) {
         try { $pdo->exec("ALTER TABLE referral_request_responses ADD COLUMN {$col} {$def}"); } catch (\Exception $e) {}
     }
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_responses_fb_comment ON referral_request_responses(fb_comment_id)");
 
     if ($pdo->query("SELECT COUNT(*) FROM referral_metros")->fetchColumn() == 0) {
         $metroIns = $pdo->prepare(
