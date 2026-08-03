@@ -103,6 +103,7 @@ $tab   = ($_GET['tab'] ?? 'partners') === 'requests' ? 'requests' : 'partners';
           <div class="rn-name">Post a Request</div>
           <p class="rn-meta" style="margin:4px 0 12px">Don't have a partner somewhere? Ask the whole company — anyone with a connection there can respond directly to you.</p>
           <div class="rn-form">
+            <div><label>Referral Type</label><select id="rf-type"><option value="buyer">Buyer</option><option value="seller">Seller</option><option value="other">Other</option></select></div>
             <div><label>State</label><select id="rf-state"></select></div>
             <div><label>Metro</label><select id="rf-metro"></select></div>
             <div class="full"><label>What are you looking for?</label><textarea id="rf-notes" placeholder="e.g. Buyer relocating from Myrtle Beach, needs a strong luxury agent by end of March."></textarea></div>
@@ -261,52 +262,99 @@ function deleteLead(id) {
 // ── Requests ───────────────────────────────────────────────────────────────────
 let REQUESTS = [];
 
+const TYPE_LABELS = { buyer: 'Buyer', seller: 'Seller', other: 'Referral' };
+
 function createRequest() {
   const msg = document.getElementById('request-form-msg');
   const metroId = document.getElementById('rf-metro').value;
   const notes = document.getElementById('rf-notes').value.trim();
+  const referralType = document.getElementById('rf-type').value;
   if (!metroId) { msg.textContent = 'Please pick a state and market.'; return; }
   msg.textContent = 'Posting…';
-  post({ action: 'create_request', metro_id: metroId, notes }).then(res => {
+  post({ action: 'create_request', metro_id: metroId, notes, referral_type: referralType }).then(res => {
     if (!res.ok) { msg.textContent = res.error || 'Post failed.'; return; }
     document.getElementById('rf-notes').value = '';
-    msg.textContent = '';
+    msg.innerHTML = '';
+    if (res.post_text) {
+      const span = document.createElement('span');
+      span.textContent = 'Posted. ';
+      const btn = document.createElement('button');
+      btn.className = 'btn-sm';
+      btn.textContent = 'Copy post text for Facebook';
+      btn.onclick = () => { navigator.clipboard.writeText(res.post_text); btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy post text for Facebook', 2000); };
+      span.appendChild(btn);
+      msg.appendChild(span);
+    }
     loadBootstrap();
   });
 }
 function closeRequest(id) {
   post({ action: 'close_request', id }).then(res => { if (res.ok) loadBootstrap(); else alert(res.error || 'Failed.'); });
 }
-function respondToRequest(id) {
-  const msg = prompt('Message to the requester (they\'ll get this by email along with your address):');
-  if (msg === null) return;
-  const trimmed = msg.trim();
-  if (!trimmed) return;
-  post({ action: 'respond_request', request_id: id, message: trimmed }).then(res => {
-    if (res.ok) { alert('Sent — they\'ve been notified.'); loadBootstrap(); } else { alert(res.error || 'Failed.'); }
+
+function toggleRespond(id) {
+  const panel = document.getElementById(`respond-panel-${id}`);
+  if (!panel) return;
+  panel.classList.toggle('hidden');
+}
+
+function sendResponse(id) {
+  const partnerId = document.getElementById(`respond-partner-${id}`).value;
+  const message = document.getElementById(`respond-msg-${id}`).value.trim();
+  const status = document.getElementById(`respond-status-${id}`);
+  if (!partnerId && !message) { status.textContent = 'Add a note or pick a partner to share.'; return; }
+  status.textContent = 'Sending…';
+  post({ action: 'respond_request', request_id: id, message, partner_id: partnerId || 0 }).then(res => {
+    if (res.ok) { loadBootstrap(); } else { status.textContent = res.error || 'Failed.'; }
   });
 }
 
 function renderRequests() {
   const wrap = document.getElementById('requests-list');
   if (!REQUESTS.length) { wrap.innerHTML = '<div class="rn-empty">No requests yet.</div>'; return; }
+  const partnerOptions = PARTNERS.map(p => `<option value="${p.id}">${esc(p.name)}${p.company ? ' — ' + esc(p.company) : ''} (${esc(p.metro_name)}, ${esc(p.state_code)})</option>`).join('');
+
   wrap.innerHTML = REQUESTS.map(r => {
-    const responses = r.mine ? (r.responses || []).map(resp => `
-      <div class="rn-resp"><strong>${esc(resp.responder_email)}</strong> — ${esc(resp.message)}<div style="color:var(--faint);font-size:11px;margin-top:2px">${fmtDate(resp.created_at)}</div></div>
-    `).join('') : '';
+    const responses = r.mine ? (r.responses || []).map(resp => {
+      const shared = resp.shared_partner_name ? `
+        <div style="margin-top:6px;padding:8px 10px;background:#fff;border:1px solid #e0eed0;border-radius:6px">
+          <strong>${esc(resp.shared_partner_name)}</strong>${resp.shared_partner_company ? ' — ' + esc(resp.shared_partner_company) : ''}
+          ${resp.shared_partner_specialty ? `<div style="font-size:11.5px;color:var(--faint)">${esc(resp.shared_partner_specialty)}</div>` : ''}
+          <div style="font-size:11.5px;margin-top:2px">${esc(resp.shared_partner_phone) || ''}${resp.shared_partner_phone && resp.shared_partner_email ? ' · ' : ''}${esc(resp.shared_partner_email) || ''}</div>
+        </div>` : '';
+      return `<div class="rn-resp"><strong>${esc(resp.responder_email)}</strong>${resp.message ? ' — ' + esc(resp.message) : ''}${shared}<div style="color:var(--faint);font-size:11px;margin-top:4px">${fmtDate(resp.created_at)}</div></div>`;
+    }).join('') : '';
+
+    const respondPanel = (r.status === 'open' && !r.mine) ? `
+      <div id="respond-panel-${r.id}" class="hidden" style="margin-top:10px;border-top:1px solid #f0f0f0;padding-top:10px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-bottom:6px">Respond to ${esc(r.agent_email)}</div>
+        <select id="respond-partner-${r.id}" class="btn-sm" style="width:100%;margin-bottom:6px">
+          <option value="">— Just a note, no partner to share —</option>
+          ${partnerOptions}
+        </select>
+        <textarea id="respond-msg-${r.id}" class="btn-sm" style="width:100%;min-height:50px;box-sizing:border-box" placeholder="Optional note…"></textarea>
+        <div style="margin-top:6px">
+          <button class="btn-add" style="padding:6px 14px;font-size:12px" onclick="sendResponse(${r.id})">Send</button>
+          <button class="btn-sm" onclick="toggleRespond(${r.id})">Cancel</button>
+          <span id="respond-status-${r.id}" style="font-size:12px;color:var(--faint);margin-left:6px"></span>
+        </div>
+      </div>` : '';
+
     const actions = r.status !== 'open' ? '' : (r.mine
       ? `<button class="btn-sm" onclick="closeRequest(${r.id})">Mark Closed</button>`
-      : `<button class="btn-add" style="padding:6px 14px;font-size:12px" onclick="respondToRequest(${r.id})">I can help</button>`);
+      : `<button class="btn-add" style="padding:6px 14px;font-size:12px" onclick="toggleRespond(${r.id})">I can help</button>`);
+
     return `
     <div class="rn-card">
       <div class="rn-card-head">
         <div>
-          <div class="rn-name">${esc(r.metro_name)}, ${esc(r.state_code)} ${r.mine ? '<span class="rn-req-badge">You</span>' : ''}</div>
+          <div class="rn-name">${TYPE_LABELS[r.referral_type] || 'Referral'} — ${esc(r.metro_name)}, ${esc(r.state_code)} ${r.mine ? '<span class="rn-req-badge">You</span>' : ''}</div>
           <div class="rn-meta">${r.status === 'open' ? 'Open' : 'Closed'} · posted ${fmtDate(r.created_at)}${r.mine ? '' : ' by ' + esc(r.agent_email)}</div>
           ${r.notes ? `<div style="font-size:13px;margin-top:8px">${esc(r.notes)}</div>` : ''}
         </div>
         <div class="rn-actions">${actions}</div>
       </div>
+      ${respondPanel}
       ${responses}
     </div>`;
   }).join('');

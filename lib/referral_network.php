@@ -14,27 +14,40 @@ function referral_metro_label(PDO $db, int $metroId): string {
     return $m ? $m['metro_name'] . ', ' . $m['state_code'] : '';
 }
 
-// Notify a request's owner when another agent responds to it.
+// Notify a request's owner when another agent responds to it. $sharedPartner,
+// when given, is ['name','company','phone','email','specialty'] for the
+// contact the responder chose to share.
 function notify_referral_request_response(
     string $requesterEmail,
     string $metroLabel,
     string $responderName,
     string $responderEmail,
-    string $message
+    string $message,
+    ?array $sharedPartner = null
 ): void {
     $subject = "Someone can help with your referral request in {$metroLabel}";
-    $body = implode("\n", [
+    $lines = [
         "{$responderName} ({$responderEmail}) responded to your Referral Network request for {$metroLabel}.",
         "",
-        'Their message:',
-        $message !== '' ? $message : '(no message included)',
-        "",
-        "Reply to them directly at {$responderEmail} to connect.",
-        "",
-        "View your requests:",
-        "https://agents.innovateonline.com/referral_network.php?tab=requests",
-        "",
-        "— AgentEdge",
-    ]);
-    queue_email_to([$requesterEmail], $subject, $body, $responderEmail, $responderName);
+    ];
+    if ($sharedPartner) {
+        $lines[] = 'Shared contact:';
+        $lines[] = '  Name:      ' . $sharedPartner['name'];
+        if ($sharedPartner['company'])   $lines[] = '  Company:   ' . $sharedPartner['company'];
+        if ($sharedPartner['phone'])     $lines[] = '  Phone:     ' . $sharedPartner['phone'];
+        if ($sharedPartner['email'])     $lines[] = '  Email:     ' . $sharedPartner['email'];
+        if ($sharedPartner['specialty']) $lines[] = '  Specialty: ' . $sharedPartner['specialty'];
+        $lines[] = '';
+    }
+    $lines[] = 'Their message:';
+    $lines[] = $message !== '' ? $message : '(no message included)';
+    $lines[] = '';
+    $lines[] = "Reply to them directly at {$responderEmail} to connect.";
+    $lines[] = '';
+    $lines[] = 'View your requests:';
+    $lines[] = 'https://agents.innovateonline.com/referral_network.php?tab=requests';
+    $lines[] = '';
+    $lines[] = '— AgentEdge';
+
+    queue_email_to([$requesterEmail], $subject, implode("\n", $lines), $responderEmail, $responderName);
 }

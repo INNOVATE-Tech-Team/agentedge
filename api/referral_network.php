@@ -4,13 +4,15 @@
 // in X" request board.
 //
 // GET  (no action)              → bootstrap payload: metros + my partners (with leads) + all requests (with responses)
+// GET  action=open_requests     → lightweight feed of open requests for the dashboard widget
 // POST action=save_partner      → create/update one of MY partners
 // POST action=delete_partner    → delete one of MY partners (cascades its leads)
 // POST action=save_lead         → create/update a referral log entry against one of MY partners
 // POST action=delete_lead       → delete a referral log entry (must own the parent partner)
 // POST action=create_request    → post a new company-wide request
 // POST action=close_request     → close one of MY OWN requests
-// POST action=respond_request   → respond to (any) open request; notifies the requester
+// POST action=respond_request   → respond to (any) open request, optionally sharing one of MY
+//                                  partners; notifies the requester either way
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
@@ -29,6 +31,22 @@ if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed
 $myEmail = strtolower(trim($agent['email'] ?? ''));
 $myName  = trim($agent['name'] ?? $myEmail);
 $db      = local_db();
+
+// ── GET: lightweight open-requests feed for the dashboard widget ───────────────
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'open_requests') {
+    header('Content-Type: application/json');
+    $rows = $db->query(
+        "SELECT r.id, r.agent_email, r.referral_type, r.notes, r.created_at, m.metro_name, m.state_code,
+                COALESCE(NULLIF(i.full_name, ''), r.agent_email) AS agent_name
+         FROM referral_requests r
+         JOIN referral_metros m ON m.id = r.metro_id
+         LEFT JOIN agent_intake i ON i.email = r.agent_email
+         WHERE r.status = 'open'
+         ORDER BY r.created_at DESC
+         LIMIT 8"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    rn_json_out(['ok' => true, 'requests' => $rows]);
+}
 
 // ── GET: bootstrap ────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -190,21 +208,24 @@ if ($action === 'delete_lead') {
 
 // ── Company-wide request board ──────────────────────────────────────────────────
 if ($action === 'create_request') {
-    $metroId = (int)($in['metro_id'] ?? 0);
-    $notes   = trim($in['notes'] ?? '');
+    $metroId      = (int)($in['metro_id'] ?? 0);
+    $notes        = trim($in['notes'] ?? '');
+    $referralType = in_array($in['referral_type'] ?? '', ['buyer','seller','other'], true) ? $in['referral_type'] : 'other';
     if ($metroId <= 0) rn_json_out(['ok' => false, 'error' => 'Market is required'], 400);
     $mchk = $db->prepare("SELECT 1 FROM referral_metros WHERE id=?");
     $mchk->execute([$metroId]);
     if (!$mchk->fetchColumn()) rn_json_out(['ok' => false, 'error' => 'Unknown market'], 400);
 
-    $db->prepare("INSERT INTO referral_requests (agent_email, metro_id, notes) VALUES (?,?,?)")
-       ->execute([$myEmail, $metroId, $notes]);
+    $db->prepare("INSERT INTO referral_requests (agent_email, metro_id, notes, referral_type) VALUES (?,?,?,?)")
+       ->execute([$myEmail, $metroId, $notes, $referralType]);
     $requestId = (int)$db->lastInsertId();
 
     $metroLabel = referral_metro_label($db, $metroId);
+    $typeLabel  = $referralType === 'other' ? 'referral' : "{$referralType} referral";
+    $postText   = "{$myName} has a {$typeLabel} in {$metroLabel}. Please share if you know a great agent in that area.";
+
     $title = "Referral Partner Needed: {$metroLabel}";
-    $body  = '<p>' . htmlspecialchars($myName, ENT_QUOTES) . ' is looking for a referral partner in <strong>'
-           . htmlspecialchars($metroLabel, ENT_QUOTES) . '</strong>.</p>'
+    $body  = '<p>' . htmlspecialchars($postText, ENT_QUOTES) . '</p>'
            . ($notes !== '' ? '<p>' . nl2br(htmlspecialchars($notes, ENT_QUOTES)) . '</p>' : '')
            . '<p><a href="referral_network.php?tab=requests">Respond on the Referral Network board &rarr;</a></p>';
     $db->prepare(
@@ -214,7 +235,7 @@ if ($action === 'create_request') {
     $annId = (int)$db->lastInsertId();
     $db->prepare("UPDATE referral_requests SET announcement_id=? WHERE id=?")->execute([$annId, $requestId]);
 
-    rn_json_out(['ok' => true, 'id' => $requestId]);
+    rn_json_out(['ok' => true, 'id' => $requestId, 'post_text' => $postText]);
 }
 
 if ($action === 'close_request') {
@@ -234,7 +255,8 @@ if ($action === 'close_request') {
 if ($action === 'respond_request') {
     $requestId = (int)($in['request_id'] ?? 0);
     $message   = trim($in['message'] ?? '');
-    if ($message === '') rn_json_out(['ok' => false, 'error' => 'Message is required'], 400);
+    $partnerId = (int)($in['partner_id'] ?? 0);
+    if ($message === '' && $partnerId <= 0) rn_json_out(['ok' => false, 'error' => 'Add a note or share a partner'], 400);
 
     $rq = $db->prepare(
         "SELECT r.agent_email, r.status, m.metro_name, m.state_code
@@ -246,11 +268,26 @@ if ($action === 'respond_request') {
     if (!$req) rn_json_out(['ok' => false, 'error' => 'Not found'], 404);
     if ($req['status'] !== 'open') rn_json_out(['ok' => false, 'error' => 'This request is already closed'], 400);
 
-    $db->prepare("INSERT INTO referral_request_responses (request_id, responder_email, message) VALUES (?,?,?)")
-       ->execute([$requestId, $myEmail, $message]);
+    // Sharing a partner snapshots its current contact info onto the response
+    // row so it survives even if the partner is later edited/deleted.
+    $shared = ['name' => '', 'company' => '', 'phone' => '', 'email' => '', 'specialty' => ''];
+    if ($partnerId > 0) {
+        $pchk = $db->prepare("SELECT agent_email, name, company, phone, email, specialty FROM referral_partners WHERE id=?");
+        $pchk->execute([$partnerId]);
+        $partner = $pchk->fetch(PDO::FETCH_ASSOC);
+        if (!$partner) rn_json_out(['ok' => false, 'error' => 'Partner not found'], 404);
+        if (strtolower($partner['agent_email']) !== $myEmail) rn_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
+        $shared = ['name' => $partner['name'], 'company' => $partner['company'], 'phone' => $partner['phone'], 'email' => $partner['email'], 'specialty' => $partner['specialty']];
+    }
+
+    $db->prepare(
+        "INSERT INTO referral_request_responses
+            (request_id, responder_email, message, shared_partner_name, shared_partner_company, shared_partner_phone, shared_partner_email, shared_partner_specialty)
+         VALUES (?,?,?,?,?,?,?,?)"
+    )->execute([$requestId, $myEmail, $message, $shared['name'], $shared['company'], $shared['phone'], $shared['email'], $shared['specialty']]);
 
     $metroLabel = $req['metro_name'] . ', ' . $req['state_code'];
-    notify_referral_request_response($req['agent_email'], $metroLabel, $myName, $myEmail, $message);
+    notify_referral_request_response($req['agent_email'], $metroLabel, $myName, $myEmail, $message, $shared['name'] ? $shared : null);
 
     rn_json_out(['ok' => true]);
 }

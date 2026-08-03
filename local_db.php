@@ -2227,6 +2227,9 @@ function local_db(): PDO {
     // so closing a request early can expire its announcement immediately instead
     // of leaving a stale "still open" notice up for the rest of its 48 hours.
     try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN announcement_id INTEGER"); } catch (\Exception $e) {}
+    // buyer | seller | other — drives the templated dashboard/social copy
+    // ("{name} has a {type} referral in {metro}").
+    try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN referral_type TEXT NOT NULL DEFAULT 'other'"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_status ON referral_requests(status)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_metro ON referral_requests(metro_id)");
 
@@ -2238,6 +2241,18 @@ function local_db(): PDO {
         created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_responses_request ON referral_request_responses(request_id)");
+    // A snapshot (not a live FK) of a partner the responder chose to share, so
+    // the shared contact info survives even if that partner record is later
+    // edited or deleted from the responder's own list.
+    foreach ([
+        'shared_partner_name'      => "TEXT NOT NULL DEFAULT ''",
+        'shared_partner_company'   => "TEXT NOT NULL DEFAULT ''",
+        'shared_partner_phone'     => "TEXT NOT NULL DEFAULT ''",
+        'shared_partner_email'     => "TEXT NOT NULL DEFAULT ''",
+        'shared_partner_specialty' => "TEXT NOT NULL DEFAULT ''",
+    ] as $col => $def) {
+        try { $pdo->exec("ALTER TABLE referral_request_responses ADD COLUMN {$col} {$def}"); } catch (\Exception $e) {}
+    }
 
     if ($pdo->query("SELECT COUNT(*) FROM referral_metros")->fetchColumn() == 0) {
         $metroIns = $pdo->prepare(
