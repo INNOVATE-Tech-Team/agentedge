@@ -199,17 +199,35 @@ if ($action === 'create_request') {
 
     $db->prepare("INSERT INTO referral_requests (agent_email, metro_id, notes) VALUES (?,?,?)")
        ->execute([$myEmail, $metroId, $notes]);
-    rn_json_out(['ok' => true, 'id' => (int)$db->lastInsertId()]);
+    $requestId = (int)$db->lastInsertId();
+
+    $metroLabel = referral_metro_label($db, $metroId);
+    $title = "Referral Partner Needed: {$metroLabel}";
+    $body  = '<p>' . htmlspecialchars($myName, ENT_QUOTES) . ' is looking for a referral partner in <strong>'
+           . htmlspecialchars($metroLabel, ENT_QUOTES) . '</strong>.</p>'
+           . ($notes !== '' ? '<p>' . nl2br(htmlspecialchars($notes, ENT_QUOTES)) . '</p>' : '')
+           . '<p><a href="referral_network.php?tab=requests">Respond on the Referral Network board &rarr;</a></p>';
+    $db->prepare(
+        "INSERT INTO announcements (title, body, author, audience, pinned, expires_at)
+         VALUES (?, ?, ?, 'all', 0, datetime('now', '+48 hours'))"
+    )->execute([$title, $body, $myEmail]);
+    $annId = (int)$db->lastInsertId();
+    $db->prepare("UPDATE referral_requests SET announcement_id=? WHERE id=?")->execute([$annId, $requestId]);
+
+    rn_json_out(['ok' => true, 'id' => $requestId]);
 }
 
 if ($action === 'close_request') {
     $id = (int)($in['id'] ?? 0);
-    $own = $db->prepare("SELECT agent_email FROM referral_requests WHERE id=?");
+    $own = $db->prepare("SELECT agent_email, announcement_id FROM referral_requests WHERE id=?");
     $own->execute([$id]);
-    $ownerEmail = $own->fetchColumn();
-    if ($ownerEmail === false) rn_json_out(['ok' => false, 'error' => 'Not found'], 404);
-    if (strtolower($ownerEmail) !== $myEmail) rn_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
+    $row = $own->fetch(PDO::FETCH_ASSOC);
+    if (!$row) rn_json_out(['ok' => false, 'error' => 'Not found'], 404);
+    if (strtolower($row['agent_email']) !== $myEmail) rn_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
     $db->prepare("UPDATE referral_requests SET status='closed', closed_at=datetime('now') WHERE id=?")->execute([$id]);
+    if (!empty($row['announcement_id'])) {
+        $db->prepare("UPDATE announcements SET expires_at=datetime('now') WHERE id=?")->execute([$row['announcement_id']]);
+    }
     rn_json_out(['ok' => true]);
 }
 

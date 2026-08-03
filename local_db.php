@@ -2223,6 +2223,10 @@ function local_db(): PDO {
         created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
         closed_at   TEXT
     )");
+    // Links to the auto-created dashboard announcement (see api/referral_network.php)
+    // so closing a request early can expire its announcement immediately instead
+    // of leaving a stale "still open" notice up for the rest of its 48 hours.
+    try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN announcement_id INTEGER"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_status ON referral_requests(status)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_metro ON referral_requests(metro_id)");
 
