@@ -2167,7 +2167,146 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_acl_agent ON agent_comms_log(agent_email)");
 
+    // ── Referral Network ──────────────────────────────────────────────────────
+    // Each agent's own private list of outside-market referral partners, a log
+    // of referrals sent to/received from each one, and a company-wide board
+    // for "I need a partner in [metro]" requests. See lib/referral_network.php
+    // for the metro reference list + notification helper.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS referral_metros (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        state_code TEXT    NOT NULL,
+        state_name TEXT    NOT NULL,
+        metro_name TEXT    NOT NULL,
+        sort_ord   INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(state_code, metro_name)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_metros_state ON referral_metros(state_code)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS referral_partners (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email  TEXT    NOT NULL,
+        name         TEXT    NOT NULL,
+        company      TEXT    NOT NULL DEFAULT '',
+        metro_id     INTEGER NOT NULL,
+        phone        TEXT    NOT NULL DEFAULT '',
+        email        TEXT    NOT NULL DEFAULT '',
+        specialty    TEXT    NOT NULL DEFAULT '',
+        how_met      TEXT    NOT NULL DEFAULT '',
+        notes        TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_partners_agent ON referral_partners(agent_email)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_partners_metro ON referral_partners(metro_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS referral_leads (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        partner_id     INTEGER NOT NULL,
+        agent_email    TEXT    NOT NULL,
+        direction      TEXT    NOT NULL DEFAULT 'sent',   -- sent (we referred out) | received (they referred us)
+        client_name    TEXT    NOT NULL DEFAULT '',
+        client_contact TEXT    NOT NULL DEFAULT '',
+        status         TEXT    NOT NULL DEFAULT 'sent',   -- sent | contacted | under_contract | closed_won | closed_lost
+        notes          TEXT    NOT NULL DEFAULT '',
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_leads_partner ON referral_leads(partner_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_leads_agent ON referral_leads(agent_email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS referral_requests (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email TEXT    NOT NULL,
+        metro_id    INTEGER NOT NULL,
+        notes       TEXT    NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'open',   -- open | closed
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        closed_at   TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_status ON referral_requests(status)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_metro ON referral_requests(metro_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS referral_request_responses (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id       INTEGER NOT NULL,
+        responder_email  TEXT    NOT NULL,
+        message          TEXT    NOT NULL DEFAULT '',
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_responses_request ON referral_request_responses(request_id)");
+
+    if ($pdo->query("SELECT COUNT(*) FROM referral_metros")->fetchColumn() == 0) {
+        $metroIns = $pdo->prepare(
+            "INSERT OR IGNORE INTO referral_metros (state_code, state_name, metro_name, sort_ord) VALUES (?,?,?,?)"
+        );
+        foreach (_referral_network_metro_seed() as [$code, $stateName, $metros]) {
+            $ord = 0;
+            foreach ($metros as $metro) { $metroIns->execute([$code, $stateName, $metro, $ord++]); }
+            // Statewide/rural fallback so nothing outside the named metros is unrepresented.
+            $metroIns->execute([$code, $stateName, 'Statewide / Rural', 999]);
+        }
+    }
+
     return $pdo;
+}
+
+// Practical starter list of major U.S. metros per state (not the full ~390-entry
+// Census MSA delineation — just enough for agents to find each other quickly).
+// Each state also gets a "Statewide / Rural" catch-all inserted separately above.
+function _referral_network_metro_seed(): array {
+    return [
+        ['AL','Alabama',              ['Birmingham','Huntsville','Mobile','Montgomery']],
+        ['AK','Alaska',               ['Anchorage']],
+        ['AZ','Arizona',              ['Phoenix','Tucson']],
+        ['AR','Arkansas',             ['Little Rock']],
+        ['CA','California',          ['Los Angeles','San Francisco Bay Area','San Diego','Sacramento','Fresno']],
+        ['CO','Colorado',             ['Denver','Colorado Springs']],
+        ['CT','Connecticut',          ['Hartford','New Haven','Stamford']],
+        ['DE','Delaware',             ['Wilmington']],
+        ['DC','District of Columbia', ['Washington']],
+        ['FL','Florida',             ['Miami','Orlando','Tampa','Jacksonville','Fort Lauderdale']],
+        ['GA','Georgia',              ['Atlanta','Savannah','Augusta']],
+        ['HI','Hawaii',               ['Honolulu']],
+        ['ID','Idaho',                ['Boise']],
+        ['IL','Illinois',             ['Chicago','Springfield']],
+        ['IN','Indiana',              ['Indianapolis','Fort Wayne']],
+        ['IA','Iowa',                 ['Des Moines','Cedar Rapids']],
+        ['KS','Kansas',               ['Wichita','Topeka']],
+        ['KY','Kentucky',             ['Louisville','Lexington']],
+        ['LA','Louisiana',            ['New Orleans','Baton Rouge','Shreveport']],
+        ['ME','Maine',                ['Portland']],
+        ['MD','Maryland',             ['Baltimore']],
+        ['MA','Massachusetts',        ['Boston','Worcester']],
+        ['MI','Michigan',             ['Detroit','Grand Rapids','Ann Arbor']],
+        ['MN','Minnesota',            ['Minneapolis-St. Paul']],
+        ['MS','Mississippi',          ['Jackson']],
+        ['MO','Missouri',             ['Kansas City','St. Louis']],
+        ['MT','Montana',              ['Billings','Missoula']],
+        ['NE','Nebraska',             ['Omaha','Lincoln']],
+        ['NV','Nevada',               ['Las Vegas','Reno']],
+        ['NH','New Hampshire',        ['Manchester']],
+        ['NJ','New Jersey',           ['Newark','Jersey City']],
+        ['NM','New Mexico',           ['Albuquerque']],
+        ['NY','New York',            ['New York City','Buffalo','Rochester','Albany']],
+        ['NC','North Carolina',       ['Charlotte','Raleigh','Greensboro']],
+        ['ND','North Dakota',         ['Fargo']],
+        ['OH','Ohio',                 ['Columbus','Cleveland','Cincinnati']],
+        ['OK','Oklahoma',             ['Oklahoma City','Tulsa']],
+        ['OR','Oregon',               ['Portland','Eugene']],
+        ['PA','Pennsylvania',         ['Philadelphia','Pittsburgh']],
+        ['RI','Rhode Island',         ['Providence']],
+        ['SC','South Carolina',       ['Charleston','Columbia','Greenville','Myrtle Beach']],
+        ['SD','South Dakota',         ['Sioux Falls']],
+        ['TN','Tennessee',            ['Nashville','Memphis','Knoxville']],
+        ['TX','Texas',               ['Houston','Dallas-Fort Worth','Austin','San Antonio','El Paso']],
+        ['UT','Utah',                 ['Salt Lake City']],
+        ['VT','Vermont',              ['Burlington']],
+        ['VA','Virginia',             ['Virginia Beach','Richmond']],
+        ['WA','Washington',           ['Seattle','Spokane']],
+        ['WV','West Virginia',        ['Charleston']],
+        ['WI','Wisconsin',            ['Milwaukee','Madison']],
+        ['WY','Wyoming',              ['Cheyenne']],
+    ];
 }
 
 // Build the "ST - Market Center" display label for a roster row. If $state

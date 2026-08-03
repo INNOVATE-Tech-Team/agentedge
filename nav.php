@@ -69,6 +69,7 @@ function nav_items(): array {
 function agent_assets_items(): array {
     return [
         ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
+        ['key' => 'referral_network',   'label' => 'Referral Network',        'href' => 'referral_network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         ['key' => 'commission_submit',  'label' => 'Submit Commission Check', 'href' => 'commission_submit.php'],
         ['key' => 'my_activity',        'label' => 'My Weekly Activity',      'href' => 'my_activity.php'],
