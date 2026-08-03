@@ -12,16 +12,6 @@ $agent = require_login();
   <title>My Profile — AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
-  <style>
-    #hs-file{display:none}
-    .ap-avatar-img{border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border)}
-    .ap-avatar-fallback{border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-    .hs-upload-label{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f5e8;border:1px dashed #82C112;border-radius:7px;font-size:13px;font-weight:700;color:#5b8e0d;cursor:pointer}
-    .hs-upload-label:hover{background:#e4f0d8}
-    .hs-upload-label.disabled{opacity:.5;cursor:not-allowed}
-    .hs-note{font-size:11px;color:var(--faint);margin-top:6px}
-    .hs-msg{font-size:12px;color:var(--faint);margin-top:6px;min-height:16px}
-  </style>
 </head>
 <body>
   <div class="layout">
@@ -32,21 +22,6 @@ $agent = require_login();
         <div class="content-hello">Keep your contact info and social links current</div>
       </header>
       <main class="wrap">
-        <section class="card" style="margin-bottom:20px">
-          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Profile Photo</h2>
-          <p class="form-sub" style="margin:0 0 14px">Shown on your agent profile. Uploading a new photo replaces the current one.</p>
-          <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-            <img id="hs-avatar-img" class="ap-avatar-img" style="width:72px;height:72px;display:none" alt="">
-            <div id="hs-avatar-fallback" class="ap-avatar-fallback" style="width:72px;height:72px;font-size:22px">?</div>
-            <div>
-              <label class="hs-upload-label" id="hs-upload-label" for="hs-file"><span>&#43; Upload / Replace Photo</span></label>
-              <input type="file" id="hs-file" accept="image/*">
-              <div class="hs-note">JPG or PNG, up to 10 MB.</div>
-              <div class="hs-msg" id="hs-msg"></div>
-            </div>
-          </div>
-        </section>
-
         <section class="card">
           <div id="profile-note" class="banner" hidden></div>
           <p class="form-sub">This is the information shown to your office and across INNOVATE.
@@ -208,68 +183,6 @@ $agent = require_login();
       else { msg.textContent = d.error||'Error saving.'; msg.style.color='#c00'; }
     }).catch(()=>{ btn.disabled=false; msg.textContent='Network error.'; msg.style.color='#c00'; });
   }
-
-  // ── Profile photo ────────────────────────────────────────────────────────────
-  (function () {
-    var img      = document.getElementById('hs-avatar-img');
-    var fallback = document.getElementById('hs-avatar-fallback');
-    var input    = document.getElementById('hs-file');
-    var label    = document.getElementById('hs-upload-label');
-    var status   = document.getElementById('hs-msg');
-    var oldKeys  = [];
-
-    function showKey(key) {
-      if (key) {
-        img.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(key);
-        img.style.display = '';
-        fallback.style.display = 'none';
-      } else {
-        img.style.display = 'none';
-        fallback.style.display = '';
-      }
-    }
-
-    fetch('api/intake.php', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
-      var list = d.headshots || [];
-      oldKeys = list.map(function (h) { return h.file_key; });
-      showKey(oldKeys.length ? oldKeys[oldKeys.length - 1] : null);
-    }).catch(function () {});
-
-    input.addEventListener('change', function () {
-      var file = this.files[0];
-      if (!file) return;
-      if (file.size > 10 * 1024 * 1024) { status.textContent = 'File exceeds 10 MB limit.'; this.value = ''; return; }
-
-      input.disabled = true;
-      label.classList.add('disabled');
-      status.textContent = 'Uploading…';
-      var fd = new FormData();
-      fd.append('headshot', file);
-
-      fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
-        .then(function (r) { return r.json(); })
-        .then(function (res) {
-          input.disabled = false;
-          label.classList.remove('disabled');
-          if (!res.ok || !res.file_key) { status.textContent = res.error || 'Upload failed.'; return; }
-          var toRemove = oldKeys;
-          oldKeys = [res.file_key];
-          showKey(res.file_key);
-          status.textContent = 'Saved.';
-          setTimeout(function () { status.textContent = ''; }, 2000);
-          toRemove.forEach(function (key) {
-            fetch('api/intake.php?action=delete_file', {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ key: key }),
-            }).catch(function () {});
-          });
-        })
-        .catch(function () { input.disabled = false; label.classList.remove('disabled'); status.textContent = 'Network error.'; });
-
-      this.value = '';
-    });
-  })();
   </script>
 </body>
 </html>
