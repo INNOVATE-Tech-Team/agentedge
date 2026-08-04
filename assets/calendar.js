@@ -12,6 +12,41 @@ let agentMCSlug = '';
 const evCache = {};
 let hasPersonalCal = false;
 
+// Deep link from an emailed registration link — calendar.php?event=<gcal_id>
+// &scope=training&date=YYYY-MM-DD. Jumps to the right month/tab, then
+// scrolls to and flashes the matching card once it's rendered; the agent
+// still has to click Register themselves (see calRunDeepLink below for why).
+const calDeepLink = (() => {
+  const p  = new URLSearchParams(location.search);
+  const id = p.get('event');
+  if (!id) return null;
+  return { id, scope: p.get('scope') || '', date: p.get('date') || '' };
+})();
+
+if (calDeepLink && /^\d{4}-\d{2}-\d{2}$/.test(calDeepLink.date)) {
+  const [dy, dm] = calDeepLink.date.split('-').map(Number);
+  calYear  = dy;
+  calMonth = dm - 1;
+}
+const CAL_TAB_FILTERS = ['company', 'mc', 'training', 'events', 'birthday', 'anniversary', 'mycal'];
+if (calDeepLink && CAL_TAB_FILTERS.includes(calDeepLink.scope)) {
+  const tab = document.querySelector(`.cal-tab[data-filter="${calDeepLink.scope}"]`);
+  if (tab) {
+    calFilter = calDeepLink.scope;
+    document.querySelectorAll('.cal-tab').forEach(x => x.classList.remove('cal-tab-active'));
+    tab.classList.add('cal-tab-active');
+  }
+}
+
+function calRunDeepLink() {
+  if (!calDeepLink) return;
+  const card = document.querySelector(`.cal-list-ev[data-event-id="${CSS.escape(calDeepLink.id)}"]`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('cal-list-ev-flash');
+  setTimeout(() => card.classList.remove('cal-list-ev-flash'), 1400);
+}
+
 const SCOPES = {
   company:        { bg: '#82C112', text: '#111' },
   'market-center':{ bg: '#2C9CC9', text: '#fff' },
@@ -201,7 +236,7 @@ function renderList(evs) {
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
   body.innerHTML = vis.map(ev => `
-    <div class="cal-list-ev">
+    <div class="cal-list-ev" data-event-id="${calEsc(ev.gcal_id || '')}">
       <div class="cal-list-ev-inner">
         <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
         <div class="cal-list-ev-body">
@@ -224,7 +259,8 @@ function renderList(evs) {
               data-rsvped="${ev.rsvped ? '1' : '0'}"
               data-waitlisted="${ev.waitlisted ? '1' : '0'}">${calRsvpLabel(ev)}</button>
             ${(typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
-              ? `<button class="cal-edit-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>`
+              ? `<button class="cal-edit-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>
+                 <button class="cal-copy-link-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}" data-event-date="${calEsc(ev.date)}">Copy Link</button>`
               : ''}` : ''}
         </div>
       </div>
@@ -322,7 +358,7 @@ document.getElementById('cal-next').addEventListener('click', () => {
   delete evCache[calKey()]; calDraw();
 });
 
-loadProfile().then(() => calDraw());
+loadProfile().then(() => calDraw()).then(() => calRunDeepLink());
 
 // My Calendar ICS handlers
 async function savePersonalCalUrl(url) {
@@ -434,6 +470,23 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     const cached = evCache[calKey()] ?? [];
     const ev = cached.find(x => x.gcal_id === btn.dataset.eventId);
     if (ev) openModal(ev);
+  });
+
+  // Copy Link button — delegated. Builds a shareable registration deep link
+  // for this one event (see calDeepLink/calRunDeepLink up top).
+  document.getElementById('cal-event-list-body').addEventListener('click', e => {
+    const btn = e.target.closest('.cal-copy-link-btn');
+    if (!btn) return;
+    const url = `${location.origin}${location.pathname}?` + new URLSearchParams({
+      event: btn.dataset.eventId,
+      scope: btn.dataset.scope,
+      date:  btn.dataset.eventDate,
+    });
+    navigator.clipboard.writeText(url).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
   });
 
   // Save

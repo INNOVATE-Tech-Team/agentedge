@@ -2071,7 +2071,7 @@ function local_db(): PDO {
         cohort_id   INTEGER NOT NULL,
         agent_email TEXT    NOT NULL,
         coach_email TEXT    NOT NULL DEFAULT '',
-        status      TEXT    NOT NULL DEFAULT 'active',  -- active | graduated | dropped
+        status      TEXT    NOT NULL DEFAULT 'active',  -- active | on_hold | graduated | dropped
         joined_at   TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(cohort_id, agent_email)

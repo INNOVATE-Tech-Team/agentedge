@@ -3,7 +3,7 @@
 // GET  ?cohort_id=...        → can_manage_cohorts(): members of one cohort, with
 //                               this week's KPI values joined in for a quick glance.
 // POST {action:'add'}        → add an agent to a cohort with an assigned coach
-// POST {action:'set_status'} → active | graduated | dropped (graduated logs a milestone)
+// POST {action:'set_status'} → active | on_hold | graduated | dropped (graduated logs a milestone)
 // POST {action:'set_coach'}  → reassign a member's coach
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
@@ -87,7 +87,7 @@ if ($action === 'set_coach') {
 if ($action === 'set_status') {
     $id     = (int)($body['id'] ?? 0);
     $status = preg_replace('/[^a-z_]/', '', $body['status'] ?? '');
-    if (!$id || !in_array($status, ['active', 'graduated', 'dropped'], true)) jerr('id and a valid status required');
+    if (!$id || !in_array($status, ['active', 'on_hold', 'graduated', 'dropped'], true)) jerr('id and a valid status required');
 
     $st = $pdo->prepare("SELECT cohort_id, agent_email, status FROM cohort_members WHERE id=?");
     $st->execute([$id]);

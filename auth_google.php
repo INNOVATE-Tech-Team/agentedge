@@ -17,7 +17,8 @@ $client_secret = $c['google_client_secret'] ?? '';
 $redirect_uri  = !empty($c['google_redirect_uri']) ? $c['google_redirect_uri'] : ('https://' . $_SERVER['HTTP_HOST'] . '/auth_google.php');
 
 function google_fail(string $code): void {
-    header('Location: login.php?google_err=' . $code);
+    $next = safe_next_path($_SESSION['google_oauth_next'] ?? null);
+    header('Location: login.php?google_err=' . $code . ($next ? '&next=' . urlencode($next) : ''));
     exit;
 }
 
@@ -128,9 +129,12 @@ if ($u) {
     $agent = ['id' => 0, 'email' => $email, 'name' => $name, 'photo' => $photo];
 }
 
+$next = safe_next_path($_SESSION['google_oauth_next'] ?? null);
+unset($_SESSION['google_oauth_next']);
+
 session_regenerate_id(true);
 $_SESSION['agent'] = $agent;
 log_login_event($agent['email'], $agent['name'], 'google');
 
-header('Location: index.php');
+header('Location: ' . ($next ?: 'index.php'));
 exit;
