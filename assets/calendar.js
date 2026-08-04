@@ -260,7 +260,7 @@ function renderList(evs) {
               data-waitlisted="${ev.waitlisted ? '1' : '0'}">${calRsvpLabel(ev)}</button>
             ${(typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
               ? `<button class="cal-edit-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>
-                 <button class="cal-copy-link-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}" data-event-date="${calEsc(ev.date)}">Copy Link</button>`
+                 <button class="cal-copy-link-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}" data-event-date="${calEsc(ev.date)}" data-reg-slug="${calEsc(ev.reg_slug || '')}">Copy Link</button>`
               : ''}` : ''}
         </div>
       </div>
@@ -406,6 +406,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evLoc      = document.getElementById('cal-ev-location');
   const evDesc     = document.getElementById('cal-ev-description');
   const evRegDesc  = document.getElementById('cal-ev-reg-desc');
+  const evRegSlug  = document.getElementById('cal-ev-reg-slug');
   const evCapacity = document.getElementById('cal-ev-capacity');
   const attendeesBox = document.getElementById('cal-ev-attendees');
   const errBox     = document.getElementById('cal-modal-err');
@@ -438,6 +439,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evLoc.value         = ev ? (ev.location    || '') : '';
     evDesc.value        = ev ? (ev.description || '') : '';
     evRegDesc.value     = ev ? (ev.reg_description || '') : '';
+    evRegSlug.value     = ev ? (ev.reg_slug || '') : '';
     evCapacity.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart.value       = '';
     evEnd.value         = '';
@@ -479,10 +481,10 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   document.getElementById('cal-event-list-body').addEventListener('click', e => {
     const btn = e.target.closest('.cal-copy-link-btn');
     if (!btn) return;
-    const url = `${location.origin}${location.pathname.replace(/[^/]*$/, 'register.php')}?` + new URLSearchParams({
-      event: btn.dataset.eventId,
-      scope: btn.dataset.scope,
-    });
+    const base = `${location.origin}${location.pathname.replace(/[^/]*$/, 'register.php')}`;
+    const url = btn.dataset.regSlug
+      ? `${base}?s=${encodeURIComponent(btn.dataset.regSlug)}`
+      : `${base}?` + new URLSearchParams({ event: btn.dataset.eventId, scope: btn.dataset.scope });
     navigator.clipboard.writeText(url).then(() => {
       const orig = btn.textContent;
       btn.textContent = 'Copied!';
@@ -511,6 +513,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       location:    evLoc.value,
       description: evDesc.value,
       reg_description: evRegDesc.value,
+      reg_slug:    evRegSlug.value,
       capacity:    evCapacity.value.trim(),
     };
 
@@ -573,6 +576,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evLoc2      = document.getElementById('cal-ev2-location');
   const evDesc2     = document.getElementById('cal-ev2-description');
   const evRegDesc2  = document.getElementById('cal-ev2-reg-desc');
+  const evRegSlug2  = document.getElementById('cal-ev2-reg-slug');
   const evCapacity2 = document.getElementById('cal-ev2-capacity');
   const attendeesBox2 = document.getElementById('cal-ev2-attendees');
   const errBox2     = document.getElementById('cal-ev2-modal-err');
@@ -605,6 +609,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evLoc2.value         = ev ? (ev.location    || '') : '';
     evDesc2.value        = ev ? (ev.description || '') : '';
     evRegDesc2.value     = ev ? (ev.reg_description || '') : '';
+    evRegSlug2.value     = ev ? (ev.reg_slug || '') : '';
     evCapacity2.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart2.value       = '';
     evEnd2.value         = '';
@@ -662,6 +667,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       location:    evLoc2.value,
       description: evDesc2.value,
       reg_description: evRegDesc2.value,
+      reg_slug:    evRegSlug2.value,
       capacity:    evCapacity2.value.trim(),
     };
 

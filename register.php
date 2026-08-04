@@ -40,6 +40,25 @@ function unwrap_google_redirect(string $text): string {
 
 $scope    = ($_GET['scope'] ?? '') === 'events' ? 'events' : 'training';
 $event_id = trim($_GET['event'] ?? '');
+
+// Short link (register.php?s=<slug>) — resolves to an event_id + scope
+// without either needing to be in the URL. Slugs are unique across both
+// tables (enforced in api/training_event_action.php / event_action.php), so
+// whichever table matches determines the scope.
+$slug = trim($_GET['s'] ?? '');
+if ($slug !== '') {
+    $slugDb = local_db();
+    $st = $slugDb->prepare("SELECT event_id FROM training_events WHERE reg_slug=?");
+    $st->execute([$slug]);
+    if ($found = $st->fetchColumn()) {
+        $event_id = $found; $scope = 'training';
+    } else {
+        $st = $slugDb->prepare("SELECT event_id FROM events_calendar WHERE reg_slug=?");
+        $st->execute([$slug]);
+        if ($found = $st->fetchColumn()) { $event_id = $found; $scope = 'events'; }
+    }
+}
+
 $capTable = $scope === 'events' ? 'events_calendar' : 'training_events';
 
 $c        = cfg();

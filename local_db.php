@@ -1735,6 +1735,11 @@ function local_db(): PDO {
     // with Zoom dial-in boilerplate. NULL falls back to the cleaned-up
     // Calendar description.
     try { $pdo->exec("ALTER TABLE training_events ADD COLUMN reg_description TEXT"); } catch (\Exception $e) {}
+    // Short, friendly slug for the registration link (register.php?s=<slug>)
+    // instead of the raw Google Calendar event ID. Uniqueness is enforced at
+    // the application layer across both training_events and events_calendar
+    // (see slugify_reg_link() in api/training_event_action.php), not here.
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN reg_slug TEXT"); } catch (\Exception $e) {}
 
     // ── Company Calendar "Events" tab — same RSVP/capacity/waitlist pattern as
     // Training above, but a separate Google Calendar + separate RSVP pool, so
@@ -1759,6 +1764,8 @@ function local_db(): PDO {
     )");
     // See training_events.reg_description above — same idea, for the Events tab.
     try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN reg_description TEXT"); } catch (\Exception $e) {}
+    // See training_events.reg_slug above — same idea, for the Events tab.
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN reg_slug TEXT"); } catch (\Exception $e) {}
 
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
