@@ -24,7 +24,7 @@ require_once __DIR__ . '/../lib/event_notifications.php';
 
 function reminder_intro_html(string $which): string {
     $when = $which === '24h' ? 'starts in about 24 hours' : 'starts in about 1 hour';
-    return '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">Just a reminder — your event <strong>' . $when . '</strong>:</p>';
+    return '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">Just a reminder - your event <strong>' . $when . '</strong>:</p>';
 }
 
 function scope_config(string $scope): array {

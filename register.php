@@ -103,7 +103,7 @@ function fmt_event_when(string $start, string $end, bool $allDay): string {
     if (!$sTs) return $start;
     $out = date('l, F j, Y', $sTs) . ' at ' . date('g:i A', $sTs);
     $eTs = strtotime($end);
-    if ($eTs) $out .= ' – ' . date('g:i A', $eTs);
+    if ($eTs) $out .= ' - ' . date('g:i A', $eTs);
     return $out;
 }
 $when = fmt_event_when($start_raw, $end_raw, $is_all_day);
@@ -113,7 +113,7 @@ $when = fmt_event_when($start_raw, $end_raw, $is_all_day);
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?= $title !== '' ? h($title) . ' — ' : '' ?>Register — AgentEdge</title>
+  <title><?= $title !== '' ? h($title) . ' - ' : '' ?>Register - AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
   <style>
@@ -254,7 +254,7 @@ function regWireForm() {
         regShowConfirm(email, name, d.waitlisted);
       })
       .catch(() => {
-        errBox.textContent = 'Network error — please try again.';
+        errBox.textContent = 'Network error - please try again.';
         errBox.style.display = 'block';
         btn.disabled = false; btn.textContent = 'Register';
       });

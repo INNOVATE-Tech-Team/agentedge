@@ -38,7 +38,7 @@ function event_when_string(string $start, string $end, bool $allDay): string {
     if (!$sTs) return $start;
     $out = date('l, F j, Y', $sTs) . ' at ' . date('g:i A', $sTs) . ' ET';
     $eTs = strtotime($end);
-    if ($eTs) $out .= ' – ' . date('g:i A', $eTs) . ' ET';
+    if ($eTs) $out .= ' - ' . date('g:i A', $eTs) . ' ET';
     return $out;
 }
 

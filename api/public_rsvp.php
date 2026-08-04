@@ -87,7 +87,7 @@ if ($action === 'cancel') {
             public_gcal_sync($cal_id, $key_file, $event_id, $promoted['agent_email'], true);
             $info = public_event_info($cal_id, $key_file, $scope, $event_id);
             queue_branded_email([$promoted['agent_email']], "You're in: {$promoted['event_title']}",
-                '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">A seat opened up — you\'ve been moved from the waitlist to registered for:</p>'
+                '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">A seat opened up - you\'ve been moved from the waitlist to registered for:</p>'
                 . event_details_block_html($promoted['event_title'], $info)
             );
         }
@@ -127,7 +127,7 @@ if ($action === 'register') {
     $info = public_event_info($cal_id, $key_file, $scope, $event_id);
     if ($status === 'waitlisted') {
         queue_branded_email([$email], "Waitlisted: {$event_title}",
-            '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">This event is currently full — you\'ve been added to the waitlist. We\'ll email you if a seat opens up.</p>'
+            '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">This event is currently full - you\'ve been added to the waitlist. We\'ll email you if a seat opens up.</p>'
             . event_details_block_html($event_title, $info)
         );
     } else {
