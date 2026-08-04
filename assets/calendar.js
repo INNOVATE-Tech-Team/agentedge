@@ -472,15 +472,14 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     if (ev) openModal(ev);
   });
 
-  // Copy Link button — delegated. Builds a shareable registration deep link
-  // for this one event (see calDeepLink/calRunDeepLink up top).
+  // Copy Link button — delegated. Builds a public, no-login registration
+  // link (register.php) for this one event — the URL to actually email out.
   document.getElementById('cal-event-list-body').addEventListener('click', e => {
     const btn = e.target.closest('.cal-copy-link-btn');
     if (!btn) return;
-    const url = `${location.origin}${location.pathname}?` + new URLSearchParams({
+    const url = `${location.origin}${location.pathname.replace(/[^/]*$/, 'register.php')}?` + new URLSearchParams({
       event: btn.dataset.eventId,
       scope: btn.dataset.scope,
-      date:  btn.dataset.eventDate,
     });
     navigator.clipboard.writeText(url).then(() => {
       const orig = btn.textContent;
