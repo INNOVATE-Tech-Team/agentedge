@@ -69,8 +69,10 @@ foreach (local_db()->query("SELECT event_id, COUNT(*) AS cnt FROM training_rsvps
 }
 
 $capacities = [];
-foreach (local_db()->query("SELECT event_id, capacity FROM training_events")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+$regDescs   = [];
+foreach (local_db()->query("SELECT event_id, capacity, reg_description FROM training_events")->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $capacities[$r['event_id']] = $r['capacity'] !== null ? (int)$r['capacity'] : null;
+    $regDescs[$r['event_id']]   = $r['reg_description'];
 }
 
 $events = [];
@@ -108,6 +110,7 @@ foreach ($items as $item) {
         'rsvped'      => ($myStatus[$gcal_id] ?? null) === 'registered',
         'waitlisted'  => ($myStatus[$gcal_id] ?? null) === 'waitlisted',
         'capacity'    => $capacities[$gcal_id] ?? null,
+        'reg_description' => $regDescs[$gcal_id] ?? null,
         'registered_count' => $regCounts[$gcal_id] ?? 0,
         'is_all_day'  => $is_all_day,
         'start_dt'    => $start_dt,

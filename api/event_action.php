@@ -36,6 +36,7 @@ if ($action === 'create') {
     $location   = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
     $capacity   = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
+    $regDesc    = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
 
     if (!$title || !$date) { http_response_code(400); echo json_encode(['error' => 'title and date required']); exit; }
 
@@ -60,8 +61,8 @@ if ($action === 'create') {
 
     $result = gcal_create_event($cal_id, $token, $event);
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to create event — check calendar sharing permissions']); exit; }
-    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
-        ->execute([$result['id'], $capacity]);
+    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description) VALUES (?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description")
+        ->execute([$result['id'], $capacity, $regDesc]);
     echo json_encode(['ok' => true, 'event_id' => $result['id']]);
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ if ($action === 'create') {
     $location    = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
     $capacity    = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
+    $regDesc     = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
 
     if (!$event_id || !$title || !$date) { http_response_code(400); echo json_encode(['error' => 'event_id, title, date required']); exit; }
 
@@ -101,8 +103,8 @@ if ($action === 'create') {
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to update event']); exit; }
 
     $db = local_db();
-    $db->prepare("INSERT INTO events_calendar (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
-       ->execute([$event_id, $capacity]);
+    $db->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description) VALUES (?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description")
+       ->execute([$event_id, $capacity, $regDesc]);
 
     // Capacity may have gone up (or been removed) — promote waitlisted agents
     // into any now-open seats, oldest first.

@@ -1730,6 +1730,11 @@ function local_db(): PDO {
         event_id TEXT PRIMARY KEY,
         capacity INTEGER
     )");
+    // Custom copy shown on the public registration page (register.php) in
+    // place of the raw Google Calendar description, which is often cluttered
+    // with Zoom dial-in boilerplate. NULL falls back to the cleaned-up
+    // Calendar description.
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN reg_description TEXT"); } catch (\Exception $e) {}
 
     // ── Company Calendar "Events" tab — same RSVP/capacity/waitlist pattern as
     // Training above, but a separate Google Calendar + separate RSVP pool, so
@@ -1752,6 +1757,8 @@ function local_db(): PDO {
         event_id TEXT PRIMARY KEY,
         capacity INTEGER
     )");
+    // See training_events.reg_description above — same idea, for the Events tab.
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN reg_description TEXT"); } catch (\Exception $e) {}
 
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (

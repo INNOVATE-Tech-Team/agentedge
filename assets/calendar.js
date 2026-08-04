@@ -405,6 +405,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evEnd      = document.getElementById('cal-ev-end-time');
   const evLoc      = document.getElementById('cal-ev-location');
   const evDesc     = document.getElementById('cal-ev-description');
+  const evRegDesc  = document.getElementById('cal-ev-reg-desc');
   const evCapacity = document.getElementById('cal-ev-capacity');
   const attendeesBox = document.getElementById('cal-ev-attendees');
   const errBox     = document.getElementById('cal-modal-err');
@@ -436,6 +437,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evEndDate.value     = ev ? (ev.end_dt !== ev.date ? (ev.end_dt || '') : '') : '';
     evLoc.value         = ev ? (ev.location    || '') : '';
     evDesc.value        = ev ? (ev.description || '') : '';
+    evRegDesc.value     = ev ? (ev.reg_description || '') : '';
     evCapacity.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart.value       = '';
     evEnd.value         = '';
@@ -508,6 +510,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       end_time:    evEnd.value,
       location:    evLoc.value,
       description: evDesc.value,
+      reg_description: evRegDesc.value,
       capacity:    evCapacity.value.trim(),
     };
 
@@ -569,6 +572,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evEnd2      = document.getElementById('cal-ev2-end-time');
   const evLoc2      = document.getElementById('cal-ev2-location');
   const evDesc2     = document.getElementById('cal-ev2-description');
+  const evRegDesc2  = document.getElementById('cal-ev2-reg-desc');
   const evCapacity2 = document.getElementById('cal-ev2-capacity');
   const attendeesBox2 = document.getElementById('cal-ev2-attendees');
   const errBox2     = document.getElementById('cal-ev2-modal-err');
@@ -600,6 +604,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evEndDate2.value     = ev ? (ev.end_dt !== ev.date ? (ev.end_dt || '') : '') : '';
     evLoc2.value         = ev ? (ev.location    || '') : '';
     evDesc2.value        = ev ? (ev.description || '') : '';
+    evRegDesc2.value     = ev ? (ev.reg_description || '') : '';
     evCapacity2.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart2.value       = '';
     evEnd2.value         = '';
@@ -656,6 +661,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       end_time:    evEnd2.value,
       location:    evLoc2.value,
       description: evDesc2.value,
+      reg_description: evRegDesc2.value,
       capacity:    evCapacity2.value.trim(),
     };
 
