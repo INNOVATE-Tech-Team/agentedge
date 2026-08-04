@@ -15,6 +15,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/notifications.php';
 require_once __DIR__ . '/../lib/google_calendar.php';
+require_once __DIR__ . '/../lib/event_notifications.php';
 header('Content-Type: application/json');
 
 function jok(array $x = []): void { echo json_encode(array_merge(['ok' => true], $x)); exit; }
@@ -43,6 +44,22 @@ function public_gcal_sync(string $cal_id, string $key_file, string $event_id, st
     } catch (\Throwable $e) {}
 }
 
+// Best-effort event details (when/location/Zoom/description) for the
+// confirmation emails below. Never let a Calendar API hiccup block the RSVP
+// itself — falls back to a bare title-only email if this fails.
+function public_event_info(string $cal_id, string $key_file, string $scope, string $event_id): array {
+    $empty = ['when' => '', 'location' => '', 'description' => '', 'start_ts' => null];
+    if ($cal_id === '') return $empty;
+    try {
+        $token = gcal_access_token($key_file);
+        if (!$token) return $empty;
+        $event = gcal_get_event($cal_id, $token, $event_id);
+        return $event ? event_display_info($event, $scope, $event_id) : $empty;
+    } catch (\Throwable $e) {
+        return $empty;
+    }
+}
+
 $action   = $body['action'] ?? '';
 $event_id = trim($body['event_id'] ?? '');
 $email    = strtolower(trim($body['email'] ?? ''));
@@ -68,10 +85,11 @@ if ($action === 'cancel') {
         if ($promoted = $next->fetch(PDO::FETCH_ASSOC)) {
             $db->prepare("UPDATE {$table} SET status='registered' WHERE id=?")->execute([$promoted['id']]);
             public_gcal_sync($cal_id, $key_file, $event_id, $promoted['agent_email'], true);
-            queue_email_to([$promoted['agent_email']], "You're in: {$promoted['event_title']}", implode("\n", [
-                "A seat opened up — you've been moved from the waitlist to registered for:",
-                "", $promoted['event_title'], "Date: {$promoted['event_date']}", "", "— AgentEdge",
-            ]));
+            $info = public_event_info($cal_id, $key_file, $scope, $event_id);
+            queue_branded_email([$promoted['agent_email']], "You're in: {$promoted['event_title']}",
+                '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">A seat opened up — you\'ve been moved from the waitlist to registered for:</p>'
+                . event_details_block_html($promoted['event_title'], $info)
+            );
         }
     }
     jok(['rsvped' => false, 'waitlisted' => false]);
@@ -106,15 +124,17 @@ if ($action === 'register') {
 
     if ($status === 'registered') public_gcal_sync($cal_id, $key_file, $event_id, $email, true);
 
+    $info = public_event_info($cal_id, $key_file, $scope, $event_id);
     if ($status === 'waitlisted') {
-        queue_email_to([$email], "Waitlisted: {$event_title}", implode("\n", [
-            "This event is currently full. You've been added to the waitlist for:",
-            "", $event_title, "Date: {$event_date}", "", "We'll email you if a seat opens up.", "", "— AgentEdge",
-        ]));
+        queue_branded_email([$email], "Waitlisted: {$event_title}",
+            '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">This event is currently full — you\'ve been added to the waitlist. We\'ll email you if a seat opens up.</p>'
+            . event_details_block_html($event_title, $info)
+        );
     } else {
-        queue_email_to([$email], "You're registered: {$event_title}", implode("\n", [
-            "You're confirmed for:", "", $event_title, "Date: {$event_date}", "", "— AgentEdge",
-        ]));
+        queue_branded_email([$email], "You're registered: {$event_title}",
+            '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 16px">You\'re confirmed for:</p>'
+            . event_details_block_html($event_title, $info)
+        );
     }
 
     jok(['rsvped' => $status === 'registered', 'waitlisted' => $status === 'waitlisted']);

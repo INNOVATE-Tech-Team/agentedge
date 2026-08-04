@@ -1723,6 +1723,11 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_trsvp_agent ON training_rsvps(agent_email)");
     // 'registered' or 'waitlisted' — set when an event has a capacity and is full.
     try { $pdo->exec("ALTER TABLE training_rsvps ADD COLUMN status TEXT NOT NULL DEFAULT 'registered'"); } catch (\Exception $e) {}
+    // Per-row reminder tracking (see cron/send_event_reminders.php) — one flag
+    // per registrant rather than per event, so someone who registers within
+    // 24h of the event doesn't get skipped by an already-fired event-wide send.
+    try { $pdo->exec("ALTER TABLE training_rsvps ADD COLUMN reminder_24h_sent INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_rsvps ADD COLUMN reminder_1h_sent INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
 
     // Per-event capacity for training events. Training events themselves live in
     // Google Calendar (no local row) — this just attaches an optional headcount cap.
@@ -1757,6 +1762,9 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ersvp_event ON events_rsvps(event_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ersvp_agent ON events_rsvps(agent_email)");
+    // See training_rsvps.reminder_24h_sent/reminder_1h_sent above — same idea.
+    try { $pdo->exec("ALTER TABLE events_rsvps ADD COLUMN reminder_24h_sent INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE events_rsvps ADD COLUMN reminder_1h_sent INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS events_calendar (
         event_id TEXT PRIMARY KEY,
