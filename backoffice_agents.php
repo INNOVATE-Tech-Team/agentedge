@@ -1014,6 +1014,11 @@ $missingCount = count($missingAgents);
     'referring_agent','bio'];
   var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
   var emCurrentEmail = null;
+  // Guards against saving before the async load below finishes (or after it
+  // fails) — without this, Save was clickable the instant the modal opened,
+  // so a slow/failed load let a mostly-blank payload blindly overwrite a
+  // fully-populated profile (see api/intake.php's matching circuit-breaker).
+  var emLoaded = false;
   // agent_extra's MM-DD birthday (calendar reminder) is a different field from
   // agent_intake's full-date birthday shown in this modal — round-trip it
   // untouched so saving the modal never blanks it out.
@@ -1057,6 +1062,8 @@ $missingCount = count($missingAgents);
 
   window.openEditModal = function (email, name, prefill) {
     emCurrentEmail = email;
+    emLoaded = false;
+    document.getElementById('em-save-btn').disabled = true;
     document.getElementById('em-agent-name').textContent = name;
     document.getElementById('em-save-msg').textContent = 'Loading…';
     document.getElementById('editModalOverlay').style.display = 'flex';
@@ -1085,8 +1092,10 @@ $missingCount = count($missingAgents);
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
       document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
       document.getElementById('em-save-msg').textContent = '';
+      emLoaded = true;
+      document.getElementById('em-save-btn').disabled = false;
     }).catch(function () {
-      document.getElementById('em-save-msg').textContent = 'Failed to load agent data.';
+      document.getElementById('em-save-msg').textContent = 'Failed to load agent data — cannot save until this loads. Close and try again.';
     });
   };
 
@@ -1099,6 +1108,7 @@ $missingCount = count($missingAgents);
     if (!emCurrentEmail) return;
     var msg = document.getElementById('em-save-msg');
     var btn = document.getElementById('em-save-btn');
+    if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
     btn.disabled = true;
     msg.textContent = 'Saving…';
 

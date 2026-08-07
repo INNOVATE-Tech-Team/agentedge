@@ -971,8 +971,15 @@ var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone
   'referring_agent','bio'];
 var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
 var emExtraBirthday = '';
+// Guards against saving before the async load below finishes (or after it
+// fails) — without this, Save was clickable the instant the modal opened,
+// so a slow/failed load let a mostly-blank payload blindly overwrite a
+// fully-populated profile (see api/intake.php's matching circuit-breaker).
+var emLoaded = false;
 
 window.openEditModal = function () {
+  emLoaded = false;
+  document.getElementById('em-save-btn').disabled = true;
   document.getElementById('em-save-msg').textContent = 'Loading…';
   document.getElementById('editModalOverlay').style.display = 'flex';
 
@@ -1000,8 +1007,10 @@ window.openEditModal = function () {
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
     document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
     document.getElementById('em-save-msg').textContent = '';
+    emLoaded = true;
+    document.getElementById('em-save-btn').disabled = false;
   }).catch(function () {
-    document.getElementById('em-save-msg').textContent = 'Failed to load agent data.';
+    document.getElementById('em-save-msg').textContent = 'Failed to load agent data — cannot save until this loads. Close and try again.';
   });
 };
 
@@ -1012,6 +1021,7 @@ window.closeEditModal = function () {
 window.saveEditModal = function () {
   var msg = document.getElementById('em-save-msg');
   var btn = document.getElementById('em-save-btn');
+  if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
   btn.disabled = true;
   msg.textContent = 'Saving…';
 
