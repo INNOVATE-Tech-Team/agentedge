@@ -511,7 +511,7 @@ $missingCount = count($missingAgents);
                   <?php endif; ?>
                 </div>
 
-                <div class="dg-section">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
+                <div class="dg-section" style="color:#a06000;font-weight:800">Notes <span style="font-weight:600;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
                 <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
                   <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
                   <div style="display:flex;gap:8px;margin-top:8px">
