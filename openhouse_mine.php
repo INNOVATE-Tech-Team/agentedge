@@ -19,10 +19,10 @@ $err = $_GET['err'] ?? '';
 // Load my listings with request counts per status
 $lstQ = $db->prepare("
     SELECT l.*,
-        (SELECT COUNT(*) FROM oh_requests r JOIN oh_slots s ON s.id=r.slot_id WHERE s.listing_id=l.id AND r.status='approved')  AS cnt_approved,
-        (SELECT COUNT(*) FROM oh_requests r JOIN oh_slots s ON s.id=r.slot_id WHERE s.listing_id=l.id AND r.status='pending')   AS cnt_pending,
-        (SELECT COUNT(*) FROM oh_requests r JOIN oh_slots s ON s.id=r.slot_id WHERE s.listing_id=l.id AND r.status='declined')  AS cnt_declined,
-        (SELECT COUNT(*) FROM oh_requests r JOIN oh_slots s ON s.id=r.slot_id WHERE s.listing_id=l.id AND r.status='cancelled') AS cnt_cancelled
+        (SELECT COUNT(*) FROM oh_requests r WHERE r.listing_id=l.id AND r.status='approved')  AS cnt_approved,
+        (SELECT COUNT(*) FROM oh_requests r WHERE r.listing_id=l.id AND r.status='pending')   AS cnt_pending,
+        (SELECT COUNT(*) FROM oh_requests r WHERE r.listing_id=l.id AND r.status='declined')  AS cnt_declined,
+        (SELECT COUNT(*) FROM oh_requests r WHERE r.listing_id=l.id AND r.status='cancelled') AS cnt_cancelled
     FROM oh_listings l
     WHERE LOWER(l.listing_agent_email) = ?
     ORDER BY l.created_at DESC
@@ -38,9 +38,9 @@ if ($listings) {
     $rQ   = $db->prepare("
         SELECT r.*, s.slot_date, s.start_time, s.end_time
         FROM oh_requests r
-        JOIN oh_slots s ON s.id = r.slot_id
+        LEFT JOIN oh_slots s ON s.id = r.slot_id
         WHERE r.listing_id IN ({$inPH}) AND r.status = 'pending'
-        ORDER BY s.slot_date, s.start_time
+        ORDER BY COALESCE(s.slot_date, r.requested_date), COALESCE(s.start_time, r.requested_time)
     ");
     $rQ->execute($ids);
     foreach ($rQ->fetchAll(PDO::FETCH_ASSOC) as $req) {
@@ -145,13 +145,18 @@ if ($listings) {
                 </button>
                 <div id="pending-<?= $lst['id'] ?>" style="display:none;margin-top:8px">
                   <?php foreach ($pendingByListing[$lst['id']] as $req):
-                    $fd = date('M j, Y', strtotime($req['slot_date']));
-                    $fs = date('g:i A', strtotime($req['start_time']));
-                    $fe = date('g:i A', strtotime($req['end_time']));
+                    $isAdhoc = empty($req['slot_date']);
+                    if ($isAdhoc) {
+                      $fd = date('M j, Y', strtotime($req['requested_date']));
+                      $timeLabel = date('g:i A', strtotime($req['requested_time'])) . ' (requested)';
+                    } else {
+                      $fd = date('M j, Y', strtotime($req['slot_date']));
+                      $timeLabel = date('g:i A', strtotime($req['start_time'])) . '–' . date('g:i A', strtotime($req['end_time']));
+                    }
                   ?>
                   <div style="padding:8px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;margin-bottom:6px;font-size:12px" id="preq-<?= $req['id'] ?>">
                     <div style="font-weight:700"><?= h($req['agent_name'] ?: $req['agent_email']) ?></div>
-                    <div style="color:#888"><?= h($fd) ?> &middot; <?= h($fs) ?>–<?= h($fe) ?></div>
+                    <div style="color:#888"><?= h($fd) ?> &middot; <?= h($timeLabel) ?></div>
                     <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
                       <button class="btn-save" style="font-size:11px;padding:4px 10px"
                               onclick="respondReq(<?= $req['id'] ?>, 'approve')">Approve</button>

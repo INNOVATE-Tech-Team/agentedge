@@ -911,6 +911,28 @@ function strip_email_quote(string $text): string {
     return trim(implode("\n", array_slice($lines, 0, $cut)));
 }
 
+// ── Open House Portal notifications ──────────────────────────────────────────
+
+// Notify a listing agent that someone requested to show their property —
+// covers both a fixed time-slot pick and an ad-hoc proposed time on a
+// "available anytime" listing (see api/oh_action.php's request_slot /
+// request_anytime actions). Neither path emailed the agent before this;
+// they had to notice a pending count on openhouse_mine.php themselves.
+function notify_oh_request_submitted(string $listingAgentEmail, string $requesterName, string $requesterEmail, string $address, string $whenLabel): void {
+    $subject = "New Open House Request: {$address}";
+    $body = implode("\n", [
+        ($requesterName ?: $requesterEmail) . " ({$requesterEmail}) requested to show {$address}.",
+        "",
+        "Requested time: {$whenLabel}",
+        "",
+        "Review and respond:",
+        "https://agents.innovateonline.com/openhouse_mine.php",
+        "",
+        "— AgentEdge",
+    ]);
+    queue_email_to([$listingAgentEmail], $subject, $body, $requesterEmail, $requesterName);
+}
+
 // ── Suggestion notifications ─────────────────────────────────────────────────
 
 // A new suggestion was submitted — notify all super admins.

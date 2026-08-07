@@ -111,6 +111,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Agent Communications'],
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
+        ['key'=>'mc_events',                 'label'=>'Market Center Events','href'=>'mc_events.php',                 'dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
         ['key'=>'press_release',             'label'=>'Press Release',       'href'=>'press_release.php',             'dept'=>'Events'],
         // ── Agent Development ───────────────────────────────────────────────────

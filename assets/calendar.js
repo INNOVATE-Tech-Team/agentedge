@@ -85,7 +85,7 @@ async function loadEvents(key) {
   const params = new URLSearchParams({ month: key });
   if (agentMCSlug) params.set('dept', agentMCSlug);
 
-  const [companyRes, trainingRes, eventsRes, personalRes, bicRes] = await Promise.allSettled([
+  const [companyRes, trainingRes, eventsRes, personalRes, bicRes, mcEventsRes] = await Promise.allSettled([
     fetch('api/events.php?' + params, { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [] })
       .catch(() => ({ events: [] })),
@@ -101,6 +101,9 @@ async function loadEvents(key) {
     fetch('api/bic_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : { events: [] })
       .catch(() => ({ events: [] })),
+    fetch('api/mc_events_cal.php?month=' + encodeURIComponent(key), { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .catch(() => ({ events: [] })),
   ]);
 
   const company  = companyRes.status  === 'fulfilled' ? (companyRes.value.events  ?? []) : [];
@@ -108,6 +111,7 @@ async function loadEvents(key) {
   const events   = eventsRes.status   === 'fulfilled' ? (eventsRes.value.events   ?? []) : [];
   const personal = personalRes.status === 'fulfilled' ? (personalRes.value.events ?? []) : [];
   const bic      = bicRes.status       === 'fulfilled' ? (bicRes.value.events     ?? []) : [];
+  const mcEvents = mcEventsRes.status  === 'fulfilled' ? (mcEventsRes.value.events ?? []) : [];
 
   // has_url reflects account-level state (not month-specific) — sync it
   // every time so "Connected"/"Connect" status is correct on first load,
@@ -117,7 +121,7 @@ async function loadEvents(key) {
     updateMyCalBar();
   }
 
-  evCache[key] = [...company, ...training, ...events, ...personal, ...bic].sort((a, b) => a.date.localeCompare(b.date));
+  evCache[key] = [...company, ...training, ...events, ...personal, ...bic, ...mcEvents].sort((a, b) => a.date.localeCompare(b.date));
   return evCache[key];
 }
 

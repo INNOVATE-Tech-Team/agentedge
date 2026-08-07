@@ -5,6 +5,12 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/notifications.php';
+
+function oh_address(array $l): string {
+    $line = trim($l['address'] . ', ' . $l['city'] . ', ' . $l['state']);
+    return $l['zip'] ? $line . ' ' . $l['zip'] : $line;
+}
 
 header('Content-Type: application/json');
 
@@ -35,7 +41,7 @@ switch ($action) {
         if (!$slot_id) { echo json_encode(['error' => 'Missing slot_id']); exit; }
 
         // Get slot + listing info
-        $slot = $db->prepare("SELECT s.*, l.listing_agent_email, l.visible
+        $slot = $db->prepare("SELECT s.*, l.listing_agent_email, l.visible, l.address, l.city, l.state, l.zip
                                FROM oh_slots s
                                JOIN oh_listings l ON l.id = s.listing_id
                                WHERE s.id = ?");
@@ -74,6 +80,55 @@ switch ($action) {
                               VALUES (?, ?, ?, ?, 'pending')");
         $ins->execute([$slot_id, $slotRow['listing_id'], $email, $name]);
         $newId = (int)$db->lastInsertId();
+
+        $whenLabel = date('M j, Y', strtotime($slotRow['slot_date'])) . ' · '
+                   . date('g:i A', strtotime($slotRow['start_time'])) . '–' . date('g:i A', strtotime($slotRow['end_time']));
+        notify_oh_request_submitted($slotRow['listing_agent_email'], $name, $email, oh_address($slotRow), $whenLabel);
+
+        echo json_encode(['ok' => true, 'request_id' => $newId]);
+        break;
+    }
+
+    // ── REQUEST A TIME ON AN "AVAILABLE ANYTIME" LISTING ────────────────────────
+    case 'request_anytime': {
+        $listing_id     = (int)($_POST['listing_id'] ?? 0);
+        $requested_date = trim($_POST['requested_date'] ?? '');
+        $requested_time = trim($_POST['requested_time'] ?? '');
+        if (!$listing_id || !$requested_date || !$requested_time) {
+            echo json_encode(['error' => 'Please pick a date and time']); exit;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $requested_date)) { echo json_encode(['error' => 'Invalid date']); exit; }
+        if (!preg_match('/^\d{2}:\d{2}$/', $requested_time)) { echo json_encode(['error' => 'Invalid time']); exit; }
+
+        $lst = $db->prepare("SELECT listing_agent_email, visible, no_schedule, address, city, state, zip FROM oh_listings WHERE id=?");
+        $lst->execute([$listing_id]);
+        $listing = $lst->fetch(PDO::FETCH_ASSOC);
+        if (!$listing) { echo json_encode(['error' => 'Listing not found']); exit; }
+        if (!$listing['visible']) { echo json_encode(['error' => 'Listing not visible']); exit; }
+        if (strtolower($listing['listing_agent_email']) === $email) {
+            echo json_encode(['error' => 'You cannot request your own listing']);
+            exit;
+        }
+
+        // One outstanding ad-hoc request per agent per listing at a time
+        // (slot_id=0 is the "no fixed slot" sentinel — see local_db.php).
+        $dup = $db->prepare("SELECT id FROM oh_requests WHERE listing_id=? AND slot_id=0 AND agent_email=? AND status IN ('pending','approved')");
+        $dup->execute([$listing_id, $email]);
+        if ($dup->fetch()) {
+            echo json_encode(['error' => 'You already have a request for this listing']);
+            exit;
+        }
+
+        $ins = $db->prepare(
+            "INSERT INTO oh_requests (slot_id, listing_id, agent_email, agent_name, status, requested_date, requested_time)
+             VALUES (0, ?, ?, ?, 'pending', ?, ?)"
+        );
+        $ins->execute([$listing_id, $email, $name, $requested_date, $requested_time]);
+        $newId = (int)$db->lastInsertId();
+
+        $whenLabel = date('M j, Y', strtotime($requested_date)) . ' · ' . date('g:i A', strtotime($requested_time));
+        notify_oh_request_submitted($listing['listing_agent_email'], $name, $email, oh_address($listing), $whenLabel);
+
         echo json_encode(['ok' => true, 'request_id' => $newId]);
         break;
     }

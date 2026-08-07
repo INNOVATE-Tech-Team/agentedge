@@ -61,9 +61,16 @@ if ($listingIds) {
 }
 
 // My pending/approved request slot IDs — so we can show "Requested" state
-$myReqQ = $db->prepare("SELECT slot_id FROM oh_requests WHERE agent_email=? AND status IN ('pending','approved')");
+$myReqQ = $db->prepare("SELECT slot_id FROM oh_requests WHERE agent_email=? AND status IN ('pending','approved') AND slot_id != 0");
 $myReqQ->execute([$myEmail]);
 $myRequestedSlots = array_flip(array_column($myReqQ->fetchAll(PDO::FETCH_ASSOC), 'slot_id'));
+
+// My pending/approved ad-hoc (no_schedule) requests, by listing — same idea,
+// but keyed by listing_id since these have no slot_id (sentinel 0).
+$myAdhocQ = $db->prepare("SELECT listing_id, status, requested_date, requested_time FROM oh_requests WHERE agent_email=? AND slot_id=0 AND status IN ('pending','approved')");
+$myAdhocQ->execute([$myEmail]);
+$myAdhocRequests = [];
+foreach ($myAdhocQ->fetchAll(PDO::FETCH_ASSOC) as $r) { $myAdhocRequests[$r['listing_id']] = $r; }
 
 // Distinct states + types for filter dropdowns
 $statesR = $db->query("SELECT DISTINCT state FROM oh_listings WHERE visible=1 ORDER BY state")->fetchAll(PDO::FETCH_COLUMN);
@@ -136,8 +143,30 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
               <div style="font-size:12px;color:#888"><?= h($lst['property_type']) ?><?= $lst['list_price'] ? ' &middot; $'.number_format($lst['list_price']) : '' ?></div>
               <div class="oh-card-agent">Listed by <?= h($lst['listing_agent_name'] ?: $lst['listing_agent_email']) ?></div>
 
-              <?php if (empty($slots)): ?>
-                <div style="font-size:12px;color:#7c3aed;font-weight:600">Available anytime — contact listing agent to schedule</div>
+              <?php if (empty($slots)):
+                $adhoc = $myAdhocRequests[$lst['id']] ?? null;
+              ?>
+                <div style="font-size:12px;color:#7c3aed;font-weight:600">Available anytime</div>
+                <?php if ($adhoc): ?>
+                  <div style="font-size:12px;color:#888;margin-top:4px">
+                    Requested <?= h(date('M j, Y', strtotime($adhoc['requested_date']))) ?> &middot; <?= h(date('g:i A', strtotime($adhoc['requested_time']))) ?>
+                    <span class="badge-pending" style="margin-left:4px"><?= $adhoc['status'] === 'approved' ? 'Approved' : 'Pending' ?></span>
+                  </div>
+                <?php else: ?>
+                  <button class="btn-save" style="margin-top:6px;font-size:12px;padding:7px 14px" onclick="toggleAnytimeForm(<?= $lst['id'] ?>)">Request a Time</button>
+                  <div id="anytime-form-<?= $lst['id'] ?>" style="display:none;margin-top:10px;padding:12px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px">
+                    <div style="font-size:12px;font-weight:700;margin-bottom:8px">Propose a date &amp; time:</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <input type="date" id="anytime-date-<?= $lst['id'] ?>" style="padding:6px 8px;border:1px solid #ccc;border-radius:5px;font-size:12px">
+                      <input type="time" id="anytime-time-<?= $lst['id'] ?>" style="padding:6px 8px;border:1px solid #ccc;border-radius:5px;font-size:12px">
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px">
+                      <button class="btn-save" style="font-size:12px;padding:6px 14px" onclick="submitAnytimeRequest(<?= $lst['id'] ?>)">Submit Request</button>
+                      <button onclick="toggleAnytimeForm(<?= $lst['id'] ?>)" style="padding:6px 12px;border:1px solid #ccc;background:white;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                    </div>
+                    <div id="anytime-msg-<?= $lst['id'] ?>" style="margin-top:6px;font-size:12px"></div>
+                  </div>
+                <?php endif; ?>
               <?php else: ?>
                 <div class="oh-card-slots">
                   <?php foreach ($slots as $slot):
@@ -216,6 +245,38 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
 function toggleReqForm(id) {
   const f = document.getElementById('req-form-' + id);
   f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleAnytimeForm(id) {
+  const f = document.getElementById('anytime-form-' + id);
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function submitAnytimeRequest(listingId) {
+  const dateEl = document.getElementById('anytime-date-' + listingId);
+  const timeEl = document.getElementById('anytime-time-' + listingId);
+  const msgEl  = document.getElementById('anytime-msg-' + listingId);
+  if (!dateEl.value || !timeEl.value) { msgEl.textContent = 'Please pick a date and time.'; msgEl.style.color = '#c00'; return; }
+
+  const fd = new FormData();
+  fd.append('action', 'request_anytime');
+  fd.append('listing_id', listingId);
+  fd.append('requested_date', dateEl.value);
+  fd.append('requested_time', timeEl.value);
+
+  fetch('api/oh_action.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        msgEl.textContent = 'Request submitted!';
+        msgEl.style.color = '#3a6b1a';
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        msgEl.textContent = d.error || 'Error. Please try again.';
+        msgEl.style.color = '#c00';
+      }
+    })
+    .catch(() => { msgEl.textContent = 'Network error.'; msgEl.style.color = '#c00'; });
 }
 
 function submitRequest(listingId) {

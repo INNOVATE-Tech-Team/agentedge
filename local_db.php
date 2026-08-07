@@ -103,6 +103,13 @@ function local_db(): PDO {
         reason       TEXT,
         created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
+    // Ad-hoc time request against a no_schedule ("available anytime") listing —
+    // slot_id is 0 (sentinel, not NULL — SQLite can't drop the existing NOT
+    // NULL without a table rebuild) and these two carry the proposed date/time
+    // instead. openhouse.php/openhouse_mine.php/openhouse_requests.php all
+    // LEFT JOIN oh_slots and fall back to these when slot_id=0.
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN requested_date TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN requested_time TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_prefs (
         key   TEXT PRIMARY KEY,
@@ -1139,6 +1146,29 @@ function local_db(): PDO {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_state ON market_centers(state_code)");
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Market-Center-scoped events, self-service for MC Leaders/BICs (own MC
+    // only) and admins (any MC) — see mc_events.php/api/mc_events_action.php.
+    // Distinct from custom_events (Industry Events), which is one shared
+    // company-wide list; these only ever show to agents in the same MC
+    // (api/mc_events_cal.php, merged into the Company Calendar's "Market
+    // Center" scope).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mc_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        mc_slug     TEXT    NOT NULL,
+        name        TEXT    NOT NULL,
+        start_date  TEXT    NOT NULL,
+        end_date    TEXT    NOT NULL DEFAULT '',
+        start_time  TEXT    NOT NULL DEFAULT '',
+        end_time    TEXT    NOT NULL DEFAULT '',
+        location    TEXT    NOT NULL DEFAULT '',
+        url         TEXT    NOT NULL DEFAULT '',
+        description TEXT    NOT NULL DEFAULT '',
+        created_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_events_mc ON mc_events(mc_slug)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_events_date ON mc_events(start_date)");
 
     // ── Teams (Team Leader platform) ──────────────────────────────────────────
     // Distinct from market_centers: a team spans agents across multiple MCs,
