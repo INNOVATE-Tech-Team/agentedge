@@ -710,6 +710,11 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
         <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
         <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+        <div class="em-field em-full">
+          <label>Additional State Licenses</label>
+          <div id="em-additional-licenses" style="margin-bottom:8px"></div>
+          <button type="button" class="btn-detail-link" onclick="emAddLicenseRow()">+ Add License</button>
+        </div>
 
         <div class="em-section">MLS Information</div>
         <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
@@ -1091,6 +1096,8 @@ $missingCount = count($missingAgents);
       document.getElementById('em-corporate_tax_id').value = '';
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
       document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
+      document.getElementById('em-additional-licenses').innerHTML = '';
+      (results[0].additional_licenses || []).forEach(function (lic) { emAddLicenseRow(lic); });
       document.getElementById('em-save-msg').textContent = '';
       emLoaded = true;
       document.getElementById('em-save-btn').disabled = false;
@@ -1102,6 +1109,22 @@ $missingCount = count($missingAgents);
   window.closeEditModal = function () {
     document.getElementById('editModalOverlay').style.display = 'none';
     emCurrentEmail = null;
+  };
+
+  // Additional (non-primary) state licenses — see agent_intake_licenses.
+  // Rendered as repeatable state/number/expiration rows; api/intake.php
+  // rewrites the whole set on save from whatever rows exist at submit time.
+  window.emAddLicenseRow = function (lic) {
+    lic = lic || { license_state: '', license_number: '', license_exp: '' };
+    var row = document.createElement('div');
+    row.className = 'em-lic-row';
+    row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center';
+    row.innerHTML =
+      '<input type="text" class="em-lic-state" placeholder="State" style="width:70px" value="' + (lic.license_state || '').replace(/"/g, '&quot;') + '">' +
+      '<input type="text" class="em-lic-number" placeholder="License #" style="flex:1" value="' + (lic.license_number || '').replace(/"/g, '&quot;') + '">' +
+      '<input type="date" class="em-lic-exp" style="width:150px" value="' + (lic.license_exp || '') + '">' +
+      '<button type="button" onclick="this.parentElement.remove()" style="padding:4px 10px;border:1px solid #fcc;background:white;border-radius:4px;font-size:12px;cursor:pointer;color:#c00">Remove</button>';
+    document.getElementById('em-additional-licenses').appendChild(row);
   };
 
   window.saveEditModal = function () {
@@ -1123,6 +1146,13 @@ $missingCount = count($missingAgents);
     });
     payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
     payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
+    payload.additional_licenses = Array.from(document.querySelectorAll('#em-additional-licenses .em-lic-row')).map(function (row) {
+      return {
+        license_state:  row.querySelector('.em-lic-state').value.trim(),
+        license_number: row.querySelector('.em-lic-number').value.trim(),
+        license_exp:    row.querySelector('.em-lic-exp').value,
+      };
+    });
 
     var extraPayload = {
       email: emCurrentEmail,
