@@ -76,11 +76,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         )->execute([$agent['email'], $id]);
         $success = 'Review request skipped.';
     }
+
+    if ($action === 'request_permission') {
+        $emails = array_filter(array_map('trim', $_POST['sel'] ?? []));
+        $sent = 0;
+        foreach ($emails as $email) {
+            $row = $db->prepare(
+                "SELECT r.agent_name, TRIM(COALESCE(i.google_place_id,'')) AS place_id, i.review_requests_opt_in,
+                        (SELECT status FROM google_place_candidates c WHERE LOWER(TRIM(c.email))=LOWER(TRIM(r.email)) AND c.status='pending') AS candidate_status
+                 FROM innovate_roster r
+                 LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
+                 WHERE LOWER(TRIM(r.email)) = LOWER(TRIM(?)) AND r.active = 1 LIMIT 1"
+            );
+            $row->execute([$email]);
+            $r = $row->fetch(PDO::FETCH_ASSOC);
+            if (!$r) continue;
+
+            $status = $r['place_id'] === ''
+                ? ($r['candidate_status'] === 'pending' ? 'has_candidate' : 'needs_page')
+                : (empty($r['review_requests_opt_in']) ? 'not_opted_in' : null);
+            if ($status === null) continue; // already fully set up, nothing to ask
+
+            $mail = google_permission_request_email($r['agent_name'], $status);
+            queue_email_to([$email], $mail['subject'], $mail['body']);
+            $db->prepare(
+                "INSERT INTO agent_intake (email, google_permission_requested_at)
+                 VALUES (?, datetime('now'))
+                 ON CONFLICT(email) DO UPDATE SET google_permission_requested_at = excluded.google_permission_requested_at"
+            )->execute([strtolower(trim($email))]);
+            $sent++;
+        }
+        $success = "Sent {$sent} permission-request email(s)." . (count($emails) > $sent ? ' (' . (count($emails) - $sent) . ' skipped — already fully set up or not found.)' : '');
+    }
 }
 
 // ── Audit tab data ────────────────────────────────────────────────────────────
 $auditRows = $db->query(
-    "SELECT r.agent_name, r.email, r.market_center, i.google_place_id, i.review_requests_opt_in, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
+    "SELECT r.agent_name, r.email, r.market_center, i.google_place_id, i.review_requests_opt_in, i.google_permission_requested_at, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
      FROM innovate_roster r
      LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
      LEFT JOIN google_business_audit g ON LOWER(TRIM(g.email)) = LOWER(TRIM(r.email))
@@ -216,13 +248,24 @@ foreach ($needsPageRows as $r) {
             </form>
           </div>
           <?php endif; ?>
+          <?php if ($isAdmin): ?>
+          <form method="post" id="audit-bulk-form">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <input type="hidden" name="action" value="request_permission">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <button type="submit" class="btn-sm">Request Permission for Selected</button>
+              <span style="font-size:11px;color:#888">Emails whoever's checked, tailored to what's missing for them. Skips anyone already fully set up.</span>
+            </div>
+          <?php endif; ?>
           <table class="ga-table">
             <thead><tr>
-              <th>Agent</th><th>Place ID</th><th>Review Requests</th><th>Status</th><th>Rating</th><th>Reviews</th><th>Last Checked</th>
+              <?php if ($isAdmin): ?><th><input type="checkbox" onclick="document.querySelectorAll('.audit-sel').forEach(c=>c.checked=this.checked)"></th><?php endif; ?>
+              <th>Agent</th><th>Place ID</th><th>Review Requests</th><th>Status</th><th>Rating</th><th>Reviews</th><th>Last Checked</th><th>Last Asked</th>
             </tr></thead>
             <tbody>
             <?php foreach ($auditRows as $row): $placeId = trim($row['google_place_id'] ?? ''); ?>
               <tr>
+                <?php if ($isAdmin): ?><td><input type="checkbox" class="audit-sel" name="sel[]" value="<?= h($row['email']) ?>" form="audit-bulk-form"></td><?php endif; ?>
                 <td><?= h($row['agent_name']) ?><br><span style="color:#aaa;font-size:11px"><?= h($row['email']) ?></span></td>
                 <td>
                   <?php if ($placeId === ''): ?>
@@ -252,10 +295,11 @@ foreach ($needsPageRows as $r) {
                 <td><?= $row['rating'] !== null ? h($row['rating']) : '—' ?></td>
                 <td><?= (int)($row['review_count'] ?? 0) ?></td>
                 <td><?= h($row['last_checked_at'] ?? '—') ?></td>
+                <td><?= h($row['google_permission_requested_at'] ?? '—') ?></td>
               </tr>
             <?php endforeach; ?>
             <?php if (!$auditRows): ?>
-              <tr><td colspan="7" class="empty-note">No active agents found.</td></tr>
+              <tr><td colspan="<?= $isAdmin ? 9 : 8 ?>" class="empty-note">No active agents found.</td></tr>
             <?php endif; ?>
             </tbody>
           </table>
@@ -290,17 +334,27 @@ foreach ($needsPageRows as $r) {
           <?php if (!$needsPageByMc): ?>
             <div class="empty-note">Nobody in scope is missing a page — nice.</div>
           <?php endif; ?>
+          <?php if ($isAdmin && $needsPageByMc): ?>
+          <form method="post" id="checklist-bulk-form">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <input type="hidden" name="action" value="request_permission">
+            <button type="submit" class="btn-sm" style="margin-bottom:10px">Request Permission for Selected</button>
+          <?php endif; ?>
           <?php foreach ($needsPageByMc as $mc => $list): ?>
             <h3 style="font-size:13px;font-weight:800;margin:20px 0 8px"><?= h($mc) ?> (<?= count($list) ?>)</h3>
             <table class="ga-table">
-              <thead><tr><th>Agent</th><th>Email</th></tr></thead>
+              <thead><tr><?php if ($isAdmin): ?><th><input type="checkbox" onclick="this.closest('table').querySelectorAll('.cl-sel').forEach(c=>c.checked=this.checked)"></th><?php endif; ?><th>Agent</th><th>Email</th></tr></thead>
               <tbody>
               <?php foreach ($list as $r): ?>
-                <tr><td><?= h($r['agent_name']) ?></td><td><?= h($r['email']) ?></td></tr>
+                <tr>
+                  <?php if ($isAdmin): ?><td><input type="checkbox" class="cl-sel" name="sel[]" value="<?= h($r['email']) ?>" form="checklist-bulk-form"></td><?php endif; ?>
+                  <td><?= h($r['agent_name']) ?></td><td><?= h($r['email']) ?></td>
+                </tr>
               <?php endforeach; ?>
               </tbody>
             </table>
           <?php endforeach; ?>
+          <?php if ($isAdmin && $needsPageByMc): ?></form><?php endif; ?>
         </div>
 
         <!-- ── Review Requests tab ── -->

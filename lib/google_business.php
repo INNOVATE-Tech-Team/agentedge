@@ -5,6 +5,7 @@
 // approval process). All Places HTTP calls flow through here.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/notifications.php';
 
 const GOOGLE_PLACES_DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/json';
 const GOOGLE_PLACES_TEXTSEARCH_URL = 'https://maps.googleapis.com/maps/api/place/textsearch/json';
@@ -115,6 +116,36 @@ function google_business_sync_all(): array {
 /** Build the direct "write a review" link for an agent's Google Business Profile. */
 function google_review_link(string $placeId): string {
     return 'https://search.google.com/local/writereview?placeid=' . rawurlencode($placeId);
+}
+
+/**
+ * Build a tailored "please set this up" email for one agent, based on
+ * exactly what's missing for them — used by backoffice_google_audit.php's
+ * "Request Permission" bulk action. This is an internal staff->agent email
+ * (not the client-facing review request), so it goes straight through
+ * queue_email_to() with no separate approval queue.
+ *
+ * $status one of: 'needs_page' (no Place ID, no candidate), 'has_candidate'
+ * (a discovered listing is waiting on their confirmation), 'not_opted_in'
+ * (has a Place ID but hasn't checked the box).
+ */
+function google_permission_request_email(string $agentName, string $status): array {
+    $firstName = trim(explode(' ', trim($agentName))[0] ?? '') ?: 'there';
+    $profileUrl = 'https://agents.innovateonline.com/profile.php';
+
+    $subject = 'Quick favor — help us send your clients a review request';
+
+    $intro = "<p>Hi {$firstName},</p>"
+           . "<p>We're rolling out a feature that automatically drafts a Google review request for your clients whenever one of your dotloop transactions closes — it saves you from having to remember to ask, and every email still gets a human review before it ever reaches a client.</p>";
+
+    $ask = match ($status) {
+        'has_candidate' => "<p>We think we already found your Google Business listing. Head to <a href=\"{$profileUrl}\">My Profile</a> and look for the box near the top — if it's really you, just click <strong>\"Yes, that's me\"</strong> and you're set.</p>",
+        'not_opted_in'  => "<p>You already have a Google Place ID on file — you just need to check one box. Head to <a href=\"{$profileUrl}\">My Profile</a> and check \"Send automatic Google review requests to my clients when a transaction closes.\"</p>",
+        default         => "<p>We couldn't find a Google Business Page for you yet. If you don't have one, it only takes a few minutes: create one at <a href=\"https://business.google.com/create\">business.google.com/create</a>, then paste the Place ID into the \"Google Business Profile\" section on <a href=\"{$profileUrl}\">My Profile</a> and check the opt-in box.</p>",
+    };
+
+    $body = notification_email_html($intro . $ask . sender_signature_html('', 'INNOVATE Real Estate'));
+    return ['subject' => $subject, 'body' => $body];
 }
 
 /**

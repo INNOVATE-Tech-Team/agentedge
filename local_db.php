@@ -544,6 +544,12 @@ function local_db(): PDO {
     // lib/dotloop.php will not draft a review request for a closed loop
     // unless this is 1, even if a Place ID is on file.
     try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN review_requests_opt_in INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // Migration: last time staff emailed this agent asking them to set up
+    // (or opt into) the Google review-request feature — see
+    // backoffice_google_audit.php's "Request Permission" action. Purely
+    // informational (avoids someone re-sending the same nudge every day),
+    // not a gate on anything.
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN google_permission_requested_at TEXT"); } catch (\Exception $e) {}
 
     // Headshot photos uploaded with the intake form (up to 5 per agent)
     $pdo->exec("CREATE TABLE IF NOT EXISTS agent_intake_files (
