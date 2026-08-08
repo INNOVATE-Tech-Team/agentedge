@@ -129,6 +129,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_insurance_quotes',       'label'=>'Insurance Quote Requests','href'=>'backoffice_insurance_quotes.php', 'dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
+        ['key'=>'bo_sync_health',            'label'=>'Sync Health',         'href'=>'backoffice_sync_health.php',    'dept'=>'Technology'],
         ['key'=>'bo_join_stats',             'label'=>'Join Site Analytics', 'href'=>'backoffice_join_stats.php',     'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
