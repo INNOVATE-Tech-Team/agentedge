@@ -15,7 +15,18 @@ require_once __DIR__ . '/lib/notifications.php';
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES); }
 
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+$isAdmin  = is_super_admin();
+$isLeader = $isAdmin || is_mc_leader() || is_bic();
+if (!$isLeader) { header('Location: index.php'); exit; }
+
+// mc_leader/bic get a view scoped to the Market Center(s) they lead — same
+// pattern as backoffice_roster.php. Every mutating action below (refresh,
+// approve, skip) stays admin-only; leaders can see status and chase their
+// own agents, but can't trigger a real client-facing send themselves.
+$myMcSlugs = $isAdmin ? null : my_mc_slugs();
+function in_my_mc_scope(?array $myMcSlugs, string $marketCenter): bool {
+    return $myMcSlugs === null || in_array(slugify_mc($marketCenter), $myMcSlugs, true);
+}
 
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf'];
@@ -24,8 +35,9 @@ $db      = local_db();
 $success = '';
 $error   = '';
 
-// ── Handle POST ───────────────────────────────────────────────────────────────
+// ── Handle POST (admin-only) ──────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$isAdmin) { die('Admins only.'); }
     if (($_POST['csrf'] ?? '') !== $csrf) die('Invalid CSRF token.');
     $action = $_POST['action'] ?? '';
 
@@ -68,26 +80,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Audit tab data ────────────────────────────────────────────────────────────
 $auditRows = $db->query(
-    "SELECT r.agent_name, r.email, i.google_place_id, i.review_requests_opt_in, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
+    "SELECT r.agent_name, r.email, r.market_center, i.google_place_id, i.review_requests_opt_in, g.business_status, g.rating, g.review_count, g.last_checked_at, g.last_error
      FROM innovate_roster r
      LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
      LEFT JOIN google_business_audit g ON LOWER(TRIM(g.email)) = LOWER(TRIM(r.email))
      WHERE r.active = 1
-     ORDER BY r.agent_name"
+     ORDER BY r.market_center, r.agent_name"
 )->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $auditRows = array_values(array_filter($auditRows, fn($r) => in_my_mc_scope($myMcSlugs, $r['market_center'] ?: '')));
+}
 
-// ── Review Requests tab data ──────────────────────────────────────────────────
-$pending    = $db->query("SELECT * FROM review_request_queue WHERE status='awaiting_approval' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
-$blocked    = $db->query("SELECT * FROM review_request_queue WHERE status='blocked_no_place_id' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
-$notOptedIn = $db->query("SELECT * FROM review_request_queue WHERE status='blocked_not_opted_in' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
-$history    = $db->query("SELECT * FROM review_request_queue WHERE status IN ('sent','skipped') ORDER BY actioned_at DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+// ── Review Requests tab data — joined against the roster for MC scoping ──────
+$rrJoin = "LEFT JOIN innovate_roster ir ON LOWER(TRIM(ir.email)) = LOWER(TRIM(q.agent_email))";
+function scoped_review_queue(PDO $db, string $rrJoin, string $status, ?array $myMcSlugs, string $order, string $limit = ''): array {
+    $rows = $db->query("SELECT q.*, ir.market_center FROM review_request_queue q {$rrJoin} WHERE q.status {$status} ORDER BY {$order} {$limit}")->fetchAll(PDO::FETCH_ASSOC);
+    if ($myMcSlugs !== null) {
+        $rows = array_values(array_filter($rows, fn($r) => in_my_mc_scope($myMcSlugs, $r['market_center'] ?: '')));
+    }
+    return $rows;
+}
+$pending    = scoped_review_queue($db, $rrJoin, "='awaiting_approval'", $myMcSlugs, 'q.created_at DESC');
+$blocked    = scoped_review_queue($db, $rrJoin, "='blocked_no_place_id'", $myMcSlugs, 'q.created_at DESC');
+$notOptedIn = scoped_review_queue($db, $rrJoin, "='blocked_not_opted_in'", $myMcSlugs, 'q.created_at DESC');
+$history    = scoped_review_queue($db, $rrJoin, "IN ('sent','skipped')", $myMcSlugs, 'q.actioned_at DESC', 'LIMIT 200');
 
 // ── Google Place candidates awaiting the agent's own confirmation ────────────
 $pendingCandidates = $db->query(
-    "SELECT c.*, r.agent_name FROM google_place_candidates c
+    "SELECT c.*, r.agent_name, r.market_center FROM google_place_candidates c
      LEFT JOIN innovate_roster r ON LOWER(TRIM(r.email)) = LOWER(TRIM(c.email))
      WHERE c.status = 'pending' ORDER BY c.match_score DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $pendingCandidates = array_values(array_filter($pendingCandidates, fn($r) => in_my_mc_scope($myMcSlugs, $r['market_center'] ?: '')));
+}
+
+// ── Checklist tab data: agents with no Place ID AND no candidate at all ──────
+$needsPageRows = $db->query(
+    "SELECT r.agent_name, r.email, r.market_center
+     FROM innovate_roster r
+     LEFT JOIN agent_intake i ON LOWER(TRIM(i.email)) = LOWER(TRIM(r.email))
+     LEFT JOIN google_place_candidates c ON LOWER(TRIM(c.email)) = LOWER(TRIM(r.email))
+     WHERE r.active = 1
+       AND TRIM(COALESCE(i.google_place_id, '')) = ''
+       AND (c.email IS NULL OR c.status = 'dismissed')
+     ORDER BY r.market_center, r.agent_name"
+)->fetchAll(PDO::FETCH_ASSOC);
+if ($myMcSlugs !== null) {
+    $needsPageRows = array_values(array_filter($needsPageRows, fn($r) => in_my_mc_scope($myMcSlugs, $r['market_center'] ?: '')));
+}
+$needsPageByMc = [];
+foreach ($needsPageRows as $r) {
+    $mc = $r['market_center'] ?: '(No Market Center)';
+    $needsPageByMc[$mc][] = $r;
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -151,6 +197,9 @@ $pendingCandidates = $db->query(
 
         <div class="ga-tabs">
           <button class="ga-tab active" id="tab-btn-audit" onclick="switchTab('audit')">Audit</button>
+          <button class="ga-tab" id="tab-btn-checklist" onclick="switchTab('checklist')">
+            Checklist<?= $needsPageRows ? ' (' . count($needsPageRows) . ')' : '' ?>
+          </button>
           <button class="ga-tab" id="tab-btn-requests" onclick="switchTab('requests')">
             Review Requests<?= $pending ? ' (' . count($pending) . ')' : '' ?>
           </button>
@@ -158,6 +207,7 @@ $pendingCandidates = $db->query(
 
         <!-- ── Audit tab ── -->
         <div class="tab-panel active" id="tab-audit">
+          <?php if ($isAdmin): ?>
           <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
             <form method="post">
               <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
@@ -165,6 +215,7 @@ $pendingCandidates = $db->query(
               <button type="submit" class="btn-primary">Refresh Now</button>
             </form>
           </div>
+          <?php endif; ?>
           <table class="ga-table">
             <thead><tr>
               <th>Agent</th><th>Place ID</th><th>Review Requests</th><th>Status</th><th>Rating</th><th>Reviews</th><th>Last Checked</th>
@@ -230,6 +281,28 @@ $pendingCandidates = $db->query(
           <?php endif; ?>
         </div>
 
+        <!-- ── Checklist tab: agents with no listing at all, grouped by Market Center ── -->
+        <div class="tab-panel" id="tab-checklist">
+          <p style="font-size:12px;color:#888;margin:0 0 16px">
+            No Google Business Page found for these agents at all (no Place ID on file, and the automated search didn't turn up a plausible match either). MC leaders: this is your list to chase — have them create a page at
+            <a href="https://business.google.com/create" target="_blank" rel="noopener">business.google.com/create</a>, then their listing will get picked up automatically or they can self-enter the Place ID on My Profile.
+          </p>
+          <?php if (!$needsPageByMc): ?>
+            <div class="empty-note">Nobody in scope is missing a page — nice.</div>
+          <?php endif; ?>
+          <?php foreach ($needsPageByMc as $mc => $list): ?>
+            <h3 style="font-size:13px;font-weight:800;margin:20px 0 8px"><?= h($mc) ?> (<?= count($list) ?>)</h3>
+            <table class="ga-table">
+              <thead><tr><th>Agent</th><th>Email</th></tr></thead>
+              <tbody>
+              <?php foreach ($list as $r): ?>
+                <tr><td><?= h($r['agent_name']) ?></td><td><?= h($r['email']) ?></td></tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          <?php endforeach; ?>
+        </div>
+
         <!-- ── Review Requests tab ── -->
         <div class="tab-panel" id="tab-requests">
           <h3 style="font-size:13px;font-weight:800;margin:0 0 10px">Awaiting Approval</h3>
@@ -242,6 +315,7 @@ $pendingCandidates = $db->query(
                 <?= h($r['loop_name']) ?> — agent: <?= h($r['agent_email']) ?> — to: <?= h($r['recipient_emails']) ?>
                 (<?= h($r['recipient_names']) ?>) — closed <?= h($r['created_at']) ?>
               </div>
+              <?php if ($isAdmin): ?>
               <form method="post" id="rr-form-<?= (int)$r['id'] ?>">
                 <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
                 <input type="hidden" name="action" value="approve">
@@ -258,6 +332,9 @@ $pendingCandidates = $db->query(
                   <button type="submit" form="rr-form-<?= (int)$r['id'] ?>" class="btn-primary">Approve &amp; Send</button>
                 </div>
               </form>
+              <?php else: ?>
+                <div style="font-size:12px;color:#888">Subject: <?= h($r['subject']) ?> — waiting on an admin to approve.</div>
+              <?php endif; ?>
             </div>
           <?php endforeach; ?>
 
