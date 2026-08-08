@@ -431,12 +431,18 @@ function loadFolderDocs(loopId, profileId, folderId, folderEl) {
     var html = '';
     docs.forEach(function(doc) {
       var name = doc.name || doc.filename || ('Document ' + doc.id);
-      var link = doc.downloadLink || doc.download_link || '';
+      // DotLoop's API never returns a download link for a document (confirmed
+      // against their own docs — only list/get-metadata/upload exist), so this
+      // opens the document's own Documents-tab context in DotLoop itself
+      // instead, where whoever's logged in there has real access to it.
+      var link = 'https://dotloop.com/my/loop/' + encodeURIComponent(loopId)
+               + '?documentId=' + encodeURIComponent(doc.id)
+               + '&folderId=' + encodeURIComponent(folderId);
       html += '<div class="dl-doc">'
             + '<span class="dl-doc-name">' + escHtml(name) + '</span>';
       if (link) {
         html += '<a href="' + escAttr(link) + '" target="_blank" rel="noopener" '
-              + 'style="font-size:11px;font-weight:700;color:#82C112;text-decoration:none;white-space:nowrap;">View / Download</a>';
+              + 'style="font-size:11px;font-weight:700;color:#82C112;text-decoration:none;white-space:nowrap;">View in DotLoop</a>';
       }
       html += '</div>';
     });
