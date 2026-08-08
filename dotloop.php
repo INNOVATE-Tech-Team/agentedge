@@ -335,7 +335,7 @@ function loadDocs(loopId, profileId, loopUrl) {
       var fid   = f.id;
       var fname = f.name || ('Folder ' + fid);
       html += '<div class="dl-folder" id="folder-' + loopId + '-' + fid + '" '
-            + 'onclick="loadFolderDocs(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\',\'' + escAttr(String(fid)) + '\',this)">'
+            + 'onclick="loadFolderDocs(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\',\'' + escAttr(String(fid)) + '\',this,\'' + escAttr(loopUrl || '') + '\')">'
             + '▶ ' + escHtml(fname)
             + '<div class="dl-folder-docs" id="fdocs-' + loopId + '-' + fid + '" style="margin-top:6px;display:none;"></div>'
             + '</div>';
@@ -394,7 +394,7 @@ function uploadDocument(loopId, profileId) {
   });
 }
 
-function loadFolderDocs(loopId, profileId, folderId, folderEl) {
+function loadFolderDocs(loopId, profileId, folderId, folderEl, loopUrl) {
   var docsDiv = document.getElementById('fdocs-' + loopId + '-' + folderId);
   if (!docsDiv) return;
 
@@ -432,12 +432,12 @@ function loadFolderDocs(loopId, profileId, folderId, folderEl) {
     docs.forEach(function(doc) {
       var name = doc.name || doc.filename || ('Document ' + doc.id);
       // DotLoop's API never returns a download link for a document (confirmed
-      // against their own docs — only list/get-metadata/upload exist), so this
-      // opens the document's own Documents-tab context in DotLoop itself
-      // instead, where whoever's logged in there has real access to it.
-      var link = 'https://www.dotloop.com/m/loop?viewId=' + encodeURIComponent(loopId)
-               + '&documentId=' + encodeURIComponent(doc.id)
-               + '&folderId=' + encodeURIComponent(folderId);
+      // against their own docs — only list/get-metadata/upload exist), and
+      // deep-linking to a specific document/tab via URL params didn't hold up
+      // under real testing (landed on the generic loop page every time except
+      // once, likely an artifact of prior browser/tab state) — so this just
+      // links to the loop itself, the one thing confirmed reliable.
+      var link = loopUrl || '';
       html += '<div class="dl-doc">'
             + '<span class="dl-doc-name">' + escHtml(name) + '</span>';
       if (link) {
