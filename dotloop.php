@@ -435,8 +435,8 @@ function loadFolderDocs(loopId, profileId, folderId, folderEl) {
       // against their own docs — only list/get-metadata/upload exist), so this
       // opens the document's own Documents-tab context in DotLoop itself
       // instead, where whoever's logged in there has real access to it.
-      var link = 'https://dotloop.com/my/loop/' + encodeURIComponent(loopId)
-               + '?documentId=' + encodeURIComponent(doc.id)
+      var link = 'https://www.dotloop.com/m/loop?viewId=' + encodeURIComponent(loopId)
+               + '&documentId=' + encodeURIComponent(doc.id)
                + '&folderId=' + encodeURIComponent(folderId);
       html += '<div class="dl-doc">'
             + '<span class="dl-doc-name">' + escHtml(name) + '</span>';
