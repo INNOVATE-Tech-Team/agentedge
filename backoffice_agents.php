@@ -99,7 +99,7 @@ foreach (local_db()->query(
 
 $pendingAgents = local_db()->query(
     "SELECT q.agent_email as email, q.agent_name as full_name, q.market_center as office_location,
-            q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
+            q.agent_phone as phone, q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
      FROM onboard_queue q
      WHERE q.status = 'active'
        AND LOWER(q.agent_email) NOT IN (SELECT LOWER(email) FROM agent_intake)
@@ -240,8 +240,8 @@ $missingCount = count($missingAgents);
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
 .dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
 .dg-field{display:flex;flex-direction:column;gap:2px}
-.dg-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-.dg-value{font-size:12px;color:var(--ink)}
+.dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
+.dg-value{font-size:12.5px;color:var(--muted)}
 .dg-value.empty{color:var(--faint);font-style:italic}
 .dg-bio{grid-column:1/-1}
 .dg-bio .dg-value{white-space:pre-wrap;font-size:12px;line-height:1.55;max-height:140px;overflow-y:auto}
@@ -626,6 +626,8 @@ $missingCount = count($missingAgents);
                 <div class="detail-actions">
                   <?php if ($isAdmin): ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
+                  <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($p['email']) ?>', '<?= h($p['full_name'] ?: $p['email']) ?>', { office_location: '<?= h($p['office_location']) ?>', phone: '<?= h($p['phone'] ?? '') ?>' })">Edit Profile →</button>
+                  <a href="agent_profile.php?email=<?= h($p['email']) ?>" class="btn-detail-link">View Full Profile →</a>
                   <?php endif; ?>
                 </div>
               </div>

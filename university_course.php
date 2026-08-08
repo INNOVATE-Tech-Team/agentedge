@@ -39,8 +39,9 @@ if (!is_admin()) {
     if (!empty($rf) && !array_intersect(my_roles(), $rf)) { header('Location: university.php'); exit; }
 }
 
-// Lessons
-$ls = $db->prepare("SELECT * FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
+// Lessons — non-admins never see a lesson still awaiting review (pending_review),
+// regardless of the course's own published state.
+$ls = $db->prepare("SELECT * FROM uni_lessons WHERE course_id=?" . (is_admin() ? "" : " AND pending_review=0") . " ORDER BY sort_ord,id");
 $ls->execute([$courseId]);
 $lessons = $ls->fetchAll(PDO::FETCH_ASSOC);
 

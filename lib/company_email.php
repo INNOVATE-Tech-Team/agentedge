@@ -104,10 +104,13 @@ function ce_enrich_recipients(array $recipients): array {
     if (!$recipients) return $recipients;
     $db = local_db();
 
+    // An agent can have more than one active innovate_roster row (multiple
+    // Market Centers) — collect all of them per email rather than letting
+    // the last one iterated silently win.
     $rosterByEmail = [];
     foreach (ce_fetch_crm_roster() as $a) {
         $e = strtolower(trim($a['email'] ?? ''));
-        if ($e) $rosterByEmail[$e] = $a;
+        if ($e) $rosterByEmail[$e][] = $a;
     }
 
     $emails = array_column($recipients, 'email');
@@ -120,11 +123,19 @@ function ce_enrich_recipients(array $recipients): array {
     }
 
     foreach ($recipients as &$r) {
-        $ros  = $rosterByEmail[$r['email']] ?? [];
-        $intk = $intakeByEmail[$r['email']] ?? [];
-        $mc = $ros['marketCenter'] ?? '';
-        if ($mc === '' && !empty($ros['marketCenters'])) $mc = $ros['marketCenters'][0]['name'] ?? '';
-        $r['market_center']  = $mc;
+        $rosRows = $rosterByEmail[$r['email']] ?? [];
+        $ros     = $rosRows[0] ?? [];
+        $intk    = $intakeByEmail[$r['email']] ?? [];
+        // Join every Market Center this agent has an active roster row for,
+        // rather than picking whichever row happened to be first — a 2-MC
+        // agent's {{market_center}} merge field should show both, not one
+        // arbitrary one.
+        $mcNames = array_filter(array_unique(array_map(function ($a) {
+            $mc = $a['marketCenter'] ?? '';
+            if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
+            return $mc;
+        }, $rosRows)));
+        $r['market_center']  = implode(' / ', $mcNames);
         $r['brokerage']      = $ros['brokerage'] ?? '';
         $r['phone']          = ($ros['phone'] ?? '') ?: ($intk['phone'] ?? '');
         $r['license_number'] = $intk['license_number'] ?? '';

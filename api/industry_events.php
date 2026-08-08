@@ -86,7 +86,7 @@ function industry_events_curated(): array {
         ['id' => 'nar-legislative-2026', 'name' => 'REALTORS® Legislative Meetings',
          'organizer' => 'NAR', 'category' => 'nar',
          'start_date' => '2026-06-13', 'end_date' => '2026-06-18',
-         'location' => 'Washington, D.C.', 'url' => 'https://legislative.nar.realtor',
+         'location' => 'Washington, D.C.', 'url' => 'https://legislative.realtor',
          'description' => 'REALTORS® from across the country gather on Capitol Hill to advocate for homeownership and real estate policy.',
          'featured' => false],
 
@@ -142,7 +142,7 @@ function industry_events_curated(): array {
         ['id' => 'nar-nxt-2026', 'name' => 'NAR NXT — The REALTOR® Experience',
          'organizer' => 'NAR', 'category' => 'nar',
          'start_date' => '2026-11-06', 'end_date' => '2026-11-08',
-         'location' => 'New Orleans, LA', 'url' => 'https://narnxt.com',
+         'location' => 'New Orleans, LA', 'url' => 'https://narnxt.realtor',
          'description' => "NAR's flagship annual conference bringing together 20,000+ real estate professionals for education, networking, and advocacy.",
          'featured' => true],
     ];

@@ -306,6 +306,84 @@ function notify_onboard_added(
     }
 }
 
+// Queue an email flagging that a queued agent has completed their intake
+// form and is ready for account creation (email/MLS/AgentEdge, etc.) — the
+// information needed to do that isn't available in the onboarding queue
+// until this fires, and staff otherwise have no way to know it just became
+// available. Same $addedBy + onboard_notify_emails recipient pattern as
+// notify_onboard_added, so it reaches the same people already handling this
+// agent's onboarding, and links straight into the queue row (not a separate
+// profile page) since that's now where the intake form itself can be viewed.
+function notify_intake_completed(string $agentName, string $agentEmail, int $queueId, string $addedBy): void {
+    $c       = cfg();
+    $subject = "{$agentName} completed their intake form — ready to create their account";
+    $body    = implode("\n", [
+        "{$agentName} ({$agentEmail}) has completed their onboarding intake form.",
+        "",
+        "View their intake form and continue onboarding:",
+        "https://agentedge.innovateonline.com/onboarding.php?open={$queueId}",
+        "",
+        "— AgentEdge",
+    ]);
+
+    $db  = local_db();
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    );
+
+    if (filter_var($addedBy, FILTER_VALIDATE_EMAIL)) {
+        $ins->execute([$addedBy, 'email', $subject, $body, '', '', '']);
+    }
+
+    $ccEmails = $c['onboard_notify_emails'] ?? [];
+    if (is_string($ccEmails)) {
+        $ccEmails = array_filter(array_map('trim', explode(',', $ccEmails)));
+    }
+    foreach ((array)$ccEmails as $cc) {
+        if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
+            $ins->execute([$cc, 'email', $subject, $body, '', '', '']);
+        }
+    }
+}
+
+// Short HMAC token gating an intake-request link — without it, guessing a
+// queue id would let anyone submit (or overwrite) that agent's intake data.
+// Own secret/config key so it can be rotated independently of the ticket
+// reply token; falls back to sendgrid_key so no extra provisioning is needed.
+function intake_link_token(int $queueId): string {
+    $c      = cfg();
+    $secret = ($c['intake_link_secret'] ?? '') ?: (($c['sendgrid_key'] ?? '') ?: 'agentedge-intake-link');
+    return substr(hash_hmac('sha256', 'intake-' . $queueId, $secret), 0, 16);
+}
+
+// The tokenized public-intake-form link for a specific onboarding-queue row.
+function intake_link_url(int $queueId): string {
+    return 'https://agentedge.innovateonline.com/public_intake.php?qid=' . $queueId . '&t=' . intake_link_token($queueId);
+}
+
+// Queue the "please fill out your intake form" email to a newly-queued agent.
+// Callers must call dispatch_notification_queue() after flushing the HTTP response.
+function notify_intake_request(string $agentName, string $agentEmail, int $queueId): void {
+    $subject = "Welcome to INNOVATE — Please Complete Your Intake Form";
+    $body    = implode("\n", [
+        "Hi {$agentName},",
+        "",
+        "Welcome to INNOVATE! Before we can finish setting up your account, please complete a short onboarding intake form.",
+        "",
+        "Complete your intake form here:",
+        intake_link_url($queueId),
+        "",
+        "This link is unique to you — no login required.",
+        "",
+        "Thank you,",
+        "— AgentEdge",
+    ]);
+
+    local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    )->execute([$agentEmail, 'email', $subject, $body, '', '', '']);
+}
+
 // Queue an email when an agent enters the offboarding queue.
 function notify_offboard_added(
     string $agentName,
@@ -361,6 +439,103 @@ function notify_offboard_added(
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
             $ins->execute([$cc, 'email', $subject, $body, '', $fromEmail, $addedByName]);
         }
+    }
+}
+
+// Send targeted task notifications when an agent enters the offboarding queue:
+//   - Abril  → deactivate Follow Up Boss
+//   - Lisa   → remove from Maxa Presents
+//   - Dominic → inactivate in Darwin
+//   - BIC    → submit MLS removal (looked up from market_centers)
+function notify_offboard_system_tasks(
+    string $agentName,
+    string $agentEmail,
+    string $marketCenter,
+    string $lastDay = '',
+    string $fromEmail = '',
+    string $fromName = ''
+): void {
+    $eName = htmlspecialchars($agentName,    ENT_QUOTES);
+    $eEmail = htmlspecialchars($agentEmail,  ENT_QUOTES);
+    $eMC   = htmlspecialchars($marketCenter, ENT_QUOTES);
+    $eDay  = $lastDay ? htmlspecialchars($lastDay, ENT_QUOTES) : '—';
+    $p     = 'style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"';
+    $mcLine = $eMC ? ' at <strong>' . $eMC . '</strong>' : '';
+    $qLink  = '<a href="https://agentedge.innovateonline.com/offboarding.php" style="color:#82C112">View Offboarding Queue &rarr;</a>';
+
+    $tasks = [
+        ['abril@innovateonline.com',   'Follow Up Boss', 'Please deactivate their Follow Up Boss account.'],
+        ['lisa@innovateonline.com',    'Maxa Presents',  'Please remove them from Maxa Presents.'],
+        ['dominic@innovateonline.com', 'Darwin',         'Please inactivate their agent record in Darwin.'],
+    ];
+
+    $db  = local_db();
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    );
+
+    foreach ($tasks as [$recipient, $system, $instruction]) {
+        $eSystem = htmlspecialchars($system, ENT_QUOTES);
+        $subject = $agentName . ' — Offboarding: ' . $system;
+        $body    = notification_email_html(
+            '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Offboarding Action Required: ' . $eSystem . '</h2>'
+            . '<p ' . $p . '><strong>' . $eName . '</strong> (' . $eEmail . ') has entered the offboarding queue' . $mcLine . '.</p>'
+            . '<p ' . $p . '>Last Day: <strong>' . $eDay . '</strong></p>'
+            . '<p ' . $p . '>' . htmlspecialchars($instruction, ENT_QUOTES) . '</p>'
+            . '<p ' . $p . '>' . $qLink . '</p>'
+            . sender_signature_html($fromEmail, $fromName)
+        );
+        $ins->execute([$recipient, 'email', $subject, $body, '', $fromEmail, $fromName]);
+    }
+
+    // BIC gets the MLS removal task.
+    if ($marketCenter !== '') {
+        $st = $db->prepare("SELECT bic_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+        $st->execute([$marketCenter]);
+        $bicEmail = trim($st->fetchColumn() ?: '');
+        if ($bicEmail && filter_var($bicEmail, FILTER_VALIDATE_EMAIL)) {
+            $subject = $agentName . ' — Offboarding: MLS';
+            $body    = notification_email_html(
+                '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Offboarding Action Required: MLS</h2>'
+                . '<p ' . $p . '><strong>' . $eName . '</strong> (' . $eEmail . ') has entered the offboarding queue' . $mcLine . '.</p>'
+                . '<p ' . $p . '>Last Day: <strong>' . $eDay . '</strong></p>'
+                . '<p ' . $p . '>Please submit the MLS membership removal form for this agent.</p>'
+                . '<p ' . $p . '>' . $qLink . '</p>'
+                . sender_signature_html($fromEmail, $fromName)
+            );
+            $ins->execute([$bicEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
+        }
+    }
+}
+
+// Notify leadership (Darren + Whitney) when an agent's offboarding is marked complete.
+function notify_offboard_complete(
+    string $agentName,
+    string $agentEmail,
+    string $marketCenter,
+    string $fromEmail = '',
+    string $fromName = ''
+): void {
+    $eName  = htmlspecialchars($agentName,    ENT_QUOTES);
+    $eEmail = htmlspecialchars($agentEmail,   ENT_QUOTES);
+    $eMC    = htmlspecialchars($marketCenter, ENT_QUOTES);
+    $p      = 'style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"';
+    $mcLine = $eMC ? ' at <strong>' . $eMC . '</strong>' : '';
+
+    $subject = $agentName . ' offboarding complete';
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Offboarding Complete</h2>'
+        . '<p ' . $p . '><strong>' . $eName . '</strong> (' . $eEmail . ')' . $mcLine . ' has been fully offboarded.</p>'
+        . '<p ' . $p . '>All offboarding steps have been completed.</p>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
+
+    $db  = local_db();
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    );
+    foreach (['darren@innovateonline.com', 'whitney@innovateonline.com'] as $r) {
+        $ins->execute([$r, 'email', $subject, $body, '', $fromEmail, $fromName]);
     }
 }
 
@@ -539,6 +714,130 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
     }
 }
 
+// ── BIC/MC-leader onboarding milestone notifications ─────────────────────────
+// Shared helper — looks up BIC + MC leader for a market center and queues one
+// HTML email to each. $subject / $headline / $detail are the caller's content.
+function _notify_bic_ml(string $marketCenter, string $subject, string $headline, string $detail): void {
+    $marketCenter = trim($marketCenter);
+    if ($marketCenter === '') return;
+    $db = local_db();
+    $st = $db->prepare("SELECT bic_email, mc_leader_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+    $st->execute([$marketCenter]);
+    $mc = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$mc) return;
+    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    if (!$emails) return;
+    $p    = 'style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"';
+    $body = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">' . htmlspecialchars($headline, ENT_QUOTES) . '</h2>'
+        . '<p ' . $p . '>' . $detail . '</p>'
+        . '<p ' . $p . '><a href="https://agentedge.innovateonline.com/onboarding.php" style="color:#82C112">View Onboarding Queue &rarr;</a></p>'
+        . sender_signature_html('', '')
+    );
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,'','')"
+    );
+    foreach ($emails as $email) {
+        $ins->execute([$email, 'email', $subject, $body, '']);
+    }
+}
+
+function notify_bic_ml_intake_submitted(string $agentName, string $agentEmail, string $marketCenter): void {
+    $eName  = htmlspecialchars($agentName,  ENT_QUOTES);
+    $eEmail = htmlspecialchars($agentEmail, ENT_QUOTES);
+    $eMC    = htmlspecialchars($marketCenter, ENT_QUOTES);
+    _notify_bic_ml(
+        $marketCenter,
+        $agentName . ' — Intake form submitted',
+        'Intake Form Submitted',
+        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has submitted their intake form. Document signing is next.'
+    );
+}
+
+function notify_bic_ml_docs_signed(string $agentName, string $agentEmail, string $marketCenter): void {
+    $eName  = htmlspecialchars($agentName,  ENT_QUOTES);
+    $eEmail = htmlspecialchars($agentEmail, ENT_QUOTES);
+    $eMC    = htmlspecialchars($marketCenter, ENT_QUOTES);
+    _notify_bic_ml(
+        $marketCenter,
+        $agentName . ' — Documents signed',
+        'Documents Signed',
+        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has completed document signing. Their onboarding agreement is on file.'
+    );
+}
+
+// Notify the BIC and MC Leader whenever an agent is assigned to a market center —
+// fired both on onboarding completion and on any roster MC change.
+function notify_mc_assigned(string $agentName, string $agentEmail, string $marketCenter, string $fromEmail = '', string $fromName = ''): void {
+    $marketCenter = trim($marketCenter);
+    if ($marketCenter === '') return;
+
+    $db = local_db();
+    $st = $db->prepare("SELECT bic_email, mc_leader_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+    $st->execute([$marketCenter]);
+    $mc = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$mc) return;
+
+    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    if (!$emails) return;
+
+    $subject = $agentName . ' assigned to ' . $marketCenter;
+    $eName   = htmlspecialchars($agentName, ENT_QUOTES);
+    $eMC     = htmlspecialchars($marketCenter, ENT_QUOTES);
+    $eEmail  = htmlspecialchars($agentEmail, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Agent Assigned to ' . $eMC . '</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> (' . $eEmail . ') has been assigned to <strong>' . $eMC . '</strong>.</p>'
+        . '<p style="margin:0 0 14px"><a href="https://agentedge.innovateonline.com/agent_profile.php?email=' . urlencode($agentEmail) . '" style="display:inline-block;background:#82C112;color:#fff;font-weight:700;font-size:14px;padding:10px 22px;border-radius:5px;text-decoration:none">View Agent Profile &rarr;</a></p>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
+
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    );
+    foreach ($emails as $email) {
+        $ins->execute([$email, 'email', $subject, $body, '', $fromEmail, $fromName]);
+    }
+}
+
+// Queue an email to the agent's Market Center Leader + lisa@innovateonline.com
+// (always cc'd per Darren's request, not conditional on market center lookup)
+// when an agent caps — called from lib/darwin.php's cap-progress sync when it
+// detects a transition from not-capped to capped for that agent. Unlike
+// notify_bic_ml_onboard_complete this does NOT include the BIC, only the MC
+// Leader, matching what was actually asked for.
+function notify_agent_capped(string $agentName, string $agentEmail, string $marketCenter, bool $isTest = false): void {
+    $db = local_db();
+    $mcLeaderEmail = '';
+    $marketCenter = trim($marketCenter);
+    if ($marketCenter !== '') {
+        $st = $db->prepare("SELECT mc_leader_email FROM market_centers WHERE LOWER(name) = LOWER(?)");
+        $st->execute([$marketCenter]);
+        $mcLeaderEmail = trim($st->fetchColumn() ?: '');
+    }
+
+    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com'])));
+    if (!$emails) return;
+
+    $eName    = htmlspecialchars($agentName, ENT_QUOTES);
+    $eMC      = htmlspecialchars($marketCenter ?: 'Unknown Market Center', ENT_QUOTES);
+    $subject  = ($isTest ? '[TEST] ' : '') . $agentName . ' Has Capped 🎉';
+    $body     = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">' . ($isTest ? 'Test: ' : '') . 'Agent Capped</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> (' . htmlspecialchars($agentEmail, ENT_QUOTES) . ') at ' . $eMC . ' has reached their commission cap.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0">They now move to 100% commission for the remainder of their anniversary year.</p>'
+        . ($isTest ? '<p style="color:#888;font-size:12px;margin-top:20px;font-style:italic">This is a test message — no real cap event triggered it.</p>' : '')
+        . sender_signature_html('', '')
+    );
+
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    );
+    foreach ($emails as $email) {
+        $ins->execute([$email, 'email', $subject, $body, '', '', '']);
+    }
+}
+
 // Queue an email to the departing agent with a link to fill out their exit
 // interview. Sent when an admin clicks "Send Exit Interview" — the agent's
 // AgentEdge login is still active at this point (account inactivation is a
@@ -680,7 +979,7 @@ function notify_profile_changed(string $agentName, string $agentEmail, array $ch
             "— AgentEdge",
         ]
     ));
-    queue_email_to(['whitney@innovateonline.com'], $subject, $body, $agentEmail, $agentName);
+    queue_email_to(['whitney@innovateonline.com', 'lisa@innovateonline.com'], $subject, $body, $agentEmail, $agentName);
 }
 
 // ── Intake form submission notification ─────────────────────────────────────
@@ -703,6 +1002,7 @@ function notify_intake_submitted(string $agentName, string $agentEmail): void {
         'darren@innovateonline.com',
         'abril@innovateonline.com',
         'whitney@innovateonline.com',
+        'kelseyabroussard@gmail.com',
     ];
     queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
@@ -926,7 +1226,7 @@ function notify_intake_summary_admins(string $agentEmail): int {
     $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', '')"
     );
-    foreach (['dominic@innovateonline.com', 'darren@innovateonline.com'] as $recipient) {
+    foreach (['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'] as $recipient) {
         $ins->execute([$recipient, $subject, $body]);
     }
     return 2;
@@ -1090,6 +1390,12 @@ function notify_ticket_cc_added(int $ticketId, string $title, string $ccEmail, s
 // transition, event log, and notification. Returns the new message id.
 function record_ticket_reply(PDO $db, array $tkt, string $authorEmail, bool $isStaff, string $body, string $authorName = ''): int {
     $ticketId = (int)$tkt['id'];
+    // Scrub invalid UTF-8 before storing — seen from some mobile mail clients
+    // (Outlook for Android) on inbound email replies. A single stored message
+    // with malformed UTF-8 makes json_encode() fail for the entire
+    // tickets_detail.php/tickets_list.php response, silently breaking that
+    // ticket (or the whole list) from ever opening again, not just that message.
+    $body = mb_scrub($body, 'UTF-8');
     $db->prepare("INSERT INTO support_ticket_messages (ticket_id,author,is_staff,body) VALUES (?,?,?,?)")
        ->execute([$ticketId, $authorEmail, $isStaff ? 1 : 0, $body]);
     $messageId = (int)$db->lastInsertId();
@@ -1219,15 +1525,27 @@ function send_email_sendgrid(string $to, string $subject, string $body, array $c
 // ── Twilio SMS ────────────────────────────────────────────────────────────────
 
 function send_sms_twilio(string $to, string $message, array $c): bool {
-    $sid   = $c['twilio_sid']   ?? '';
-    $token = $c['twilio_token'] ?? '';
-    $from  = $c['twilio_from']  ?? '';
-    if (!$sid || !$token || !$from || !$to) return false;
+    $sid        = $c['twilio_sid']                    ?? '';
+    $token      = $c['twilio_token']                  ?? '';
+    $from       = $c['twilio_from']                   ?? '';
+    $msgService = $c['twilio_messaging_service_sid']  ?? '';
+    if (!$sid || !$token || !$to || (!$msgService && !$from)) return false;
 
     // Normalize to E.164 — strip non-digits and prepend +1 if needed.
     $digits = preg_replace('/\D/', '', $to);
     if (strlen($digits) === 10) $digits = '1' . $digits;
     $e164 = '+' . $digits;
+
+    // Prefer the registered A2P 10DLC Messaging Service — required for real US
+    // carrier delivery, and its Advanced Opt-Out handles STOP/HELP for us. The
+    // bare from-number path is a fallback only, so it appends the opt-out line
+    // itself since nothing else will.
+    $body = $message;
+    if (!$msgService && stripos($message, 'stop') === false) {
+        $body .= ' Reply STOP to opt out.';
+    }
+    $fields = ['To' => $e164, 'Body' => $body];
+    $fields[$msgService ? 'MessagingServiceSid' : 'From'] = $msgService ?: $from;
 
     $url = "https://api.twilio.com/2010-04-01/Accounts/{$sid}/Messages.json";
     $ch  = curl_init($url);
@@ -1236,7 +1554,7 @@ function send_sms_twilio(string $to, string $message, array $c): bool {
         CURLOPT_TIMEOUT        => 15,
         CURLOPT_POST           => true,
         CURLOPT_USERPWD        => "{$sid}:{$token}",
-        CURLOPT_POSTFIELDS     => http_build_query(['From' => $from, 'To' => $e164, 'Body' => $message]),
+        CURLOPT_POSTFIELDS     => http_build_query($fields),
     ]);
     curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);

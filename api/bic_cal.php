@@ -36,7 +36,10 @@ $nameByEmail = [];
 $rosterRows = local_db()->query("SELECT email, agent_name, market_center FROM innovate_roster WHERE email != ''")->fetchAll(PDO::FETCH_ASSOC);
 foreach ($rosterRows as $r) {
     $email = strtolower(trim($r['email']));
-    if ($mcFilterSlugs !== null && $r['market_center'] !== '') $mcByEmail[$email] = slugify_mc($r['market_center']);
+    // An agent can have more than one active roster row (multiple Market
+    // Centers) — append, don't overwrite, so a leader scoped to either one
+    // still sees this agent's events.
+    if ($mcFilterSlugs !== null && $r['market_center'] !== '') $mcByEmail[$email][] = slugify_mc($r['market_center']);
     if (!empty($r['agent_name'])) $nameByEmail[$email] = $r['agent_name'];
 }
 // Roster only covers active agents — fall back to the Intake Form's name for
@@ -69,8 +72,8 @@ $events = [];
 
 foreach ($rowsByEmail as $email => $r) {
     if ($mcFilterSlugs !== null) {
-        $slug = $mcByEmail[$email] ?? null;
-        if ($slug === null || !in_array($slug, $mcFilterSlugs, true)) continue;
+        $slugs = $mcByEmail[$email] ?? [];
+        if (!array_intersect($slugs, $mcFilterSlugs)) continue;
     }
     $r['email'] = $email;
     // Birthday — stored as MM-DD, recurs annually

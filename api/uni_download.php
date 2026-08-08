@@ -91,7 +91,7 @@ if (!empty($_GET['img'])) {
 if (!empty($_GET['attachment'])) {
     $attId = (int)$_GET['attachment'];
     $s = $db->prepare(
-        "SELECT af.file_key, af.original_name, c.published
+        "SELECT af.file_key, af.original_name, c.published, l.pending_review
          FROM uni_lesson_files af
          JOIN uni_lessons l ON l.id=af.lesson_id
          JOIN uni_courses c ON c.id=l.course_id
@@ -100,7 +100,7 @@ if (!empty($_GET['attachment'])) {
     $s->execute([$attId]);
     $att = $s->fetch(PDO::FETCH_ASSOC);
     if (!$att) { http_response_code(404); echo 'Not found'; exit; }
-    if (!$att['published'] && !is_admin()) { http_response_code(403); echo 'Forbidden'; exit; }
+    if (!is_admin() && (!$att['published'] || $att['pending_review'])) { http_response_code(403); echo 'Forbidden'; exit; }
     $path = __DIR__ . '/../data/uni/' . $att['file_key'];
     if (!file_exists($path)) { http_response_code(404); echo 'File not found'; exit; }
     $mime = mime_content_type($path) ?: 'application/octet-stream';
@@ -130,7 +130,7 @@ $s  = $db->prepare("SELECT l.*, c.published FROM uni_lessons l JOIN uni_courses 
 $s->execute([$id]);
 $lesson = $s->fetch(PDO::FETCH_ASSOC);
 if (!$lesson || !$lesson['file_key']) { http_response_code(404); echo 'Not found'; exit; }
-if (!$lesson['published'] && !is_admin()) { http_response_code(403); echo 'Forbidden'; exit; }
+if (!is_admin() && (!$lesson['published'] || $lesson['pending_review'])) { http_response_code(403); echo 'Forbidden'; exit; }
 
 $path = __DIR__ . '/../data/uni/' . $lesson['file_key'];
 if (!file_exists($path)) { http_response_code(404); echo 'File not found'; exit; }

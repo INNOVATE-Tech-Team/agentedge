@@ -21,7 +21,7 @@ $isAdminUser = is_admin();
 // Load published courses with category info + lesson counts
 $allCourses = $db->query(
     "SELECT c.*, COALESCE(cat.name,'Uncategorized') as cat_name, COALESCE(cat.icon,'📚') as cat_icon,
-     (SELECT COUNT(*) FROM uni_lessons WHERE course_id=c.id) as lesson_count
+     (SELECT COUNT(*) FROM uni_lessons WHERE course_id=c.id AND pending_review=0) as lesson_count
      FROM uni_courses c LEFT JOIN uni_categories cat ON cat.id=c.category_id
      WHERE c.published=1 ORDER BY c.sort_ord,c.id"
 )->fetchAll(PDO::FETCH_ASSOC);

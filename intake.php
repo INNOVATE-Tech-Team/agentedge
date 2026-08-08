@@ -191,14 +191,6 @@ $intakeMarketCenters = local_db()
                   <option value="3XL">3XL</option>
                 </select>
               </div>
-              <div class="field">
-                <label>Military</label>
-                <select id="f-is_military">
-                  <option value="">Not applicable</option>
-                  <option value="veteran">Veteran</option>
-                  <option value="active">Active Duty</option>
-                </select>
-              </div>
               <div class="field"><label>First Responder or Medical Professional <span style="font-weight:400;color:var(--faint)">(optional)</span></label><input id="f-first_responder" type="text" placeholder="Specify type (paramedic, nurse, police, etc.) or leave blank"></div>
               <div class="field">
                 <label>Teacher</label>
@@ -290,7 +282,7 @@ $intakeMarketCenters = local_db()
 
     function setFields(intake) {
       if (!intake) return;
-      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','mls_board','mls_id','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','is_military','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','instagram','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
+      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','mls_board','mls_id','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','instagram','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
       map.forEach(function(key) {
         const node = el('f-' + key);
         if (node && intake[key] !== undefined && intake[key] !== null) {
@@ -499,7 +491,6 @@ $intakeMarketCenters = local_db()
         emergency_phone: el('f-emergency_phone').value,
         bio:             el('f-bio').value,
         tshirt_size:     el('f-tshirt_size').value,
-        is_military:     el('f-is_military').value,
         first_responder: el('f-first_responder').value,
         is_teacher:      el('f-is_teacher').value,
         phone_last4:     el('f-phone_last4').value,

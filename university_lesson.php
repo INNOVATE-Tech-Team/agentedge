@@ -21,7 +21,7 @@ $ls = $db->prepare(
 );
 $ls->execute([$lessonId]);
 $lesson = $ls->fetch(PDO::FETCH_ASSOC);
-if (!$lesson || (!$lesson['course_published'] && !is_admin())) { header('Location: university.php'); exit; }
+if (!$lesson || (!is_admin() && (!$lesson['course_published'] || $lesson['pending_review']))) { header('Location: university.php'); exit; }
 
 // Enforce access control for non-admins
 if (!is_admin()) {

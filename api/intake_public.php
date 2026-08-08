@@ -25,6 +25,29 @@ try {
         exit;
     }
 
+    // ── Tokenized link (from an automated/resent intake email) pins the
+    // submission to the onboarding-queue row it was generated for — the
+    // client-supplied email above is only trusted when no token is present
+    // (the legacy, self-declared-email flow).
+    $qid = (int)($body['qid'] ?? 0);
+    if ($qid > 0) {
+        $token = (string)($body['token'] ?? '');
+        if ($token === '' || !hash_equals(intake_link_token($qid), $token)) {
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'This link is invalid or has expired.']);
+            exit;
+        }
+        $qst = local_db()->prepare("SELECT agent_email FROM onboard_queue WHERE id = ?");
+        $qst->execute([$qid]);
+        $queueEmail = $qst->fetchColumn();
+        if (!$queueEmail) {
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'This link is invalid or has expired.']);
+            exit;
+        }
+        $email = strtolower(trim($queueEmail));
+    }
+
     // ── Required fields check ─────────────────────────────────────────────────
     $required = [
         'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
@@ -114,12 +137,11 @@ try {
     // Must go through the shared helper, not a raw INSERT — it's the only
     // place that seeds onboard_steps from onboard_tools(), so the checklist
     // isn't left empty for agents who come in via this public form.
-    queue_onboarding_agent(
+    $queueResult = queue_onboarding_agent(
         local_db(),
         $email,
         $fv('full_name'),
-        $fv('office_location'),
-        '',
+        [['market_center' => $fv('office_location'), 'state_code' => '']],
         null,
         'intake_form',
         '',
@@ -150,6 +172,14 @@ try {
     send_email_sendgrid('darren@innovateonline.com',     $subject, $body, $c);
     notify_upline_intake_submitted($submitterName, $submitterEmail, $officeLocation);
     notify_intake_summary_admins($submitterEmail);
+
+    // Flag it in the onboarding queue itself too — whoever added this agent
+    // (or the standing onboarding CC list, for CRM-pushed/self-submitted
+    // entries with no specific added_by) needs to know their intake data is
+    // now ready to view, not just that ops got a summary email.
+    $queueRow = local_db()->prepare("SELECT added_by FROM onboard_queue WHERE id = ?");
+    $queueRow->execute([$queueResult['id']]);
+    notify_intake_completed($submitterName, $submitterEmail, $queueResult['id'], (string)($queueRow->fetchColumn() ?: ''));
 
     echo json_encode(['ok' => true]);
 

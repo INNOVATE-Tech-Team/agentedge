@@ -72,6 +72,10 @@ function agent_assets_items(): array {
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         ['key' => 'commission_submit',  'label' => 'Submit Commission Check', 'href' => 'commission_submit.php'],
         ['key' => 'my_activity',        'label' => 'My Weekly Activity',      'href' => 'my_activity.php'],
+        // Buy Back Your Time: every producing agent's own book of business,
+        // not a backoffice/admin tool -- lives here, not in
+        // backoffice_nav_items(), same as profile.php/network.php above.
+        ['key' => 'buyback',            'label' => 'Buy Back Your Time',      'href' => 'buyback.php'],
     ];
 }
 
@@ -108,6 +112,11 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── Agent Communications ─────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
         ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Agent Communications'],
+        // Phase 1 scope is admin/BIC only (see can_send_hot_deals() in
+        // roles.php) -- 'bicOrAdminOnly' keeps it out of mc_leader's nav
+        // too, since this department is otherwise visible to them.
+        ['key'=>'bo_hot_deals',              'label'=>'Hot Deals',           'href'=>'backoffice_hot_deals.php',      'dept'=>'Agent Communications', 'bicOrAdminOnly'=>true],
+        ['key'=>'bo_google_audit',           'label'=>'Google Business Audit','href'=>'backoffice_google_audit.php',  'dept'=>'Agent Communications'],
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
@@ -192,6 +201,10 @@ function render_sidebar(string $current, array $agent): void {
                . $assetsLabel . ' <span class="sb-links-arrow">&#9660;</span></button>';
             echo '<div class="sb-links-sub" hidden>';
             foreach (agent_assets_items() as $ai) {
+                // 'buyback' is the one item here without its own client
+                // book for some roles (recruiting/coaching staff) -- hide
+                // rather than show a tool with nothing to act on.
+                if ($ai['key'] === 'buyback' && !can_use_buyback()) continue;
                 $act = $ai['key'] === $current ? ' sb-active' : '';
                 echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($ai['href']) . '">'
                    . htmlspecialchars($ai['label']) . '</a>';
@@ -283,6 +296,11 @@ function render_sidebar(string $current, array $agent): void {
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) =>
                 (empty($it['superOnly']) || $superAdmin) && (empty($it['teamLeaderOnly']) || is_team_leader())
+                // 'bicOrAdminOnly' — for items narrower than their department's
+                // default visibility (e.g. Agent Communications is otherwise
+                // visible to mc_leader too, matching every other item there,
+                // but a specific feature may need admin/bic only for now).
+                && (empty($it['bicOrAdminOnly']) || $admin || is_bic())
             ));
             if (!$admin && $deptName === 'Operations') {
                 $visible = array_values(array_filter($visible, fn($it) => !empty($it['leaderVisible'])));

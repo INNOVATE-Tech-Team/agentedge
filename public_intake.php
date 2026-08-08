@@ -1,10 +1,30 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/local_db.php';
+require_once __DIR__ . '/lib/notifications.php';
 
 $intakeMarketCenters = local_db()
     ->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
     ->fetchAll(PDO::FETCH_ASSOC);
+
+// A tokenized link (sent via the automated/manual "send intake" email) locks
+// the email + name to the onboarding-queue row it was generated for — a
+// bare, untokenized visit to this URL keeps the old self-declared-email
+// behavior so any previously-shared raw links keep working.
+$qid = (int)($_GET['qid'] ?? 0);
+$linkAgent = null;
+$linkInvalid = false;
+if ($qid > 0) {
+    $token = (string)($_GET['t'] ?? '');
+    if ($token !== '' && hash_equals(intake_link_token($qid), $token)) {
+        $st = local_db()->prepare("SELECT agent_email, agent_name FROM onboard_queue WHERE id = ?");
+        $st->execute([$qid]);
+        $linkAgent = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (!$linkAgent) $linkInvalid = true;
+    } else {
+        $linkInvalid = true;
+    }
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -115,23 +135,36 @@ $intakeMarketCenters = local_db()
 <div class="page-wrap">
   <div class="card" id="form-card">
 
+  <?php if ($linkInvalid): ?>
+    <div style="text-align:center;padding:20px 10px">
+      <div class="success-title" style="color:#c62828">This link is invalid or has expired.</div>
+      <div class="success-body" style="margin-top:10px">Please contact your onboarding coordinator for a new link.</div>
+    </div>
+  <?php else: ?>
+
     <div class="intake-progress">
       <div class="intake-progress-bar"><div class="intake-progress-fill" id="progress-fill" style="width:0%"></div></div>
       <div class="intake-progress-text" id="progress-text">0 of 12 required fields completed</div>
     </div>
 
     <form id="intake-form" novalidate>
+      <?php if ($linkAgent): ?>
+      <input type="hidden" id="f-qid" value="<?= (int)$qid ?>">
+      <input type="hidden" id="f-token" value="<?= htmlspecialchars($_GET['t'], ENT_QUOTES) ?>">
+      <?php endif; ?>
 
       <!-- Contact Information -->
       <div class="form-section-h">Contact Information</div>
       <div class="form-grid">
         <div class="field">
           <label>Email Address</label>
-          <input type="email" id="f-email" name="email" required placeholder="you@example.com">
+          <input type="email" id="f-email" name="email" required placeholder="you@example.com"
+            <?= $linkAgent ? 'value="' . htmlspecialchars($linkAgent['agent_email'], ENT_QUOTES) . '" readonly style="background:#f4f5f6;color:#888"' : '' ?>>
         </div>
         <div class="field">
           <label>Full Name</label>
-          <input type="text" id="f-full_name" name="full_name" required placeholder="First Last">
+          <input type="text" id="f-full_name" name="full_name" required placeholder="First Last"
+            <?= ($linkAgent && $linkAgent['agent_name']) ? 'value="' . htmlspecialchars($linkAgent['agent_name'], ENT_QUOTES) . '"' : '' ?>>
         </div>
         <div class="field">
           <label>Phone Number</label>
@@ -333,14 +366,6 @@ $intakeMarketCenters = local_db()
           </select>
         </div>
         <div class="field">
-          <label>Are you a military veteran?</label>
-          <select id="f-is_military" name="is_military">
-            <option value="">— Select —</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div class="field">
           <label>Are you a first responder?</label>
           <select id="f-first_responder" name="first_responder">
             <option value="">— Select —</option>
@@ -433,11 +458,14 @@ $intakeMarketCenters = local_db()
       <div class="success-body">Your intake form has been received.<br><strong>The INNOVATE operations team will be in touch shortly</strong> to complete your onboarding.</div>
     </div>
 
+  <?php endif; ?>
   </div>
 </div>
 
 <script>
 (function () {
+  if (!document.getElementById('intake-form')) return; // invalid-link state — no form rendered
+
   var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
   var TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
 
@@ -568,6 +596,8 @@ $intakeMarketCenters = local_db()
     el('form-error').textContent = '';
 
     var payload = {
+      qid:             el('f-qid') ? el('f-qid').value : '',
+      token:           el('f-token') ? el('f-token').value : '',
       email:           el('f-email').value.trim(),
       full_name:       el('f-full_name').value.trim(),
       phone:           el('f-phone').value.trim(),
@@ -591,7 +621,6 @@ $intakeMarketCenters = local_db()
       zip:             el('f-zip').value.trim(),
       country:         el('f-country').value.trim(),
       tshirt_size:     el('f-tshirt_size').value.trim(),
-      is_military:     el('f-is_military').value.trim(),
       first_responder: el('f-first_responder').value.trim(),
       is_teacher:      el('f-is_teacher').value.trim(),
       referring_agent: el('f-referring_agent').value.trim(),

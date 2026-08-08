@@ -13,6 +13,8 @@
   const MC_OPTS     = window.ONBOARD_MC_OPTS || [];
   const IS_ADMIN    = window.IS_ADMIN === true;
   const notesLoaded = new Set();   // queue ids whose notes have already been fetched
+  const intakeLoaded = new Set();  // queue ids whose intake form has already been fetched
+  const intakeOpenIds = new Set(); // queue ids whose intake panel is currently expanded
 
   // Tool key → definition map
   const TOOL_MAP = {};
@@ -240,8 +242,11 @@
 
     const dots = steps.map(s => stepDotHtml(s)).join('');
 
+    const mcList = entry.market_centers || [];
+
     const metaParts = [];
-    if (entry.market_center) metaParts.push(esc(entry.market_center));
+    if (mcList.length) metaParts.push(esc(mcList.map(m => m.market_center).join(', ')));
+    else if (entry.market_center) metaParts.push(esc(entry.market_center));
     if (entry.start_date)    metaParts.push('Starts ' + esc(entry.start_date));
     if (entry.role && entry.role !== 'agent') metaParts.push(esc(entry.role.replace(/_/g,' ')));
     const meta = metaParts.join(' · ');
@@ -261,19 +266,39 @@
         ${stateOptions}
       </select>` : (entry.state_code ? esc(entry.state_code) : '—');
 
-    const mcOptions = MC_OPTS.map(m =>
-      `<option value="${esc(m.name)}"${entry.market_center === m.name ? ' selected' : ''}>${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
+    // Multi-MC: a chip per assigned Market Center (with a remove "×" when
+    // editable) plus an "add another" select filtered to exclude MCs already
+    // assigned. Falls back to the old scalar market_center for any row not
+    // yet backed by onboard_queue_mcs (shouldn't happen post-migration, but
+    // cheap to guard).
+    const assignedNames = mcList.length ? mcList.map(m => m.market_center) : (entry.market_center ? [entry.market_center] : []);
+    const mcChips = assignedNames.map(name => `
+      <span class="ob-mc-chip" style="display:inline-flex;align-items:center;gap:4px;background:#eef5e8;color:#3a6b1a;border-radius:10px;padding:2px 8px;font-size:12px;margin:2px 4px 2px 0">
+        ${esc(name)}
+        ${(IS_ADMIN && entry.status === 'active') ? `<button type="button" onclick="removeQueueMarketCenter(${entry.id}, '${esc(name).replace(/'/g, "\\'")}', this)" title="Remove" style="border:none;background:none;color:#3a6b1a;cursor:pointer;font-weight:700;padding:0;line-height:1">&times;</button>` : ''}
+      </span>`).join('');
+    const addMcOptions = MC_OPTS.filter(m => !assignedNames.includes(m.name)).map(m =>
+      `<option value="${esc(m.name)}" data-state="${esc(m.state_code || '')}">${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
     ).join('');
-    const mcSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
-      <select class="ob-state-select" onchange="setQueueMarketCenter(${entry.id}, this)" title="Market Center (required to complete onboarding)">
-        <option value="">Market Center…</option>
-        ${mcOptions}
-      </select>` : (entry.market_center ? esc(entry.market_center) : '—');
+    const addMcSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
+      <select class="ob-state-select" onchange="addQueueMarketCenter(${entry.id}, this)" title="Add a Market Center">
+        <option value="">+ Add Market Center…</option>
+        ${addMcOptions}
+      </select>` : '';
+    const mcSelectHtml = `${mcChips}${assignedNames.length ? '' : (IS_ADMIN && entry.status === 'active' ? '' : '—')}${addMcSelectHtml}`;
+
+    const intakeStatusHtml = entry.intake_submitted
+      ? `<button class="ob-btn-sm ob-btn-done" onclick="toggleIntake(${entry.id})">${intakeOpenIds.has(entry.id) ? 'Hide' : 'View'} Intake Form</button>`
+      : entry.intake_sent_at
+        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button>`
+        : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button>`;
 
     const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
       <div class="ob-footer">
-        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${entry.market_center ? '1' : '0'}"
+        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${assignedNames.length ? '1' : '0'}" data-has-intake="${entry.intake_submitted ? '1' : '0'}"
                 onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
+        ${intakeStatusHtml}
+        <a class="ob-btn-sm ob-btn-done" style="text-decoration:none;display:inline-block" href="agent_profile.php?email=${encodeURIComponent(entry.agent_email)}" target="_blank">Edit Profile →</a>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
@@ -285,7 +310,7 @@
               <span class="ob-agent-name">${esc(entry.agent_name)}</span>
               ${statusBadge}
             </div>
-            <div class="ob-agent-meta">${esc(entry.agent_email)}${meta ? ' · ' + meta : ''}</div>
+            <div class="ob-agent-meta">${esc(entry.agent_email)}${entry.agent_phone ? ' · ' + esc(entry.agent_phone) : ''}${meta ? ' · ' + meta : ''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
             <div class="ob-dots">${dots}</div>
@@ -299,9 +324,13 @@
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
           ${entry.status === 'active' ? `<div class="ob-state-row" style="padding:4px 0 12px;font-size:12px;color:#888;display:flex;gap:16px;flex-wrap:wrap">
             <span>License state (required to complete): ${stateSelectHtml}</span>
-            <span>Market Center (required to complete): ${mcSelectHtml}</span>
+            <span>Market Center(s) (at least one required to complete): ${mcSelectHtml}</span>
           </div>` : ''}
           ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          ${entry.intake_submitted ? `
+          <div class="ob-intake" id="ob-intake-${entry.id}" data-email="${esc(entry.agent_email)}" style="display:${intakeOpenIds.has(entry.id) ? 'block' : 'none'};margin:10px 0;padding:12px;border:1px solid #E6E7E8;border-radius:8px;background:#fafbfa">
+            <div id="ob-intake-body-${entry.id}" style="font-size:12px;color:#aaa">Loading intake form…</div>
+          </div>` : ''}
           <div class="ob-notes" id="ob-notes-${entry.id}" data-email="${esc(entry.agent_email)}">
             <div class="ob-notes-list" id="ob-notes-list-${entry.id}" style="font-size:12px;color:#aaa">Loading notes…</div>
             <div style="display:flex;gap:8px;margin-top:8px">
@@ -409,6 +438,94 @@
       .catch(() => {});
   }
 
+  // ── Intake form (read-only, admin only — needed to create the agent's
+  // accounts before onboarding is marked complete) ────────────────────────────
+  const INTAKE_FIELD_SECTIONS = [
+    { title: 'Contact', fields: [
+      ['full_name', 'Full Name'], ['personal_email', 'Personal Email'], ['commissions_email', 'Commissions Email'],
+      ['phone', 'Phone'], ['phone_last4', 'Phone Last 4 (payroll)'], ['birthday', 'Birthday'],
+    ]},
+    { title: 'Address', fields: [
+      ['address_line1', 'Address Line 1'], ['address_line2', 'Address Line 2'], ['city', 'City'],
+      ['state', 'State'], ['zip', 'Zip'], ['country', 'Country'],
+    ]},
+    { title: 'License & MLS', fields: [
+      ['license_number', 'License Number'], ['license_state', 'License State'], ['license_exp', 'License Expiration'],
+      ['nar_number', 'NAR Number'], ['mls_board', 'MLS Board'], ['mls_id', 'MLS ID'],
+    ]},
+    { title: 'Business & Tax', fields: [
+      ['personal_tax_id_last4', 'Personal Tax ID (last 4)'], ['corporate_tax_id_last4', 'Corporate Tax ID (last 4)'],
+    ]},
+    { title: 'Emergency Contact', fields: [
+      ['emergency_name', 'Emergency Contact Name'], ['emergency_phone', 'Emergency Contact Phone'],
+    ]},
+    { title: 'Personal', fields: [
+      ['drivers_license', "Driver's License #"], ['tshirt_size', 'T-Shirt Size'], ['languages', 'Languages'],
+    ]},
+  ];
+
+  function ivField(label, value) {
+    const v = (value ?? '').toString().trim();
+    return `<div style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)">${esc(label)}</span>
+      <span style="font-size:12.5px;color:${v ? 'var(--muted)' : 'var(--faint)'};${v ? '' : 'font-style:italic'}">${v ? esc(v) : '—'}</span>
+    </div>`;
+  }
+
+  function renderIntakeGrid(queueId, intake) {
+    const body = document.getElementById('ob-intake-body-' + queueId);
+    if (!body) return;
+    if (!intake) { body.innerHTML = '<div style="color:#aaa">No intake form on file.</div>'; return; }
+
+    const sections = INTAKE_FIELD_SECTIONS.map(sec => `
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-bottom:6px">${esc(sec.title)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 16px">
+          ${sec.fields.map(([key, label]) => ivField(label, intake[key])).join('')}
+        </div>
+      </div>`).join('');
+
+    const licenses = (intake.additional_licenses || []);
+    const licensesHtml = licenses.length ? `
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-bottom:6px">Additional Licensed States</div>
+        <div style="font-size:12.5px;color:var(--muted)">${licenses.map(l => esc([l.license_number, l.license_state, l.license_exp ? '(exp. ' + l.license_exp + ')' : ''].filter(Boolean).join(' — '))).join('<br>')}</div>
+      </div>` : '';
+
+    const bioHtml = intake.bio ? `
+      <div>
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-bottom:6px">Bio</div>
+        <div style="font-size:12.5px;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow-y:auto">${esc(intake.bio)}</div>
+      </div>` : '';
+
+    body.innerHTML = sections + licensesHtml + bioHtml;
+  }
+
+  function loadIntake(queueId, force) {
+    if (intakeLoaded.has(queueId) && !force) return;
+    const wrap = document.getElementById('ob-intake-' + queueId);
+    const email = wrap?.dataset.email;
+    if (!email) return;
+    fetch('api/onboard_action.php?action=get_intake&email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        intakeLoaded.add(queueId);
+        if (d.ok) renderIntakeGrid(queueId, d.intake);
+        else { const body = document.getElementById('ob-intake-body-' + queueId); if (body) body.textContent = d.error || 'Failed to load intake form.'; }
+      })
+      .catch(() => {});
+  }
+
+  window.toggleIntake = function (queueId) {
+    const wrap = document.getElementById('ob-intake-' + queueId);
+    if (!wrap) return;
+    const open = wrap.style.display !== 'block';
+    wrap.style.display = open ? 'block' : 'none';
+    if (open) { intakeOpenIds.add(queueId); loadIntake(queueId); } else { intakeOpenIds.delete(queueId); }
+    const btn = document.querySelector(`#ob-row-${queueId} .ob-footer button[onclick="toggleIntake(${queueId})"]`);
+    if (btn) btn.textContent = (open ? 'Hide' : 'View') + ' Intake Form';
+  };
+
   window.addOnboardNote = function (queueId) {
     const input = document.getElementById('ob-notes-input-' + queueId);
     const wrap  = document.getElementById('ob-notes-' + queueId);
@@ -483,30 +600,57 @@
       .catch(() => { select.disabled = false; });
   };
 
-  // ── Set Market Center on a queue entry ─────────────────────────────────────
-  window.setQueueMarketCenter = function (queueId, select) {
+  // ── Add / remove a Market Center on a queue entry ──────────────────────────
+  // An agent can be queued into more than one Market Center at once (e.g.
+  // licensed/working in bordering states) — these are additive, not an
+  // overwrite of a single value.
+  window.addQueueMarketCenter = function (queueId, select) {
     const mc = select.value;
     if (!mc) return;
+    const opt   = select.options[select.selectedIndex];
+    const state = opt?.dataset.state || '';
     select.disabled = true;
-    post('api/onboard_action.php?action=set_market_center', { queue_id: queueId, market_center: mc })
+    post('api/onboard_action.php?action=add_market_center', { queue_id: queueId, market_center: mc, state_code: state })
       .then(d => {
-        select.disabled = false;
-        if (!d.ok) { alert(d.error || 'Could not set Market Center.'); return; }
-        const btn = document.querySelector(`#ob-row-${queueId} .ob-btn-done`);
-        if (btn) btn.dataset.hasMc = '1';
+        if (!d.ok) { select.disabled = false; alert(d.error || 'Could not add Market Center.'); return; }
+        loadQueue();
       })
       .catch(() => { select.disabled = false; });
   };
 
+  window.removeQueueMarketCenter = function (queueId, marketCenter, btn) {
+    if (!confirm(`Remove ${marketCenter} from this agent's queue entry?`)) return;
+    btn.disabled = true;
+    post('api/onboard_action.php?action=remove_market_center', { queue_id: queueId, market_center: marketCenter })
+      .then(d => {
+        if (!d.ok) { btn.disabled = false; alert(d.error || 'Could not remove Market Center.'); return; }
+        loadQueue();
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
   // ── Complete / Cancel queue entry ──────────────────────────────────────────
   window.completeOnboarding = function (queueId, btn) {
-    const hasState = btn.dataset.hasState === '1';
-    const hasMc    = btn.dataset.hasMc === '1';
+    const hasState  = btn.dataset.hasState === '1';
+    const hasMc     = btn.dataset.hasMc === '1';
+    const hasIntake = btn.dataset.hasIntake === '1';
     if (!hasState) { alert('Set a license state for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
     if (!hasMc) { alert('Set a Market Center for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
+    if (!hasIntake) { alert('This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.'); return; }
     if (!confirm('Mark this agent\'s onboarding as complete?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=complete_onboarding', { queue_id: queueId })
+      .then(d => {
+        if (d.ok) { loadQueue(); }
+        else { btn.disabled = false; alert(d.error || 'Error'); }
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
+  window.sendIntake = function (queueId, btn) {
+    if (!confirm('Send the intake form link to this agent by email?')) return;
+    btn.disabled = true;
+    post('api/onboard_action.php?action=send_intake', { queue_id: queueId })
       .then(d => {
         if (d.ok) { loadQueue(); }
         else { btn.disabled = false; alert(d.error || 'Error'); }

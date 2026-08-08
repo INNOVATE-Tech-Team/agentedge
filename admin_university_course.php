@@ -278,7 +278,12 @@ if ($courseId) {
                 <span class="drag-handle" title="Drag to reorder">⠿</span>
                 <span class="lesson-type-badge"><?= $typeIcons[$lesson['type']] ?? '📄' ?></span>
                 <div style="flex:1">
-                  <div class="lesson-title-text"><?= htmlspecialchars($lesson['title']) ?></div>
+                  <div class="lesson-title-text">
+                    <?= htmlspecialchars($lesson['title']) ?>
+                    <?php if (!empty($lesson['pending_review'])): ?>
+                    <span style="font-size:10px;font-weight:800;background:#fff3cd;color:#856404;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle">🕓 Pending Review</span>
+                    <?php endif; ?>
+                  </div>
                   <div class="lesson-meta">
                     <?= htmlspecialchars($typeLabel[$lesson['type']] ?? '') ?>
                     <?php if ($lesson['file_key']): ?> · Primary file uploaded<?php endif; ?>
@@ -288,6 +293,9 @@ if ($courseId) {
                   </div>
                 </div>
                 <div class="lesson-actions">
+                  <?php if (!empty($lesson['pending_review'])): ?>
+                  <button class="btn-sm btn-primary" onclick="publishLesson(<?= (int)$lesson['id'] ?>, '<?= htmlspecialchars(addslashes($lesson['title'])) ?>')">Publish</button>
+                  <?php endif; ?>
                   <button class="btn-sm" onclick='editLesson(<?= htmlspecialchars(json_encode($lesson)) ?>)'>Edit</button>
                   <?php if ($lesson['type'] === 'quiz'): ?>
                   <button class="btn-sm" onclick="manageQuestions(<?= (int)$lesson['id'] ?>, '<?= htmlspecialchars(addslashes($lesson['title'])) ?>')">Questions</button>
@@ -977,6 +985,11 @@ function saveLesson() {
 function deleteLesson(id, title) {
   if (!confirm(`Delete lesson "${title}"? Agent progress for this lesson will also be removed.`)) return;
   api({action:'delete_lesson',id}).then(d=>{if(d.ok)location.reload();else alert(d.error);});
+}
+
+function publishLesson(id, title) {
+  if (!confirm(`Publish "${title}"? It becomes visible to agents immediately.`)) return;
+  api({action:'publish_lesson',id}).then(d=>{if(d.ok)location.reload();else alert(d.error);});
 }
 
 // ── Folders ──────────────────────────────────────────────────────────────
