@@ -49,59 +49,41 @@ if ($ex) {
 }
 
 // ── DotLoop transaction dates ─────────────────────────────────────────────────
-if (!dotloop_is_connected($email)) {
+// Reads the shared-sync cache (dotloop_loops / dotloop_loop_participants) built
+// by dotloop_sync_company_loops() — see lib/dotloop.php. Per-agent DotLoop
+// connections don't exist anymore (an individual agent's own profile always
+// returns 0 loops on DotLoop's side, confirmed live); every agent's closings
+// are filtered from the one shared admin connection by participant email
+// instead, the same way dotloop.php's "My Transactions" page works.
+$lastSync = local_db()->query("SELECT value FROM dotloop_sync_state WHERE key = 'last_full_sync'")->fetchColumn();
+if (!$lastSync) {
     echo json_encode(['events' => $events, 'connected' => false]);
     exit;
 }
 
-$tok = dotloop_get_tokens($email);
-$profileId = $tok['profile_id'] ?? null;
-if (!$profileId) {
-    echo json_encode(['events' => $events, 'connected' => false]);
-    exit;
-}
+$emailGroup   = dotloop_email_group($email);
+$placeholders = implode(',', array_fill(0, count($emailGroup), '?'));
+$stmt = local_db()->prepare(
+    "SELECT name, deal_stage, closing_date FROM dotloop_loops dl
+     WHERE closing_date != '' AND EXISTS (
+         SELECT 1 FROM dotloop_loop_participants p WHERE p.loop_id = dl.loop_id AND p.email IN ({$placeholders})
+     )"
+);
+$stmt->execute($emailGroup);
 
-// Fetch loops — DotLoop paginates; grab up to 3 pages (150 loops) to be practical.
-$allLoops = [];
-for ($page = 1; $page <= 3; $page++) {
-    $res = dotloop_api($email, 'GET',
-        "/profile/{$profileId}/loop?status=ACTIVE,UNDER_CONTRACT,CLOSED,SOLD&p={$page}&ppp=50"
-    );
-    if (!$res['ok']) break;
-    $data = $res['data']['data'] ?? [];
-    if (empty($data)) break;
-    $allLoops = array_merge($allLoops, $data);
-    if (count($data) < 50) break;
-}
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $loop) {
+    $ts = strtotime($loop['closing_date']);
+    if ($ts === false) continue;
+    $d = date('Y-m-d', $ts);
+    if (substr($d, 0, 7) !== $month) continue;
 
-foreach ($allLoops as $loop) {
-    $name = $loop['name'] ?? 'Transaction';
-
-    // Closed / settlement date
-    if (!empty($loop['closeDate'])) {
-        $d = substr($loop['closeDate'], 0, 10);
-        if (substr($d, 0, 7) === $month) {
-            $events[] = [
-                'date'  => $d,
-                'title' => 'Closed: ' . $name,
-                'scope' => 'dotloop',
-            ];
-        }
-    }
-
-    // Under contract / target date
-    if (!empty($loop['targetDate'])) {
-        $d = substr($loop['targetDate'], 0, 10);
-        if (substr($d, 0, 7) === $month) {
-            $label = in_array($loop['status'] ?? '', ['UNDER_CONTRACT', 'UNDER CONTRACT'])
-                ? 'Under Contract: ' : 'Target Date: ';
-            $events[] = [
-                'date'  => $d,
-                'title' => $label . $name,
-                'scope' => 'dotloop',
-            ];
-        }
-    }
+    $isSold = $loop['deal_stage'] === 'SOLD';
+    $events[] = [
+        'date'  => $d,
+        'title' => ($isSold ? 'Closed: ' : 'Under Contract: ') . ($loop['name'] ?: 'Transaction'),
+        'scope' => 'dotloop',
+        'type'  => $isSold ? 'closing' : 'under_contract',
+    ];
 }
 
 usort($events, fn($a, $b) => strcmp($a['date'], $b['date']));
