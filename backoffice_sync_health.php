@@ -103,6 +103,13 @@ $rows = $buckets[$tab];
     .sh-table tr:last-child td{border-bottom:none}
     .sh-empty{color:#aaa;font-size:13px;padding:40px 0;text-align:center}
     .sh-note{font-size:11px;color:#999;margin-top:10px}
+    .sh-bulk-bar{display:none;align-items:center;gap:10px;margin-bottom:12px;padding:10px 14px;background:#fff3f3;border:1px solid #f3c6c6;border-radius:8px;font-size:12px}
+    .sh-bulk-bar.active{display:flex}
+    .sh-btn-delete{padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fff;border:1px solid #c0392b;color:#c0392b;cursor:pointer}
+    .sh-btn-delete:hover{background:#c0392b;color:#fff}
+    .sh-btn-bulk-delete{padding:6px 14px;border-radius:6px;font-size:12px;font-weight:700;background:#c0392b;border:none;color:#fff;cursor:pointer}
+    .sh-btn-bulk-delete:disabled{opacity:.5;cursor:not-allowed}
+    .sh-table td.sh-check{width:30px}
   </style>
 </head>
 <body>
@@ -130,13 +137,34 @@ $rows = $buckets[$tab];
       <?php if (!$rows): ?>
       <div class="sh-empty">No agents in this category.</div>
       <?php else: ?>
+
+      <?php if (is_super_admin()): ?>
+      <div class="sh-bulk-bar" id="bulkBar">
+        <span id="bulkCount">0 selected</span>
+        <button type="button" class="sh-btn-bulk-delete" id="bulkDeleteBtn" onclick="bulkDelete()">Delete Selected</button>
+      </div>
+      <?php endif; ?>
+
       <table class="sh-table">
-        <thead><tr><th>Agent</th><th>Email</th></tr></thead>
+        <thead>
+          <tr>
+            <?php if (is_super_admin()): ?><th class="sh-check"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th><?php endif; ?>
+            <th>Agent</th>
+            <th>Email</th>
+            <?php if (is_super_admin()): ?><th></th><?php endif; ?>
+          </tr>
+        </thead>
         <tbody>
           <?php foreach ($rows as $r): ?>
-          <tr>
+          <tr id="row-<?= h(md5($r['email'])) ?>">
+            <?php if (is_super_admin()): ?>
+            <td class="sh-check"><input type="checkbox" class="sh-row-check" value="<?= h($r['email']) ?>" onclick="updateBulkBar()"></td>
+            <?php endif; ?>
             <td><?= h($r['name']) ?></td>
             <td><?= h($r['email']) ?></td>
+            <?php if (is_super_admin()): ?>
+            <td><button type="button" class="sh-btn-delete" onclick="deleteOne('<?= h(addslashes($r['email'])) ?>', this)">Delete</button></td>
+            <?php endif; ?>
           </tr>
           <?php endforeach; ?>
         </tbody>
@@ -144,9 +172,94 @@ $rows = $buckets[$tab];
       <?php endif; ?>
 
       <p class="sh-note">"In Neither" mostly reflects agents with no closed production and no synced DotLoop activity yet — expected for new or inactive agents, not necessarily a sync problem.</p>
+      <?php if (is_super_admin()): ?>
+      <p class="sh-note">Delete permanently removes the tblstaff row from Perfex — this cannot be undone.</p>
+      <?php endif; ?>
 
     </main>
   </div>
 </div>
+<script>
+function toggleAll(box) {
+  document.querySelectorAll('.sh-row-check').forEach(function(c) { c.checked = box.checked; });
+  updateBulkBar();
+}
+function updateBulkBar() {
+  var checked = document.querySelectorAll('.sh-row-check:checked');
+  var bar = document.getElementById('bulkBar');
+  var count = document.getElementById('bulkCount');
+  if (!bar) return;
+  if (checked.length > 0) {
+    bar.classList.add('active');
+    count.textContent = checked.length + ' selected';
+  } else {
+    bar.classList.remove('active');
+  }
+}
+function removeRowByEmail(email) {
+  document.querySelectorAll('input.sh-row-check').forEach(function(c) {
+    if (c.value === email) {
+      var row = c.closest('tr');
+      if (row) row.remove();
+    }
+  });
+}
+function deleteOne(email, btn) {
+  if (!confirm('Permanently delete this tblstaff row for ' + email + '? This cannot be undone.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  fetch('api/sync_health_action.php', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({emails: [email]}),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      removeRowByEmail(email);
+      updateBulkBar();
+    } else {
+      alert('Delete failed: ' + (d.error || 'unknown error'));
+      btn.disabled = false;
+      btn.textContent = 'Delete';
+    }
+  })
+  .catch(function() {
+    alert('Request failed.');
+    btn.disabled = false;
+    btn.textContent = 'Delete';
+  });
+}
+function bulkDelete() {
+  var checked = Array.from(document.querySelectorAll('.sh-row-check:checked'));
+  var emails = checked.map(function(c) { return c.value; });
+  if (!emails.length) return;
+  if (!confirm('Permanently delete ' + emails.length + ' tblstaff row(s)? This cannot be undone.')) return;
+  var btn = document.getElementById('bulkDeleteBtn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  fetch('api/sync_health_action.php', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({emails: emails}),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      emails.forEach(removeRowByEmail);
+      updateBulkBar();
+    } else {
+      alert('Bulk delete failed: ' + (d.error || 'unknown error'));
+    }
+    btn.disabled = false;
+    btn.textContent = 'Delete Selected';
+  })
+  .catch(function() {
+    alert('Request failed.');
+    btn.disabled = false;
+    btn.textContent = 'Delete Selected';
+  });
+}
+</script>
 </body>
 </html>

@@ -157,3 +157,18 @@ function db_exec(string $sql, array $params = []): void {
     $st = db_rw()->prepare($sql);
     $st->execute($params);
 }
+
+// --- Perfex write connection (local perfex-db container) -------------------
+// Used ONLY by the Sync Health delete/bulk-delete action (backoffice_sync_health.php,
+// api/sync_health_action.php) — every other Perfex read in this app goes through
+// db()/db_query() above, which stays read-only on purpose. Deliberately separate
+// so a bug elsewhere can never accidentally pick up write credentials.
+function db_perfex_write(): mysqli {
+    static $m = null;
+    if ($m === null) {
+        $c = cfg();
+        $m = new mysqli($c['perfex_write_host'], $c['perfex_write_user'], $c['perfex_write_pass'], $c['perfex_write_name']);
+        $m->set_charset('utf8mb4');
+    }
+    return $m;
+}
