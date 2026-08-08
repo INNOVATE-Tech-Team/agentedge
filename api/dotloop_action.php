@@ -136,6 +136,51 @@ if ($action === 'get_documents') {
     exit;
 }
 
+// ── action=upload_document ────────────────────────────────────────────────────
+// multipart/form-data, not JSON — fields come from $_POST/$_FILES, not $body.
+if ($action === 'upload_document') {
+    $loopId    = trim($_POST['loop_id']    ?? '');
+    $profileId = trim($_POST['profile_id'] ?? '');
+    $folderId  = trim($_POST['folder_id']  ?? '');
+
+    if ($loopId === '' || $profileId === '' || $folderId === '') {
+        echo json_encode(['ok' => false, 'error' => 'Missing loop_id, profile_id, or folder_id']);
+        exit;
+    }
+    if (!dotloop_agent_owns_loop($loopId, $email)) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'You are not a participant on this transaction']);
+        exit;
+    }
+
+    if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+        echo json_encode(['ok' => false, 'error' => 'No file uploaded, or upload error']);
+        exit;
+    }
+    $maxBytes = 20 * 1024 * 1024; // 20 MB, matches api/hud_action.php's limit
+    if ($_FILES['file']['size'] > $maxBytes) {
+        echo json_encode(['ok' => false, 'error' => 'File exceeds 20 MB limit']);
+        exit;
+    }
+    $allowedMimes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+        'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    $mime = mime_content_type($_FILES['file']['tmp_name']);
+    if (!in_array($mime, $allowedMimes, true)) {
+        echo json_encode(['ok' => false, 'error' => 'File type not allowed']);
+        exit;
+    }
+
+    $result = dotloop_upload_document(
+        $sharedEmail, $profileId, $loopId, $folderId,
+        $_FILES['file']['tmp_name'], $_FILES['file']['name'], $mime
+    );
+    echo json_encode($result['ok']
+        ? ['ok' => true]
+        : ['ok' => false, 'error' => $result['error'] ?? 'Upload failed']
+    );
+    exit;
+}
+
 // Unknown action
 http_response_code(400);
 echo json_encode(['ok' => false, 'error' => 'Unknown action: ' . htmlspecialchars($action, ENT_QUOTES)]);

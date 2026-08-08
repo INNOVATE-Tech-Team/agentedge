@@ -155,7 +155,7 @@ $tabs = [
       <span class="<?= status_class($status) ?>"><?= h(ucfirst(strtolower($status))) ?></span>
       <div class="dl-loop-actions">
         <button class="dl-btn dl-btn-edit" onclick="togglePanel('edit-<?= h($loopId) ?>')">Edit Details</button>
-        <button class="dl-btn dl-btn-docs" onclick="loadDocs('<?= h($loopId) ?>', '<?= h($profileId) ?>')">View Documents</button>
+        <button class="dl-btn dl-btn-docs" onclick="loadDocs('<?= h($loopId) ?>', '<?= h($profileId) ?>', '<?= h(addslashes((string)($loop['loop_url'] ?? ''))) ?>')">View Documents</button>
       </div>
     </div>
 
@@ -267,7 +267,7 @@ function saveDetail(e, loopId, profileId) {
 }
 
 // ── Load documents ─────────────────────────────────────────────────────────────
-function loadDocs(loopId, profileId) {
+function loadDocs(loopId, profileId, loopUrl) {
   var panel = document.getElementById('docs-' + loopId);
   if (!panel) return;
 
@@ -297,11 +297,40 @@ function loadDocs(loopId, profileId) {
       return;
     }
     var folders = d.folders || [];
+
+    // DotLoop's API has no way to fetch a document's actual content or a
+    // download link (confirmed against their own public API docs) — viewing
+    // or downloading the real file only works by opening the loop in DotLoop
+    // itself, where whoever's logged in has real access to it.
+    var html = '';
+    if (loopUrl) {
+      html += '<div style="margin-bottom:12px;">'
+            + '<a href="' + escAttr(loopUrl) + '" target="_blank" rel="noopener" '
+            + 'style="font-size:12px;font-weight:700;color:#82C112;text-decoration:none;">View this transaction in DotLoop →</a>'
+            + '</div>';
+    }
+
+    html += '<div style="margin-bottom:14px;">'
+          + '<button type="button" class="dl-btn" style="font-size:12px;padding:6px 12px;" '
+          + 'onclick="toggleUploadForm(\'' + escAttr(loopId) + '\')">+ Upload Document</button>'
+          + '<div id="upload-form-' + loopId + '" style="display:none;margin-top:10px;padding:12px;background:#fafafa;border-radius:8px;">'
+          + '<select id="upload-folder-' + loopId + '" style="width:100%;margin-bottom:8px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;">'
+          + folders.map(function(f) { return '<option value="' + escAttr(String(f.id)) + '">' + escHtml(f.name || ('Folder ' + f.id)) + '</option>'; }).join('')
+          + '</select>'
+          + '<input type="file" id="upload-file-' + loopId + '" style="width:100%;margin-bottom:8px;font-size:13px;">'
+          + '<div style="display:flex;gap:8px;align-items:center;">'
+          + '<button type="button" class="dl-btn dl-btn-edit" style="font-size:12px;" onclick="uploadDocument(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\')">Upload</button>'
+          + '<span id="upload-msg-' + loopId + '" style="font-size:12px;"></span>'
+          + '</div>'
+          + '</div>'
+          + '</div>';
+
     if (!folders.length) {
-      inner.innerHTML = '<span style="color:#aaa;font-size:13px;">No folders found.</span>';
+      html += '<span style="color:#aaa;font-size:13px;">No folders found.</span>';
+      inner.innerHTML = html;
       return;
     }
-    var html = '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#aaa;margin-bottom:8px;">Folders</div>';
+    html += '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#aaa;margin-bottom:8px;">Folders</div>';
     folders.forEach(function(f) {
       var fid   = f.id;
       var fname = f.name || ('Folder ' + fid);
@@ -315,6 +344,53 @@ function loadDocs(loopId, profileId) {
   })
   .catch(function() {
     inner.innerHTML = '<span style="color:#c0392b;font-size:13px;">Request failed.</span>';
+  });
+}
+
+function toggleUploadForm(loopId) {
+  var form = document.getElementById('upload-form-' + loopId);
+  if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function uploadDocument(loopId, profileId) {
+  var folderSel = document.getElementById('upload-folder-' + loopId);
+  var fileInput = document.getElementById('upload-file-' + loopId);
+  var msg       = document.getElementById('upload-msg-' + loopId);
+  var folderId  = folderSel ? folderSel.value : '';
+  var file      = fileInput && fileInput.files[0];
+
+  if (!file) { msg.textContent = 'Choose a file first.'; msg.style.color = '#c0392b'; return; }
+
+  msg.textContent = 'Uploading…';
+  msg.style.color = '#888';
+
+  var formData = new FormData();
+  formData.append('loop_id', loopId);
+  formData.append('profile_id', profileId);
+  formData.append('folder_id', folderId);
+  formData.append('file', file);
+
+  fetch('api/dotloop_action.php?action=upload_document', {
+    method: 'POST',
+    body:   formData,
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      msg.textContent = 'Uploaded ✓';
+      msg.style.color = '#3a6b1a';
+      fileInput.value = '';
+      // Force a fresh folder-docs load next time that folder is opened.
+      var docsDiv = document.getElementById('fdocs-' + loopId + '-' + folderId);
+      if (docsDiv) delete docsDiv.dataset.loaded;
+    } else {
+      msg.textContent = 'Error: ' + (d.error || 'Upload failed');
+      msg.style.color = '#c0392b';
+    }
+  })
+  .catch(function() {
+    msg.textContent = 'Request failed.';
+    msg.style.color = '#c0392b';
   });
 }
 
