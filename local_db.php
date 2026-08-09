@@ -2688,6 +2688,41 @@ function local_db(): PDO {
         sent_at          TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // How-to library: one AI-generated article per nav-registered feature
+    // (see nav.php's nav_items()/backoffice_nav_items()/agent_assets_items()),
+    // regenerated nightly by cron/regen_howto_articles.php whenever the
+    // feature's own source file changes (source_hash). is_stale marks an
+    // article whose page no longer appears in the nav registry -- soft-hide,
+    // same convention as agent_sites.archived_at elsewhere, never delete.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS howto_articles (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_key      TEXT    NOT NULL UNIQUE,
+        label         TEXT    NOT NULL,
+        href          TEXT    NOT NULL,
+        body_markdown TEXT    NOT NULL,
+        source_hash   TEXT    NOT NULL,
+        generated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        is_stale      INTEGER NOT NULL DEFAULT 0
+    )");
+    // FTS5 external-content table, kept in sync via the triggers below --
+    // first use of FTS5 in this codebase, so this is the standard idiom
+    // (https://sqlite.org/fts5.html#external_content_tables), not a local
+    // precedent.
+    $pdo->exec("CREATE VIRTUAL TABLE IF NOT EXISTS howto_search USING fts5(
+        page_key UNINDEXED, label, body_markdown,
+        content='howto_articles', content_rowid='id'
+    )");
+    $pdo->exec("CREATE TRIGGER IF NOT EXISTS howto_ai AFTER INSERT ON howto_articles BEGIN
+        INSERT INTO howto_search(rowid, page_key, label, body_markdown) VALUES (new.id, new.page_key, new.label, new.body_markdown);
+    END");
+    $pdo->exec("CREATE TRIGGER IF NOT EXISTS howto_ad AFTER DELETE ON howto_articles BEGIN
+        INSERT INTO howto_search(howto_search, rowid, page_key, label, body_markdown) VALUES('delete', old.id, old.page_key, old.label, old.body_markdown);
+    END");
+    $pdo->exec("CREATE TRIGGER IF NOT EXISTS howto_au AFTER UPDATE ON howto_articles BEGIN
+        INSERT INTO howto_search(howto_search, rowid, page_key, label, body_markdown) VALUES('delete', old.id, old.page_key, old.label, old.body_markdown);
+        INSERT INTO howto_search(rowid, page_key, label, body_markdown) VALUES (new.id, new.page_key, new.label, new.body_markdown);
+    END");
+
     return $pdo;
 }
 

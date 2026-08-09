@@ -342,12 +342,22 @@ function render_sidebar(string $current, array $agent): void {
         }
         echo '</select>';
     }
+    // How-To library search -- a single injection point here puts it on
+    // every one of the ~85 pages that already call render_sidebar(), with
+    // no per-page edits. See assets/howto_search.js + api/howto_search.php.
+    echo '<div class="sb-search-wrap">'
+       . '<button class="sb-support" onclick="toggleHowtoSearch()">? How do I...</button>'
+       . '<div class="sb-search-box" id="sb-search-box" hidden>'
+       . '<input type="text" id="sb-search-input" class="sb-search-input" placeholder="Start typing..." autocomplete="off">'
+       . '<div class="sb-search-results" id="sb-search-results" hidden></div>'
+       . '</div></div>';
     echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
     echo '<script>window.AE_CSRF = ' . json_encode($_SESSION['csrf']) . ';</script>';
     echo '<script src="assets/mc-links.js"></script>';
     echo '<script src="assets/global.js"></script>';
+    echo '<script src="assets/howto_search.js"></script>';
     if (function_exists('is_masquerading') && is_masquerading()) {
         echo '<script>document.body.classList.add("masquerading")</script>';
     }
