@@ -132,6 +132,7 @@ $googlePlacesKey = google_places_api_key();
     <div class="bb-tabs">
       <div class="bb-tab active" data-panel="bb-delegate">Appointment Prep</div>
       <div class="bb-tab" data-panel="bb-automate">Equity Review</div>
+      <div class="bb-tab" data-panel="bb-eliminate">Database Audit</div>
       <div class="bb-tab" data-panel="bb-hotdeals">Hot Deals</div>
       <?php if ($showAdminTab): ?>
       <div class="bb-tab" data-panel="bb-admin">Team Activity</div>
@@ -164,6 +165,19 @@ $googlePlacesKey = google_places_api_key();
         <div id="bb-candidates"><div class="empty-note">Loading your contacts…</div></div>
       </div>
       <div id="bb-automate-drafts"></div>
+    </div>
+
+    <!-- Eliminate: run the audit, review the queue before send -->
+    <div id="bb-eliminate" class="bb-panel">
+      <div class="bb-form">
+        <h3>Database Audit</h3>
+        <p class="hint">Finds contacts who've gone quiet (90+ days no activity) and drafts a personal check-in — nothing sends until you approve it below.</p>
+        <div style="display:flex;align-items:center;gap:14px">
+          <button class="btn-primary" id="bb-eliminate-btn" onclick="bbEliminateRun()">Run my database audit</button>
+          <span class="send-status" id="bb-eliminate-status"></span>
+        </div>
+      </div>
+      <div id="bb-eliminate-drafts"></div>
     </div>
 
     <!-- Hot Deals: find best-value listings, matched to your own FUB leads only -->
@@ -248,6 +262,7 @@ document.querySelectorAll('.bb-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(tab.dataset.panel).classList.add('active');
     if (tab.dataset.panel === 'bb-automate') { loadCandidates(); loadDrafts('automate', 'bb-automate-drafts'); }
+    if (tab.dataset.panel === 'bb-eliminate') { loadDrafts('eliminate', 'bb-eliminate-drafts'); }
     if (tab.dataset.panel === 'bb-hotdeals') { loadHdHistory(); }
     if (tab.dataset.panel === 'bb-admin') { loadAdminTable(); }
   });
@@ -566,6 +581,31 @@ async function bbAutomateGenerate(personId, btn) {
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Generate review';
     alert('Network error.');
+  }
+}
+
+// ── Eliminate ────────────────────────────────────────────────────────────────
+async function bbEliminateRun() {
+  const btn = document.getElementById('bb-eliminate-btn');
+  const status = document.getElementById('bb-eliminate-status');
+  btn.disabled = true; btn.textContent = 'Running…';
+  status.textContent = ''; status.className = 'send-status';
+  try {
+    const r = await fetch('api/buyback_eliminate_run.php', {method: 'POST', credentials: 'same-origin'});
+    const data = await r.json();
+    btn.disabled = false; btn.textContent = 'Run my database audit';
+    if (!r.ok || data.ok === false) {
+      status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
+      status.className = 'send-status err';
+      return;
+    }
+    status.textContent = `Generated ${data.created} new draft(s).`;
+    status.className = 'send-status ok';
+    loadDrafts('eliminate', 'bb-eliminate-drafts', true);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Run my database audit';
+    status.textContent = 'Network error.';
+    status.className = 'send-status err';
   }
 }
 

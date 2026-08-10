@@ -181,12 +181,6 @@ function oh_time_options(string $sel = ''): string {
               Visible in the available pool
             </label>
           </div>
-          <div id="no-schedule-row" style="margin-top:12px;display:none">
-            <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
-              <input type="checkbox" name="no_schedule" value="1" id="f-no-schedule" onchange="onNoScheduleChange()"<?= !empty($listing['no_schedule']) ? ' checked' : '' ?>>
-              No specific schedule — available anytime (skip time slots below)
-            </label>
-          </div>
 
           <!-- Time Slots -->
           <div class="oh-form-section" id="slots-section-label">Time Slots</div>
@@ -245,25 +239,15 @@ const timeOpts = <?= json_encode($_tOpts) ?>;
 // ── Vacant / no-schedule toggling ────────────────────────────────────────────
 
 function onVacateChange() {
-  const vacate = document.getElementById('f-vacate').checked;
-  const row     = document.getElementById('no-schedule-row');
-  row.style.display = vacate ? '' : 'none';
-  if (!vacate) {
-    document.getElementById('f-no-schedule').checked = false;
-    onNoScheduleChange();
-  }
-}
-
-function onNoScheduleChange() {
-  const noSchedule = document.getElementById('f-no-schedule').checked;
-  const label      = document.getElementById('slots-section-label');
-  const container  = document.getElementById('slots-container');
-  const addBtn     = document.getElementById('btn-add-slot');
-  label.style.display     = noSchedule ? 'none' : '';
-  container.style.display = noSchedule ? 'none' : '';
-  addBtn.style.display    = noSchedule ? 'none' : '';
+  const vacate    = document.getElementById('f-vacate').checked;
+  const label     = document.getElementById('slots-section-label');
+  const container = document.getElementById('slots-container');
+  const addBtn    = document.getElementById('btn-add-slot');
+  label.style.display     = vacate ? 'none' : '';
+  container.style.display = vacate ? 'none' : '';
+  addBtn.style.display    = vacate ? 'none' : '';
   container.querySelectorAll('.slot-date, .slot-time').forEach(el => {
-    el.required = !noSchedule;
+    el.required = !vacate;
   });
 }
 
@@ -409,7 +393,6 @@ async function loadAgentListings() {
 
 loadAgentListings();
 onVacateChange();
-onNoScheduleChange();
 </script>
 </body>
 </html>

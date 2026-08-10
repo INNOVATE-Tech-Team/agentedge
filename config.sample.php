@@ -145,7 +145,9 @@ return [
     'gcal_calendar_id' => 'training@innovateonline.com',
 
     // Anthropic Claude API — used by the Finance Statement Scanner to categorize
-    // spending and generate savings recommendations. Get a key at console.anthropic.com.
+    // spending and generate savings recommendations, and by
+    // cron/regen_howto_articles.php to write/update the How-To library.
+    // Get a key at console.anthropic.com.
     'anthropic_api_key' => '',
 
     // Onboarding / offboarding notifications — comma-separated list of email addresses

@@ -1024,6 +1024,42 @@ function emCollectAdditionalLicenses() {
 var emBtnAddLicense = document.getElementById('em-btn-add-license');
 if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
+function emAddLicenseRow(lic) {
+  lic = lic || {};
+  var row = document.createElement('div');
+  row.className = 'license-row';
+  row.innerHTML =
+    '<div class="em-field"><label>Real Estate License #</label><input type="text" class="em-al-number"></div>' +
+    '<div class="em-field"><label>License State</label><input type="text" class="em-al-state" placeholder="e.g. SC, NC"></div>' +
+    '<div class="em-field"><label>License Expiration Date</label><input type="date" class="em-al-exp"></div>' +
+    '<button type="button" class="btn-remove-license">Remove</button>';
+  row.querySelector('.em-al-number').value = lic.license_number || '';
+  row.querySelector('.em-al-state').value = lic.license_state || '';
+  row.querySelector('.em-al-exp').value = lic.license_exp || '';
+  row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+  document.getElementById('em-additional-licenses').appendChild(row);
+}
+
+function emRenderAdditionalLicenses(list) {
+  var container = document.getElementById('em-additional-licenses');
+  container.innerHTML = '';
+  (list || []).forEach(function (lic) { emAddLicenseRow(lic); });
+}
+
+function emCollectAdditionalLicenses() {
+  var out = [];
+  document.querySelectorAll('#em-additional-licenses .license-row').forEach(function (row) {
+    var number = row.querySelector('.em-al-number').value.trim();
+    var state = row.querySelector('.em-al-state').value.trim();
+    var exp = row.querySelector('.em-al-exp').value.trim();
+    if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+  });
+  return out;
+}
+
+var emBtnAddLicense = document.getElementById('em-btn-add-license');
+if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
+
 window.openEditModal = function () {
   emLoaded = false;
   document.getElementById('em-save-btn').disabled = true;

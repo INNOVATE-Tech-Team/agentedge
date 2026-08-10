@@ -28,7 +28,7 @@ $list_price  = (int)str_replace([',','$'], '', $_POST['list_price'] ?? '0');
 $image_url   = trim($_POST['image_url']    ?? '');
 $vacate      = !empty($_POST['vacate'])    ? 1 : 0;
 $visible     = !empty($_POST['visible'])   ? 1 : 0;
-$no_schedule = ($vacate && !empty($_POST['no_schedule'])) ? 1 : 0;
+$no_schedule = $vacate ? 1 : 0;
 
 // Allowed property types
 $validTypes = ['Residential','Condo','Townhouse','Land','Commercial'];

@@ -254,6 +254,60 @@ switch ($action) {
         break;
     }
 
+    // ── CLAIM A VACANT LISTING (agent provides their own date/time) ──────────────
+    case 'claim_vacant': {
+        $listing_id = (int)($_POST['listing_id'] ?? 0);
+        $slot_date  = trim($_POST['slot_date']   ?? '');
+        $start_time = trim($_POST['start_time']  ?? '');
+        $end_time   = trim($_POST['end_time']    ?? '');
+
+        if (!$listing_id || $slot_date === '' || $start_time === '' || $end_time === '') {
+            echo json_encode(['error' => 'Missing required fields']); exit;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $slot_date)) {
+            echo json_encode(['error' => 'Invalid date']); exit;
+        }
+        if (!preg_match('/^\d{2}:\d{2}$/', $start_time) || !preg_match('/^\d{2}:\d{2}$/', $end_time)) {
+            echo json_encode(['error' => 'Invalid time']); exit;
+        }
+        if ($slot_date < date('Y-m-d')) {
+            echo json_encode(['error' => 'Date must be today or later']); exit;
+        }
+        if ($end_time <= $start_time) {
+            echo json_encode(['error' => 'End time must be after start time']); exit;
+        }
+
+        $lst = $db->prepare("SELECT * FROM oh_listings WHERE id=?");
+        $lst->execute([$listing_id]);
+        $listing = $lst->fetch(PDO::FETCH_ASSOC);
+        if (!$listing)              { echo json_encode(['error' => 'Listing not found']); exit; }
+        if (!$listing['visible'])   { echo json_encode(['error' => 'Listing not visible']); exit; }
+        if (!$listing['no_schedule']) { echo json_encode(['error' => 'Use the slot form for this listing']); exit; }
+        if (strtolower($listing['listing_agent_email']) === $email) {
+            echo json_encode(['error' => 'You cannot claim your own listing']); exit;
+        }
+
+        // Prevent duplicate active claim
+        $dup = $db->prepare("SELECT id FROM oh_requests WHERE listing_id=? AND agent_email=? AND status IN ('pending','approved')");
+        $dup->execute([$listing_id, $email]);
+        if ($dup->fetch()) {
+            echo json_encode(['error' => 'You already have an active request for this listing']); exit;
+        }
+
+        // Create a slot for this specific agent's proposed date/time
+        $db->prepare("INSERT INTO oh_slots (listing_id, slot_date, start_time, end_time) VALUES (?,?,?,?)")
+           ->execute([$listing_id, $slot_date, $start_time, $end_time]);
+        $slot_id = (int)$db->lastInsertId();
+
+        // Create pending request
+        $db->prepare("INSERT INTO oh_requests (slot_id, listing_id, agent_email, agent_name, status) VALUES (?,?,?,?,'pending')")
+           ->execute([$slot_id, $listing_id, $email, $name]);
+        $request_id = (int)$db->lastInsertId();
+
+        echo json_encode(['ok' => true, 'request_id' => $request_id]);
+        break;
+    }
+
     default:
         http_response_code(400);
         echo json_encode(['error' => 'Unknown action']);

@@ -204,8 +204,9 @@ function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
 function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coach() || my_role() === 'launch_facilitator'; }
 // Hot Deals: find best-value listings matching a spec, email FUB leads
 // searching for that type of property. Phase 1 scope is admin/BIC only —
-// opening to all agents is gated behind a prepaid-credit wallet (not built
-// yet), since each run costs real money against the AirROI rental-data API.
+// widening to all agents is gated on a prepaid-credit wallet / per-use
+// billing existing first (see the coastline-server hot-deal-alerts Phase 2
+// plan) so open access can't run up real AirROI/data costs unrecovered.
 function can_send_hot_deals(): bool { return is_admin() || is_bic(); }
 // Can manage the Launch Schedule / Launch Coaching roster (admin or coaching leadership).
 function can_manage_launch_roster(): bool { return is_admin() || is_launch_coach(); }
