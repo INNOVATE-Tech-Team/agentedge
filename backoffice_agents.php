@@ -717,6 +717,11 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
         <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
         <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+        <div class="em-field em-full">
+          <label>Additional Licensed States</label>
+          <div id="em-additional-licenses"></div>
+          <button type="button" class="btn-add-license" id="em-btn-add-license">+ Add Another License</button>
+        </div>
 
         <div class="em-section">MLS Information</div>
         <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
@@ -1025,6 +1030,50 @@ $missingCount = count($missingAgents);
   // agent_intake's full-date birthday shown in this modal — round-trip it
   // untouched so saving the modal never blanks it out.
   var emExtraBirthday = '';
+  // Guards against saving before the async load below finishes (or after it
+  // fails) — without this, Save was clickable the instant the modal opened,
+  // so a slow/failed load let a mostly-blank payload blindly overwrite a
+  // fully-populated profile (see api/intake.php's matching circuit-breaker).
+  var emLoaded = false;
+
+  // Additional (non-primary) state licenses — see agent_intake_licenses.
+  // Rendered as repeatable state/number/expiration rows; api/intake.php
+  // rewrites the whole set on save from whatever rows exist at submit time.
+  function emAddLicenseRow(lic) {
+    lic = lic || {};
+    var row = document.createElement('div');
+    row.className = 'license-row';
+    row.innerHTML =
+      '<div class="em-field"><label>Real Estate License #</label><input type="text" class="em-al-number"></div>' +
+      '<div class="em-field"><label>License State</label><input type="text" class="em-al-state" placeholder="e.g. SC, NC"></div>' +
+      '<div class="em-field"><label>License Expiration Date</label><input type="date" class="em-al-exp"></div>' +
+      '<button type="button" class="btn-remove-license">Remove</button>';
+    row.querySelector('.em-al-number').value = lic.license_number || '';
+    row.querySelector('.em-al-state').value = lic.license_state || '';
+    row.querySelector('.em-al-exp').value = lic.license_exp || '';
+    row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+    document.getElementById('em-additional-licenses').appendChild(row);
+  }
+
+  function emRenderAdditionalLicenses(list) {
+    var container = document.getElementById('em-additional-licenses');
+    container.innerHTML = '';
+    (list || []).forEach(function (lic) { emAddLicenseRow(lic); });
+  }
+
+  function emCollectAdditionalLicenses() {
+    var out = [];
+    document.querySelectorAll('#em-additional-licenses .license-row').forEach(function (row) {
+      var number = row.querySelector('.em-al-number').value.trim();
+      var state = row.querySelector('.em-al-state').value.trim();
+      var exp = row.querySelector('.em-al-exp').value.trim();
+      if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+    });
+    return out;
+  }
+
+  var emBtnAddLicense = document.getElementById('em-btn-add-license');
+  if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
   // Roster agents with no agent_intake row yet often have no email on file
   // either (older/manually-added rows). Rather than asking the admin to
@@ -1150,6 +1199,8 @@ $missingCount = count($missingAgents);
 
   window.openEditModal = function (email, name, prefill) {
     emCurrentEmail = email;
+    emLoaded = false;
+    document.getElementById('em-save-btn').disabled = true;
     document.getElementById('em-agent-name').textContent = name;
     document.getElementById('em-save-msg').textContent = 'Loading…';
     document.getElementById('editModalOverlay').style.display = 'flex';
@@ -1179,9 +1230,12 @@ $missingCount = count($missingAgents);
       document.getElementById('em-corporate_tax_id').value = '';
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
       document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
+      emRenderAdditionalLicenses(results[0].additional_licenses);
       document.getElementById('em-save-msg').textContent = '';
+      emLoaded = true;
+      document.getElementById('em-save-btn').disabled = false;
     }).catch(function () {
-      document.getElementById('em-save-msg').textContent = 'Failed to load agent data.';
+      document.getElementById('em-save-msg').textContent = 'Failed to load agent data — cannot save until this loads. Close and try again.';
     });
   };
 
@@ -1194,6 +1248,7 @@ $missingCount = count($missingAgents);
     if (!emCurrentEmail) return;
     var msg = document.getElementById('em-save-msg');
     var btn = document.getElementById('em-save-btn');
+    if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
     btn.disabled = true;
     msg.textContent = 'Saving…';
 
@@ -1208,6 +1263,7 @@ $missingCount = count($missingAgents);
     });
     payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
     payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
+    payload.additional_licenses = emCollectAdditionalLicenses();
 
     var extraPayload = {
       email: emCurrentEmail,

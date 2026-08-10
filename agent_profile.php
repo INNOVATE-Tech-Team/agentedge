@@ -1024,42 +1024,6 @@ function emCollectAdditionalLicenses() {
 var emBtnAddLicense = document.getElementById('em-btn-add-license');
 if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
-function emAddLicenseRow(lic) {
-  lic = lic || {};
-  var row = document.createElement('div');
-  row.className = 'license-row';
-  row.innerHTML =
-    '<div class="em-field"><label>Real Estate License #</label><input type="text" class="em-al-number"></div>' +
-    '<div class="em-field"><label>License State</label><input type="text" class="em-al-state" placeholder="e.g. SC, NC"></div>' +
-    '<div class="em-field"><label>License Expiration Date</label><input type="date" class="em-al-exp"></div>' +
-    '<button type="button" class="btn-remove-license">Remove</button>';
-  row.querySelector('.em-al-number').value = lic.license_number || '';
-  row.querySelector('.em-al-state').value = lic.license_state || '';
-  row.querySelector('.em-al-exp').value = lic.license_exp || '';
-  row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
-  document.getElementById('em-additional-licenses').appendChild(row);
-}
-
-function emRenderAdditionalLicenses(list) {
-  var container = document.getElementById('em-additional-licenses');
-  container.innerHTML = '';
-  (list || []).forEach(function (lic) { emAddLicenseRow(lic); });
-}
-
-function emCollectAdditionalLicenses() {
-  var out = [];
-  document.querySelectorAll('#em-additional-licenses .license-row').forEach(function (row) {
-    var number = row.querySelector('.em-al-number').value.trim();
-    var state = row.querySelector('.em-al-state').value.trim();
-    var exp = row.querySelector('.em-al-exp').value.trim();
-    if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
-  });
-  return out;
-}
-
-var emBtnAddLicense = document.getElementById('em-btn-add-license');
-if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
-
 window.openEditModal = function () {
   emLoaded = false;
   document.getElementById('em-save-btn').disabled = true;
@@ -1090,8 +1054,6 @@ window.openEditModal = function () {
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
     document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
-    document.getElementById('em-additional-licenses').innerHTML = '';
-    (results[0].additional_licenses || []).forEach(function (lic) { emAddLicenseRow(lic); });
     document.getElementById('em-save-msg').textContent = '';
     emLoaded = true;
     document.getElementById('em-save-btn').disabled = false;
@@ -1102,22 +1064,6 @@ window.openEditModal = function () {
 
 window.closeEditModal = function () {
   document.getElementById('editModalOverlay').style.display = 'none';
-};
-
-// Additional (non-primary) state licenses — see agent_intake_licenses.
-// Rendered as repeatable state/number/expiration rows; api/intake.php
-// rewrites the whole set on save from whatever rows exist at submit time.
-window.emAddLicenseRow = function (lic) {
-  lic = lic || { license_state: '', license_number: '', license_exp: '' };
-  var row = document.createElement('div');
-  row.className = 'em-lic-row';
-  row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center';
-  row.innerHTML =
-    '<input type="text" class="em-lic-state" placeholder="State" style="width:70px" value="' + (lic.license_state || '').replace(/"/g, '&quot;') + '">' +
-    '<input type="text" class="em-lic-number" placeholder="License #" style="flex:1" value="' + (lic.license_number || '').replace(/"/g, '&quot;') + '">' +
-    '<input type="date" class="em-lic-exp" style="width:150px" value="' + (lic.license_exp || '') + '">' +
-    '<button type="button" onclick="this.parentElement.remove()" style="padding:4px 10px;border:1px solid #fcc;background:white;border-radius:4px;font-size:12px;cursor:pointer;color:#c00">Remove</button>';
-  document.getElementById('em-additional-licenses').appendChild(row);
 };
 
 window.saveEditModal = function () {
