@@ -14,7 +14,7 @@ $s = $db->prepare("SELECT * FROM support_tickets WHERE id=?");
 $s->execute([$id]);
 $tkt = $s->fetch(PDO::FETCH_ASSOC);
 if (!$tkt) { http_response_code(404); echo json_encode(['error'=>'not found']); exit; }
-if (!is_admin() && $tkt['agent_email'] !== $me['email']) { http_response_code(403); echo json_encode(['error'=>'forbidden']); exit; }
+if (!is_super_admin() && $tkt['agent_email'] !== $me['email']) { http_response_code(403); echo json_encode(['error'=>'forbidden']); exit; }
 
 $m = $db->prepare("SELECT * FROM support_ticket_messages WHERE ticket_id=? ORDER BY created_at");
 $m->execute([$id]);

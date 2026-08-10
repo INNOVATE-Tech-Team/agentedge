@@ -10,7 +10,7 @@ $me = current_agent();
 if (!$me) { http_response_code(401); echo json_encode(['ok'=>false,'error'=>'not signed in']); exit; }
 
 $db      = local_db();
-$isAdmin = is_admin();
+$isAdmin = is_super_admin();
 
 function ticket_file_owner_email(PDO $db, int $ticketId): ?string {
     $st = $db->prepare("SELECT agent_email FROM support_tickets WHERE id=?");

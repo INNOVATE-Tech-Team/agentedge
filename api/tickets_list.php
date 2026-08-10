@@ -9,7 +9,7 @@ $me = current_agent();
 if (!$me) { http_response_code(401); echo json_encode(['error'=>'not signed in']); exit; }
 
 $db = local_db();
-if (is_admin()) {
+if (is_super_admin()) {
     $rows = $db->query("SELECT * FROM support_tickets ORDER BY updated_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 } else {
     $s = $db->prepare("SELECT * FROM support_tickets WHERE agent_email=? ORDER BY updated_at DESC");

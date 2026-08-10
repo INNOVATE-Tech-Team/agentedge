@@ -17,7 +17,7 @@ $f->execute([$id]);
 $file = $f->fetch(PDO::FETCH_ASSOC);
 if (!$file) { http_response_code(404); echo 'Not found'; exit; }
 
-if (!is_admin()) {
+if (!is_super_admin()) {
     $ts = $db->prepare("SELECT agent_email FROM support_tickets WHERE id=?");
     $ts->execute([(int)$file['ticket_id']]);
     $ownerEmail = strtolower((string)$ts->fetchColumn());
