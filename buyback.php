@@ -98,6 +98,10 @@ $googlePlacesKey = google_places_api_key();
 .lead-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
 .lead-row label{cursor:pointer;display:flex;align-items:center;gap:8px}
 .deal-send-bar{display:flex;align-items:center;gap:12px;margin-top:10px}
+.hd-share{margin-top:12px;padding-top:12px;border-top:1px solid #eee;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hd-share-box{width:100%;margin-top:10px}
+.hd-share-link{width:100%;font-family:monospace;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px}
+.hd-share-textarea{width:100%;font-family:inherit;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical;margin-top:4px}
 .candidate-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #eee}
 .candidate-row:first-child{border-top:none}
 .comp-map{width:100%;height:320px;border-radius:10px;border:1px solid var(--border);margin-top:16px;background:#eee}
@@ -753,6 +757,20 @@ function renderHdResults(candidates) {
         ${c.rental_estimate ? ` · Est. annual rental revenue: ${hdMoney(c.rental_estimate.annual_revenue)}` : ''}
         ${c.disclosed_monthly_hoa ? ` · HOA: ${hdMoney(c.disclosed_monthly_hoa)}/mo${c.hoa_source === 'mls' ? ' (from MLS data)' : ' (mentioned in remarks — verify)'}` : ' · HOA not disclosed — verify before pitching'}
       </div>
+      <div class="hd-share">
+        <button class="btn-secondary" onclick="hdShareText(${idx})" id="hd-share-btn-${idx}">Get Link &amp; Email Text</button>
+        <span class="send-status" id="hd-share-status-${idx}"></span>
+        <div class="hd-share-box" id="hd-share-box-${idx}" hidden>
+          <label class="section-label">Shareable link (credits you specifically)</label>
+          <div class="field-row" style="align-items:center;gap:8px;margin-bottom:8px">
+            <input type="text" readonly class="hd-share-link" onclick="this.select()">
+            <button class="btn-secondary" onclick="hdCopyShare(${idx}, 'link')">Copy Link</button>
+          </div>
+          <label class="section-label">Email text (edit freely — send from your own inbox)</label>
+          <textarea readonly rows="10" class="hd-share-textarea" onclick="this.select()"></textarea>
+          <button class="btn-secondary" style="margin-top:6px" onclick="hdCopyShare(${idx}, 'text')">Copy Email Text</button>
+        </div>
+      </div>
       ${leadsHtml}
     </div>`;
   }).join('');
@@ -792,6 +810,59 @@ async function hdSend(idx) {
     statusEl.textContent = 'Network error — could not reach the server.';
     statusEl.className = 'send-status err';
   }
+}
+
+// A link + copy-pasteable email for prospects who aren't a tracked FUB
+// contact at all (e.g. someone met at an open house) -- sent by the agent
+// from their own inbox, entirely outside FUB and the automated campaign
+// send. The link credits that specific agent's own site page when they
+// have one set up, not the generic brokerage "find an agent" page.
+async function hdShareText(idx) {
+  const card = document.querySelectorAll('.deal-card')[idx];
+  const listingKey = card.dataset.listingKey;
+  const btn = document.getElementById('hd-share-btn-' + idx);
+  const status = document.getElementById('hd-share-status-' + idx);
+  const box = document.getElementById('hd-share-box-' + idx);
+
+  btn.disabled = true; btn.textContent = 'Loading…';
+  status.textContent = ''; status.className = 'send-status';
+
+  try {
+    const r = await fetch('api/buyback_hotdeals_share.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({listing_key: listingKey}),
+    });
+    const data = await r.json();
+    btn.disabled = false; btn.textContent = 'Get Link & Email Text';
+    if (!r.ok || data.ok === false) {
+      status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
+      status.className = 'send-status err';
+      return;
+    }
+    box.querySelector('.hd-share-link').value = data.link;
+    box.querySelector('.hd-share-textarea').value = `Subject: ${data.subject}\n\n${data.body_text}`;
+    box.hidden = false;
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Get Link & Email Text';
+    status.textContent = 'Network error — could not reach the server.';
+    status.className = 'send-status err';
+  }
+}
+
+function hdCopyShare(idx, which) {
+  const box = document.getElementById('hd-share-box-' + idx);
+  const el = box.querySelector(which === 'link' ? '.hd-share-link' : '.hd-share-textarea');
+  el.select();
+  navigator.clipboard.writeText(el.value).then(() => {
+    const status = document.getElementById('hd-share-status-' + idx);
+    status.textContent = 'Copied to clipboard.';
+    status.className = 'send-status ok';
+  }).catch(() => {
+    const status = document.getElementById('hd-share-status-' + idx);
+    status.textContent = 'Could not copy — select the text manually.';
+    status.className = 'send-status err';
+  });
 }
 
 async function loadHdHistory(force) {

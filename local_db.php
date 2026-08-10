@@ -2394,6 +2394,28 @@ function local_db(): PDO {
         synced_at                         TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // Sales volume history — one row per agent per day its Darwin YTD figures
+    // actually changed (append-only, never overwritten). Darwin's YTD resets
+    // every Jan 1, so a true trailing-12-month figure isn't computable from a
+    // single current snapshot — it needs the value as of ~365 days ago plus
+    // last calendar year's full-year total, which this log is what will
+    // eventually supply once enough history has accumulated (Darwin data for
+    // INNOVATE starts 2026-02-27, so this can't produce a real number before
+    // roughly early-to-mid 2027). Fed by darwin_sync_sales_volume() in
+    // lib/darwin.php; read by backoffice_production_ranking.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_sales_volume_history (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_person_id        INTEGER NOT NULL,
+        agent_name             TEXT    NOT NULL DEFAULT '',
+        ytd_sales_volume       REAL    NOT NULL DEFAULT 0,
+        ytd_transaction_count  REAL    NOT NULL DEFAULT 0,
+        snapshot_date          TEXT    NOT NULL,
+        company_id             TEXT    NOT NULL DEFAULT '',
+        UNIQUE(agent_person_id, snapshot_date)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dsvh_agent ON darwin_sales_volume_history(agent_person_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dsvh_date  ON darwin_sales_volume_history(snapshot_date)");
+
     // Commission check submission log — fed by commission_submit.php /
     // api/commission_action.php, read by backoffice_commission_checks.php.
     $pdo->exec("CREATE TABLE IF NOT EXISTS commission_check_submissions (
