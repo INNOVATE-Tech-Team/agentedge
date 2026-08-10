@@ -8,9 +8,11 @@ header('Cache-Control: no-store');
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok'=>false,'error'=>'Not signed in']); exit; }
 
+// Open to any logged-in agent — a leader's own led team, a plain member's
+// own team, or (non-admins can't pass ?team_id=) nothing at all, which just
+// falls through to the generic "team_id required" response below.
 $isAdmin = is_admin();
-$teamId  = $isAdmin ? (int)($_GET['team_id'] ?? 0) : my_team_id();
-if (!$isAdmin && $teamId === null) { echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
+$teamId  = $isAdmin ? (int)($_GET['team_id'] ?? 0) : (my_team_id() ?? my_own_team_id());
 if (!$teamId) { echo json_encode(['ok'=>false,'error'=>'team_id required']); exit; }
 
 try {

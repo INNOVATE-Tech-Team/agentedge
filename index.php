@@ -295,8 +295,7 @@ try {
         if(!d.connected){
           document.getElementById('cc-body').innerHTML=
             '<div style="padding:16px;text-align:center;color:#888;font-size:13px">'+
-            'Connect DotLoop to see your closing calendar. '+
-            '<a href="dotloop_connect.php" style="color:#5b8e0d;font-weight:700">Connect →</a></div>';
+            'DotLoop transactions haven\'t synced yet — check back soon.</div>';
           return;
         }
         const evs=d.events||[];

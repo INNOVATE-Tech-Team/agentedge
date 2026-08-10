@@ -37,10 +37,14 @@ foreach ($messages as &$msg) {
 }
 unset($msg);
 
+// JSON_INVALID_UTF8_SUBSTITUTE: a single message with malformed UTF-8 (seen
+// from some mobile mail clients replying by email) would otherwise make
+// json_encode() fail for this entire response, silently breaking the whole
+// ticket from opening rather than just that one message.
 echo json_encode([
     'ok'       => true,
     'ticket'   => $tkt,
     'messages' => $messages,
     'cc'       => $cc->fetchAll(PDO::FETCH_ASSOC),
     'events'   => $ev->fetchAll(PDO::FETCH_ASSOC),
-]);
+], JSON_INVALID_UTF8_SUBSTITUTE);

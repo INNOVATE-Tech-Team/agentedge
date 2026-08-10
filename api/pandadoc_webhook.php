@@ -75,6 +75,12 @@ foreach ($events as $evt) {
         try {
             require_once __DIR__ . '/../lib/notifications.php';
             maybe_notify_next_actionable_step($pdo, 'onboard', (int)$queueId);
+            $qr = $pdo->prepare("SELECT agent_name, market_center FROM onboard_queue WHERE id=?");
+            $qr->execute([$queueId]);
+            $qr = $qr->fetch(PDO::FETCH_ASSOC);
+            if ($qr && trim($qr['market_center'] ?? '') !== '') {
+                notify_bic_ml_docs_signed($qr['agent_name'], $agentEmail, $qr['market_center']);
+            }
             dispatch_notification_queue();
         } catch (\Throwable $e) {}
     }

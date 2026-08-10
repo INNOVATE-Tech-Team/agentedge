@@ -5,14 +5,16 @@ require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../lib/roster.php';
+require_once __DIR__ . '/../lib/notifications.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok'=>false,'error'=>'Not signed in']); exit; }
-$perms = current_perms();
-if (empty($perms['isAdmin'])) {
+// Roster edits (add/edit/remove/move/bulk actions) are super_admin only —
+// plain staff can view the roster but no longer mutate it.
+if (!is_super_admin()) {
     echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit;
 }
 
@@ -133,7 +135,6 @@ if ($action === 'mcs_for_state') {
 
 // Rename a market center — updates display name everywhere, slug stays stable.
 if ($action === 'rename_mc') {
-    if (!is_super_admin()) { echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
     $oldName = trim($body['old_name']   ?? '');
     $newName = trim($body['new_name']   ?? '');
     $state   = strtoupper(trim($body['state_code'] ?? ''));
@@ -164,7 +165,7 @@ if ($action === 'edit') {
     if (!$id || !$name) { echo json_encode(['ok'=>false,'error'=>'id and agent_name required']); exit; }
     if ($exp && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp)) $exp = '';
 
-    $prevStmt = $db->prepare("SELECT agent_name, canonical_agent_id FROM innovate_roster WHERE id=?");
+    $prevStmt = $db->prepare("SELECT agent_name, email AS prev_email, market_center AS prev_mc, canonical_agent_id FROM innovate_roster WHERE id=?");
     $prevStmt->execute([$id]);
     $prev = $prevStmt->fetch(PDO::FETCH_ASSOC);
     if (!$prev) { echo json_encode(['ok'=>false,'error'=>'Not found']); exit; }
@@ -180,6 +181,13 @@ if ($action === 'edit') {
     // Push the name/email/phone change out to this agent's other-state listings too.
     sync_roster_identity($db, $id, $prev['agent_name'], $prev['canonical_agent_id'], $name, $email, $phone, $by);
 
+    // Notify BIC + MC leader if the market center changed.
+    $notifyEmail = $email ?: $prev['prev_email'];
+    if ($mc !== '' && strtolower($mc) !== strtolower($prev['prev_mc'] ?? '')) {
+        notify_mc_assigned($name, $notifyEmail, $mc, $by);
+        dispatch_notification_queue();
+    }
+
     echo json_encode(['ok'=>true]);
     exit;
 }
@@ -189,14 +197,24 @@ if ($action === 'move_mc') {
     $id     = (int)($body['id']      ?? 0);
     $mcName = trim($body['mc_name']  ?? '');
     if (!$id || $mcName === '') { echo json_encode(['ok'=>false,'error'=>'id and mc_name required']); exit; }
+
+    $agentRow = $db->prepare("SELECT agent_name, email, market_center AS prev_mc FROM innovate_roster WHERE id=?");
+    $agentRow->execute([$id]);
+    $agentRow = $agentRow->fetch(PDO::FETCH_ASSOC);
+
     $db->prepare("UPDATE innovate_roster SET market_center=? WHERE id=?")->execute([$mcName, $id]);
+
+    if ($agentRow && strtolower($mcName) !== strtolower($agentRow['prev_mc'] ?? '')) {
+        notify_mc_assigned($agentRow['agent_name'], $agentRow['email'], $mcName, $by);
+        dispatch_notification_queue();
+    }
+
     echo json_encode(['ok'=>true, 'mc_name'=>$mcName]);
     exit;
 }
 
 // Bulk assign agents to an MC + BIC by matching names against the CRM roster
 if ($action === 'bulk_assign') {
-    if (!is_super_admin()) { echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
     $names      = $body['agent_names'] ?? [];
     $mcSlug     = preg_replace('/[^a-z0-9\-]/', '', $body['mc_slug']   ?? '');
     $bicEmail   = strtolower(trim($body['bic_email'] ?? ''));
@@ -227,14 +245,19 @@ if ($action === 'bulk_assign') {
 
     $assigned  = 0;
     $unmatched = [];
+    // An agent can belong to more than one Market Center — read-modify-write
+    // own_mc_slugs per agent instead of overwriting, so bulk-assigning this
+    // MC to someone already placed in another one doesn't drop it.
+    $curSt = $db->prepare("SELECT own_mc_slugs FROM agent_roles WHERE email=?");
     $upsert = $db->prepare(
-        "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, bic_email, updated_by, updated_at)
-         VALUES (?, 'agent', '[]', ?, ?, ?, datetime('now'))
+        "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, updated_by, updated_at)
+         VALUES (?, 'agent', '[]', ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(email) DO UPDATE SET
-           own_mc_slug = excluded.own_mc_slug,
-           bic_email   = excluded.bic_email,
-           updated_by  = excluded.updated_by,
-           updated_at  = excluded.updated_at"
+           own_mc_slug  = excluded.own_mc_slug,
+           own_mc_slugs = excluded.own_mc_slugs,
+           bic_email    = excluded.bic_email,
+           updated_by   = excluded.updated_by,
+           updated_at   = excluded.updated_at"
     );
     // Also update the roster display grouping when we have a valid MC name and state
     $rosterUpd = $mcName && $stateCode
@@ -244,8 +267,15 @@ if ($action === 'bulk_assign') {
     foreach ($names as $name) {
         $email = $nameMap[strtolower(trim($name))] ?? null;
         if (!$email) { $unmatched[] = $name; continue; }
-        $upsert->execute([$email, $mcSlug, $bicEmail, $by]);
+
+        $curSt->execute([$email]);
+        $ownMcs = json_decode($curSt->fetchColumn() ?: '[]', true) ?: [];
+        if (!in_array($mcSlug, $ownMcs, true)) $ownMcs[] = $mcSlug;
+        $ownMcs = array_values(array_unique($ownMcs));
+
+        $upsert->execute([$email, $ownMcs[0], json_encode($ownMcs), $bicEmail, $by]);
         if ($rosterUpd) $rosterUpd->execute([$mcName, trim($name), $stateCode]);
+        if ($mcName) notify_mc_assigned(trim($name), $email, $mcName, $by);
         $assigned++;
     }
 
@@ -255,6 +285,8 @@ if ($action === 'bulk_assign') {
             $rosterUpd->execute([$mcName, trim($name), $stateCode]);
         }
     }
+
+    if ($assigned > 0) dispatch_notification_queue();
 
     echo json_encode(['ok'=>true, 'assigned'=>$assigned, 'unmatched'=>$unmatched, 'mc_name'=>$mcName]);
     exit;

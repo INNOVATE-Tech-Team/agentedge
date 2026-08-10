@@ -154,6 +154,12 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
         <label class="cal-field-label">Description
           <textarea id="cal-ev-description" class="cal-field-input" rows="3" placeholder="Details, links, what to bring…"></textarea>
         </label>
+        <label class="cal-field-label">Registration Page Message <span style="color:#888;font-weight:400">(optional — shown on the public registration link instead of the description above)</span>
+          <textarea id="cal-ev-reg-desc" class="cal-field-input" rows="3" placeholder="Friendlier copy for people registering without logging in…"></textarea>
+        </label>
+        <label class="cal-field-label">Short Link Name <span style="color:#888;font-weight:400">(optional — e.g. "launch-2-0" makes the link register.php?s=launch-2-0)</span>
+          <input type="text" id="cal-ev-reg-slug" class="cal-field-input" placeholder="e.g. launch-2-0">
+        </label>
         <label class="cal-field-label">Capacity <span style="color:#888;font-weight:400">(optional — extra RSVPs are waitlisted)</span>
           <input type="number" min="0" id="cal-ev-capacity" class="cal-field-input" placeholder="No limit">
         </label>
@@ -209,6 +215,12 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
         </label>
         <label class="cal-field-label">Description
           <textarea id="cal-ev2-description" class="cal-field-input" rows="3" placeholder="Details, links, what to bring…"></textarea>
+        </label>
+        <label class="cal-field-label">Registration Page Message <span style="color:#888;font-weight:400">(optional — shown on the public registration link instead of the description above)</span>
+          <textarea id="cal-ev2-reg-desc" class="cal-field-input" rows="3" placeholder="Friendlier copy for people registering without logging in…"></textarea>
+        </label>
+        <label class="cal-field-label">Short Link Name <span style="color:#888;font-weight:400">(optional — e.g. "launch-2-0" makes the link register.php?s=launch-2-0)</span>
+          <input type="text" id="cal-ev2-reg-slug" class="cal-field-input" placeholder="e.g. launch-2-0">
         </label>
         <label class="cal-field-label">Capacity <span style="color:#888;font-weight:400">(optional — extra RSVPs are waitlisted)</span>
           <input type="number" min="0" id="cal-ev2-capacity" class="cal-field-input" placeholder="No limit">

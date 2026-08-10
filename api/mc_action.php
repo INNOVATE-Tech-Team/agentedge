@@ -78,9 +78,12 @@ if ($action === 'save') {
         }
 
         // Propagate BIC change to every agent already placed in this MC.
+        // An agent can belong to more than one MC now, so own_mc_slug alone
+        // (the "first MC" mirror) isn't a reliable match — also catch agents
+        // whose own_mc_slugs list contains this MC alongside another one.
         if ($editSlug && $oldRow && $oldRow['bic_email'] !== $bicEmail) {
-            $db->prepare("UPDATE agent_roles SET bic_email=? WHERE own_mc_slug=? AND role='agent'")
-               ->execute([$bicEmail, $slug]);
+            $db->prepare("UPDATE agent_roles SET bic_email=? WHERE role='agent' AND (own_mc_slug=? OR own_mc_slugs LIKE '%\"' || ? || '\"%')")
+               ->execute([$bicEmail, $slug, $slug]);
         }
 
         // Push to Advantage (coastline-server) so market centers created or

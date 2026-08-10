@@ -43,17 +43,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $conds  = ["audience='all'"];
         $params = [];
 
-        $ownMc = my_own_mc_slug();
-        if ($ownMc !== '') {
+        // An agent can belong to more than one Market Center — see any
+        // announcement targeted at any MC they belong to or lead.
+        $myMcSlugs = array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs())));
+        foreach ($myMcSlugs as $slug) {
             $conds[]  = "(audience='mc' AND target_mc_slug=?)";
-            $params[] = $ownMc;
-        }
-
-        foreach (my_mc_slugs() as $slug) {
-            if ($slug !== $ownMc) {
-                $conds[]  = "(audience='mc' AND target_mc_slug=?)";
-                $params[] = $slug;
-            }
+            $params[] = $slug;
         }
 
         $bicEmail = my_bic_email();

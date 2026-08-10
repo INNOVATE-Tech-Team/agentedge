@@ -5,15 +5,22 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 
-$agent   = require_login();
-$isAdmin = is_admin();
-if (!$isAdmin && !is_team_leader()) { header('Location: index.php'); exit; }
+// Open to admins, team leaders, and plain team members — a plain member
+// gets their own team's roster+production via my_own_team_id(). An agent
+// who isn't on a team at all (and isn't an admin/leader) has no reason to
+// be here and gets bounced, same as the nav item being hidden from them.
+$agent       = require_login();
+$isAdmin     = is_admin();
+$isLeader    = is_team_leader();
+$myOwnTeamId = my_own_team_id();
+if (!$isAdmin && !$isLeader && $myOwnTeamId === null) { header('Location: index.php'); exit; }
 
 $db = local_db();
 
-// Admins can browse any team via ?team_id=; a team leader always sees their own.
+// Admins can browse any team via ?team_id=; a team leader always sees their
+// own led team; a plain member sees the team they belong to.
 $allTeams = $isAdmin ? $db->query("SELECT id, name FROM teams WHERE enabled=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC) : [];
-$teamId   = $isAdmin ? (int)($_GET['team_id'] ?? 0) : my_team_id();
+$teamId   = $isAdmin ? (int)($_GET['team_id'] ?? 0) : ($isLeader ? my_team_id() : $myOwnTeamId);
 if ($isAdmin && !$teamId && $allTeams) $teamId = (int)$allTeams[0]['id'];
 
 $team = null;
@@ -101,7 +108,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
   <div class="wrap">
 
     <?php if (!$team): ?>
-      <div class="detail-panel"><div class="empty-state">No team found. <?= $isAdmin ? 'Create one on the <a href="teams.php">Teams</a> page.' : 'Contact a super admin to set up your team.' ?></div></div>
+      <div class="detail-panel"><div class="empty-state"><?= $isAdmin ? 'No team found. Create one on the <a href="teams.php">Teams</a> page.' : 'You&rsquo;re not currently on a team.' ?></div></div>
     <?php else: ?>
 
     <div class="roster-summary">

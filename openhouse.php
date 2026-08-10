@@ -60,10 +60,19 @@ if ($listingIds) {
     }
 }
 
-// My pending/approved request slot IDs — so we can show "Requested" state
-$myReqQ = $db->prepare("SELECT slot_id FROM oh_requests WHERE agent_email=? AND status IN ('pending','approved')");
+// My pending/approved requests — slot IDs for slot-based listings, listing IDs for vacant claims
+$myReqQ = $db->prepare("SELECT slot_id, listing_id FROM oh_requests WHERE agent_email=? AND status IN ('pending','approved')");
 $myReqQ->execute([$myEmail]);
-$myRequestedSlots = array_flip(array_column($myReqQ->fetchAll(PDO::FETCH_ASSOC), 'slot_id'));
+$_allMyReqs       = $myReqQ->fetchAll(PDO::FETCH_ASSOC);
+$myRequestedSlots   = array_flip(array_column($_allMyReqs, 'slot_id'));
+$myClaimedListings  = array_flip(array_column($_allMyReqs, 'listing_id'));
+
+// My pending/approved ad-hoc (no_schedule) requests, by listing — same idea,
+// but keyed by listing_id since these have no slot_id (sentinel 0).
+$myAdhocQ = $db->prepare("SELECT listing_id, status, requested_date, requested_time FROM oh_requests WHERE agent_email=? AND slot_id=0 AND status IN ('pending','approved')");
+$myAdhocQ->execute([$myEmail]);
+$myAdhocRequests = [];
+foreach ($myAdhocQ->fetchAll(PDO::FETCH_ASSOC) as $r) { $myAdhocRequests[$r['listing_id']] = $r; }
 
 // Distinct states + types for filter dropdowns
 $statesR = $db->query("SELECT DISTINCT state FROM oh_listings WHERE visible=1 ORDER BY state")->fetchAll(PDO::FETCH_COLUMN);
@@ -136,8 +145,35 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
               <div style="font-size:12px;color:#888"><?= h($lst['property_type']) ?><?= $lst['list_price'] ? ' &middot; $'.number_format($lst['list_price']) : '' ?></div>
               <div class="oh-card-agent">Listed by <?= h($lst['listing_agent_name'] ?: $lst['listing_agent_email']) ?></div>
 
-              <?php if (empty($slots)): ?>
-                <div style="font-size:12px;color:#7c3aed;font-weight:600">Available anytime — contact listing agent to schedule</div>
+              <?php /* FIXME(merge 2026-08-09): box's newer "propose one time" ad-hoc
+                     flow below and the pre-existing "claim a time range" flow further
+                     down (search toggleClaimForm / claim_vacant) both fire for the same
+                     no_schedule listings — needs a product decision on which stays.
+                     Both left intact and functional so nothing regresses meanwhile. */ ?>
+              <?php if (empty($slots)):
+                $adhoc = $myAdhocRequests[$lst['id']] ?? null;
+              ?>
+                <div style="font-size:12px;color:#7c3aed;font-weight:600">Available anytime</div>
+                <?php if ($adhoc): ?>
+                  <div style="font-size:12px;color:#888;margin-top:4px">
+                    Requested <?= h(date('M j, Y', strtotime($adhoc['requested_date']))) ?> &middot; <?= h(date('g:i A', strtotime($adhoc['requested_time']))) ?>
+                    <span class="badge-pending" style="margin-left:4px"><?= $adhoc['status'] === 'approved' ? 'Approved' : 'Pending' ?></span>
+                  </div>
+                <?php else: ?>
+                  <button class="btn-save" style="margin-top:6px;font-size:12px;padding:7px 14px" onclick="toggleAnytimeForm(<?= $lst['id'] ?>)">Request a Time</button>
+                  <div id="anytime-form-<?= $lst['id'] ?>" style="display:none;margin-top:10px;padding:12px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px">
+                    <div style="font-size:12px;font-weight:700;margin-bottom:8px">Propose a date &amp; time:</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <input type="date" id="anytime-date-<?= $lst['id'] ?>" style="padding:6px 8px;border:1px solid #ccc;border-radius:5px;font-size:12px">
+                      <input type="time" id="anytime-time-<?= $lst['id'] ?>" style="padding:6px 8px;border:1px solid #ccc;border-radius:5px;font-size:12px">
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px">
+                      <button class="btn-save" style="font-size:12px;padding:6px 14px" onclick="submitAnytimeRequest(<?= $lst['id'] ?>)">Submit Request</button>
+                      <button onclick="toggleAnytimeForm(<?= $lst['id'] ?>)" style="padding:6px 12px;border:1px solid #ccc;background:white;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                    </div>
+                    <div id="anytime-msg-<?= $lst['id'] ?>" style="margin-top:6px;font-size:12px"></div>
+                  </div>
+                <?php endif; ?>
               <?php else: ?>
                 <div class="oh-card-slots">
                   <?php foreach ($slots as $slot):
@@ -159,49 +195,79 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
                 </div>
               <?php endif; ?>
 
-              <?php
-              // Only show Request button if there's at least one slot not already full and not already requested
-              $hasAvailSlot = false;
-              foreach ($slots as $slot) {
-                  if (!isset($myRequestedSlots[$slot['id']]) && $slot['approved_count'] < $maxPerSlot) {
-                      $hasAvailSlot = true;
-                      break;
-                  }
-              }
-              ?>
-              <?php if ($hasAvailSlot): ?>
-                <button class="btn-save" style="margin-top:auto;font-size:12px;padding:7px 14px"
-                        onclick="toggleReqForm(<?= $lst['id'] ?>)">
-                  Request Open House
-                </button>
-
-                <!-- Inline request form -->
-                <div id="req-form-<?= $lst['id'] ?>" style="display:none;margin-top:10px;padding:12px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px">
-                  <div style="font-size:12px;font-weight:700;margin-bottom:8px">Select a time slot:</div>
-                  <div style="display:flex;flex-direction:column;gap:6px" id="slots-<?= $lst['id'] ?>">
-                    <?php foreach ($slots as $slot):
-                      if (isset($myRequestedSlots[$slot['id']])) continue;
-                      if ($slot['approved_count'] >= $maxPerSlot) continue;
-                      $fmtDate  = date('M j, Y', strtotime($slot['slot_date']));
-                      $fmtStart = date('g:i A', strtotime($slot['start_time']));
-                      $fmtEnd   = date('g:i A', strtotime($slot['end_time']));
-                    ?>
-                    <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">
-                      <input type="radio" name="slot_pick_<?= $lst['id'] ?>" value="<?= $slot['id'] ?>">
-                      <?= h($fmtDate) ?> &middot; <?= h($fmtStart) ?>–<?= h($fmtEnd) ?>
-                    </label>
-                    <?php endforeach; ?>
+              <?php if ($lst['no_schedule']): ?>
+                <?php $alreadyClaimed = isset($myClaimedListings[$lst['id']]); ?>
+                <?php if ($alreadyClaimed): ?>
+                  <div style="margin-top:auto;font-size:12px;color:#888;font-style:italic">Open house requested</div>
+                <?php else: ?>
+                  <button class="btn-save" style="margin-top:auto;font-size:12px;padding:7px 14px"
+                          onclick="toggleClaimForm(<?= $lst['id'] ?>)">
+                    Request Open House
+                  </button>
+                  <!-- Inline claim form — agent provides their own date/time -->
+                  <div id="claim-form-<?= $lst['id'] ?>" style="display:none;margin-top:10px;padding:12px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px">
+                    <div style="font-size:12px;font-weight:700;margin-bottom:8px">When will you hold this open house?</div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      <input type="date" id="claim-date-<?= $lst['id'] ?>"
+                             style="padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px"
+                             min="<?= date('Y-m-d', strtotime('+1 day')) ?>">
+                      <div style="display:flex;gap:8px;align-items:center">
+                        <select id="claim-start-<?= $lst['id'] ?>" style="flex:1;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px"></select>
+                        <span style="font-size:12px;color:#888">to</span>
+                        <select id="claim-end-<?= $lst['id'] ?>" style="flex:1;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px"></select>
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px">
+                      <button class="btn-save" style="font-size:12px;padding:6px 14px"
+                              onclick="submitClaim(<?= $lst['id'] ?>)">Submit Request</button>
+                      <button onclick="toggleClaimForm(<?= $lst['id'] ?>)"
+                              style="padding:6px 12px;border:1px solid #ccc;background:white;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                    </div>
+                    <div id="claim-msg-<?= $lst['id'] ?>" style="margin-top:6px;font-size:12px"></div>
                   </div>
-                  <div style="display:flex;gap:8px;margin-top:10px">
-                    <button class="btn-save" style="font-size:12px;padding:6px 14px"
-                            onclick="submitRequest(<?= $lst['id'] ?>)">Submit Request</button>
-                    <button onclick="toggleReqForm(<?= $lst['id'] ?>)"
-                            style="padding:6px 12px;border:1px solid #ccc;background:white;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                <?php endif; ?>
+              <?php else: ?>
+                <?php
+                $hasAvailSlot = false;
+                foreach ($slots as $slot) {
+                    if (!isset($myRequestedSlots[$slot['id']]) && $slot['approved_count'] < $maxPerSlot) {
+                        $hasAvailSlot = true; break;
+                    }
+                }
+                ?>
+                <?php if ($hasAvailSlot): ?>
+                  <button class="btn-save" style="margin-top:auto;font-size:12px;padding:7px 14px"
+                          onclick="toggleReqForm(<?= $lst['id'] ?>)">
+                    Request Open House
+                  </button>
+                  <!-- Inline slot selection form -->
+                  <div id="req-form-<?= $lst['id'] ?>" style="display:none;margin-top:10px;padding:12px;background:#f9f9f9;border:1px solid #e6e7e8;border-radius:6px">
+                    <div style="font-size:12px;font-weight:700;margin-bottom:8px">Select a time slot:</div>
+                    <div style="display:flex;flex-direction:column;gap:6px" id="slots-<?= $lst['id'] ?>">
+                      <?php foreach ($slots as $slot):
+                        if (isset($myRequestedSlots[$slot['id']])) continue;
+                        if ($slot['approved_count'] >= $maxPerSlot) continue;
+                        $fmtDate  = date('M j, Y', strtotime($slot['slot_date']));
+                        $fmtStart = date('g:i A', strtotime($slot['start_time']));
+                        $fmtEnd   = date('g:i A', strtotime($slot['end_time']));
+                      ?>
+                      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">
+                        <input type="radio" name="slot_pick_<?= $lst['id'] ?>" value="<?= $slot['id'] ?>">
+                        <?= h($fmtDate) ?> &middot; <?= h($fmtStart) ?>–<?= h($fmtEnd) ?>
+                      </label>
+                      <?php endforeach; ?>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px">
+                      <button class="btn-save" style="font-size:12px;padding:6px 14px"
+                              onclick="submitRequest(<?= $lst['id'] ?>)">Submit Request</button>
+                      <button onclick="toggleReqForm(<?= $lst['id'] ?>)"
+                              style="padding:6px 12px;border:1px solid #ccc;background:white;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                    </div>
+                    <div id="req-msg-<?= $lst['id'] ?>" style="margin-top:6px;font-size:12px"></div>
                   </div>
-                  <div id="req-msg-<?= $lst['id'] ?>" style="margin-top:6px;font-size:12px"></div>
-                </div>
-              <?php elseif (!empty($slots)): ?>
-                <div style="margin-top:auto;font-size:12px;color:#888;font-style:italic">All slots requested or full</div>
+                <?php elseif (!empty($slots)): ?>
+                  <div style="margin-top:auto;font-size:12px;color:#888;font-style:italic">All slots requested or full</div>
+                <?php endif; ?>
               <?php endif; ?>
             </div>
           </div>
@@ -216,6 +282,94 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
 function toggleReqForm(id) {
   const f = document.getElementById('req-form-' + id);
   f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleAnytimeForm(id) {
+  const f = document.getElementById('anytime-form-' + id);
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function submitAnytimeRequest(listingId) {
+  const dateEl = document.getElementById('anytime-date-' + listingId);
+  const timeEl = document.getElementById('anytime-time-' + listingId);
+  const msgEl  = document.getElementById('anytime-msg-' + listingId);
+  if (!dateEl.value || !timeEl.value) { msgEl.textContent = 'Please pick a date and time.'; msgEl.style.color = '#c00'; return; }
+
+  const fd = new FormData();
+  fd.append('action', 'request_anytime');
+  fd.append('listing_id', listingId);
+  fd.append('requested_date', dateEl.value);
+  fd.append('requested_time', timeEl.value);
+
+  fetch('api/oh_action.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) { msgEl.textContent = res.error; msgEl.style.color = '#c00'; return; }
+      location.reload();
+    })
+    .catch(() => { msgEl.textContent = 'Network error.'; msgEl.style.color = '#c00'; });
+}
+
+// Pre-existing "claim a specific date/time range" flow — kept alongside the
+// newer request-anytime flow above; both currently fire for no_schedule
+// listings (see FIXME near the top of the file), unreconciled as of 2026-08-09.
+function buildTimeOpts() {
+  let opts = '<option value="">— select —</option>';
+  for (let h = 6; h <= 21; h++) {
+    for (const m of [0, 30]) {
+      if (h === 21 && m === 30) continue;
+      const v = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+      const d = new Date(2000,0,1,h,m);
+      const l = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      opts += `<option value="${v}">${l}</option>`;
+    }
+  }
+  return opts;
+}
+const _timeOpts = buildTimeOpts();
+
+function toggleClaimForm(id) {
+  const f = document.getElementById('claim-form-' + id);
+  const showing = f.style.display !== 'none';
+  f.style.display = showing ? 'none' : 'block';
+  if (!showing) {
+    const s = document.getElementById('claim-start-' + id);
+    const e = document.getElementById('claim-end-'   + id);
+    if (!s.options.length) { s.innerHTML = _timeOpts; e.innerHTML = _timeOpts; }
+  }
+}
+
+function submitClaim(listingId) {
+  const dateEl  = document.getElementById('claim-date-'  + listingId);
+  const startEl = document.getElementById('claim-start-' + listingId);
+  const endEl   = document.getElementById('claim-end-'   + listingId);
+  const msgEl   = document.getElementById('claim-msg-'   + listingId);
+
+  if (!dateEl.value)  { msgEl.textContent = 'Please select a date.';       msgEl.style.color = '#c00'; return; }
+  if (!startEl.value) { msgEl.textContent = 'Please select a start time.'; msgEl.style.color = '#c00'; return; }
+  if (!endEl.value)   { msgEl.textContent = 'Please select an end time.';  msgEl.style.color = '#c00'; return; }
+  if (endEl.value <= startEl.value) { msgEl.textContent = 'End time must be after start time.'; msgEl.style.color = '#c00'; return; }
+
+  const fd = new FormData();
+  fd.append('action',     'claim_vacant');
+  fd.append('listing_id', listingId);
+  fd.append('slot_date',  dateEl.value);
+  fd.append('start_time', startEl.value);
+  fd.append('end_time',   endEl.value);
+
+  fetch('api/oh_action.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        msgEl.textContent = 'Request submitted!';
+        msgEl.style.color = '#3a6b1a';
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        msgEl.textContent = d.error || 'Error. Please try again.';
+        msgEl.style.color = '#c00';
+      }
+    })
+    .catch(() => { msgEl.textContent = 'Network error.'; msgEl.style.color = '#c00'; });
 }
 
 function submitRequest(listingId) {

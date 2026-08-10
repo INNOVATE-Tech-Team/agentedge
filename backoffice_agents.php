@@ -99,7 +99,7 @@ foreach (local_db()->query(
 
 $pendingAgents = local_db()->query(
     "SELECT q.agent_email as email, q.agent_name as full_name, q.market_center as office_location,
-            q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
+            q.agent_phone as phone, q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
      FROM onboard_queue q
      WHERE q.status = 'active'
        AND LOWER(q.agent_email) NOT IN (SELECT LOWER(email) FROM agent_intake)
@@ -240,8 +240,8 @@ $missingCount = count($missingAgents);
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
 .dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
 .dg-field{display:flex;flex-direction:column;gap:2px}
-.dg-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-.dg-value{font-size:12px;color:var(--ink)}
+.dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
+.dg-value{font-size:12.5px;color:var(--muted)}
 .dg-value.empty{color:var(--faint);font-style:italic}
 .dg-bio{grid-column:1/-1}
 .dg-bio .dg-value{white-space:pre-wrap;font-size:12px;line-height:1.55;max-height:140px;overflow-y:auto}
@@ -626,6 +626,8 @@ $missingCount = count($missingAgents);
                 <div class="detail-actions">
                   <?php if ($isAdmin): ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
+                  <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($p['email']) ?>', '<?= h($p['full_name'] ?: $p['email']) ?>', { office_location: '<?= h($p['office_location']) ?>', phone: '<?= h($p['phone'] ?? '') ?>' })">Edit Profile →</button>
+                  <a href="agent_profile.php?email=<?= h($p['email']) ?>" class="btn-detail-link">View Full Profile →</a>
                   <?php endif; ?>
                 </div>
               </div>
@@ -694,6 +696,11 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
         <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from the roster email"></div>
         <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
+
+        <div class="em-section">Team Status (from Darwin)</div>
+        <div class="em-field em-full" id="em-team-status">
+          <div style="font-size:12px;color:var(--faint)">Loading…</div>
+        </div>
 
         <div class="em-section">Address</div>
         <div class="em-field em-full"><label>Address Line 1</label><input id="em-address_line1"></div>
@@ -1055,11 +1062,99 @@ $missingCount = count($missingAgents);
       .catch(function () { askForEmail(name, marketCenter); });
   };
 
+  function h(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // Renders the Darwin-derived team role suggestion into the modal. Runs in
+  // parallel with the intake/agent_extra Promise.all below, not chained to
+  // it — a slow/failed Darwin lookup should never block the rest of the
+  // profile from loading.
+  function loadTeamStatus(email, name) {
+    var box = document.getElementById('em-team-status');
+    box.innerHTML = '<div style="font-size:12px;color:var(--faint)">Loading…</div>';
+
+    fetch('api/agent_team_suggestion.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { box.innerHTML = '<div style="font-size:12px;color:var(--faint)">' + h(d.error || 'Unavailable') + '</div>'; return; }
+        box.innerHTML = renderTeamStatus(d);
+        var createBtn = document.getElementById('em-create-team-btn');
+        if (createBtn) createBtn.onclick = function () { createTeamFromSuggestion(email, name); };
+      })
+      .catch(function () {
+        box.innerHTML = '<div style="font-size:12px;color:var(--faint)">Could not load team status.</div>';
+      });
+  }
+
+  function renderTeamStatus(d) {
+    var teamsLink = '<a href="teams.php" class="btn-detail-link" style="display:inline-block;margin-top:6px">Manage Teams →</a>';
+
+    if (d.isLeaderOf) {
+      return '<div style="font-size:13px">✓ Already leading team <strong>' + h(d.isLeaderOf.name) + '</strong></div>' + teamsLink;
+    }
+    if (d.isMemberOf) {
+      return '<div style="font-size:13px">✓ Already a member of <strong>' + h(d.isMemberOf.name) + '</strong></div>' + teamsLink;
+    }
+
+    var s = d.suggestion;
+    if (!s) {
+      return '<div style="font-size:12px;color:var(--faint)">No team-type Darwin commission plan detected.</div>';
+    }
+
+    var planLine = '<div style="font-size:12px;color:var(--faint)">Darwin plan: ' + h(s.plan) + '</div>';
+
+    if (s.role === 'leader') {
+      var confNote = s.confidence === 'low' ? ' (unrecognized plan name — please verify)' : '';
+      return '<div style="font-size:13px">Darwin suggests <strong>Team Leader</strong>' + h(confNote) + '</div>' + planLine +
+        '<button type="button" class="btn-save" id="em-create-team-btn" style="margin-top:6px;padding:4px 10px;font-size:12px">Create Team</button>';
+    }
+    if (s.role === 'member') {
+      return '<div style="font-size:13px">Darwin suggests <strong>Team Member</strong></div>' + planLine +
+        '<div style="font-size:12px;color:var(--faint);margin-top:4px">Assign to their leader’s team on the Teams page.</div>' + teamsLink;
+    }
+    if (s.role === 'spouse_team') {
+      return '<div style="font-size:13px">Darwin plan is a <strong>Spouse Team</strong> (' + h(s.detail || '') + ')</div>' + planLine +
+        '<div style="font-size:12px;color:var(--faint);margin-top:4px">Doesn’t map cleanly to leader/member — review manually.</div>' + teamsLink;
+    }
+    return planLine;
+  }
+
+  window.createTeamFromSuggestion = function (email, name) {
+    if (!confirm('Create a new team led by ' + name + '?')) return;
+    fetch('api/team_action.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save', name: name + '’s Team', leader_email: email })
+    }).then(function (r) { return r.json().then(function (d) { return { status: r.status, body: d }; }); })
+      .then(function (res) {
+        if (res.status === 403) {
+          document.getElementById('em-team-status').innerHTML =
+            '<div style="font-size:12px;color:#c00">Only a super admin can create teams. Ask for elevated access.</div>';
+          return;
+        }
+        if (!res.body.ok) {
+          document.getElementById('em-team-status').innerHTML =
+            '<div style="font-size:12px;color:#c00">' + h(res.body.error || 'Failed to create team.') + '</div>';
+          return;
+        }
+        loadTeamStatus(email, name);
+      })
+      .catch(function () {
+        document.getElementById('em-team-status').innerHTML =
+          '<div style="font-size:12px;color:#c00">Network error creating team.</div>';
+      });
+  };
+
   window.openEditModal = function (email, name, prefill) {
     emCurrentEmail = email;
     document.getElementById('em-agent-name').textContent = name;
     document.getElementById('em-save-msg').textContent = 'Loading…';
     document.getElementById('editModalOverlay').style.display = 'flex';
+
+    loadTeamStatus(email, name);
 
     Promise.all([
       fetch('api/intake.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' }).then(function (r) { return r.json(); }),

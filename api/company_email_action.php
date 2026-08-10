@@ -29,6 +29,7 @@ if ($action === 'send' || $action === 'schedule') {
     $html        = trim($body['body']             ?? '');
     $hasText     = trim(strip_tags($html)) !== '';
     $sendAt      = trim($body['send_at']           ?? '');
+    $launchClassDate = trim($body['launch_class_date'] ?? '');
 
     if (!$subject || !$hasText) { echo json_encode(['ok'=>false,'error'=>'Subject and message are required']); exit; }
 
@@ -48,7 +49,7 @@ if ($action === 'send' || $action === 'schedule') {
     }
     $attachIdsStr = implode(',', $attachIds);
 
-    $recipients   = ce_resolve_recipients($audiences, $mcSlugs, $targetEmail);
+    $recipients   = ce_resolve_recipients($audiences, $mcSlugs, $targetEmail, ['mc_leader', 'bic'], $launchClassDate);
     $audienceStr  = implode(',', $audiences);
     $mcSlugsStr   = implode(',', $mcSlugs);
 
@@ -58,9 +59,9 @@ if ($action === 'send' || $action === 'schedule') {
         if ($ts <= time()) { echo json_encode(['ok'=>false,'error'=>'Scheduled time must be in the future']); exit; }
 
         $db->prepare(
-            "INSERT INTO scheduled_emails (sender_email, sender_role, audience, target_mc_slug, target_email, subject, body, send_at, recipient_count, attachment_ids)
-             VALUES (?,?,?,?,?,?,?,?,?,?)"
-        )->execute([$me, my_role(), $audienceStr, $mcSlugsStr, $targetEmail, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients), $attachIdsStr]);
+            "INSERT INTO scheduled_emails (sender_email, sender_role, audience, target_mc_slug, target_email, subject, body, send_at, recipient_count, attachment_ids, launch_class_date)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        )->execute([$me, my_role(), $audienceStr, $mcSlugsStr, $targetEmail, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients), $attachIdsStr, $launchClassDate]);
 
         echo json_encode(['ok'=>true, 'scheduled'=>true, 'recipients'=>count($recipients)]);
         exit;
@@ -189,6 +190,15 @@ if ($action === 'roster_list') {
         $out[] = ['name' => $a['fullName'] ?? '', 'email' => $email, 'marketCenter' => $a['marketCenter'] ?? ''];
     }
     echo json_encode(['ok'=>true, 'agents'=>$out]);
+    exit;
+}
+
+// Classes for the "LAUNCH Agents" audience's class picker — gated the same
+// as the checkbox itself (can_manage_cohorts()), not just the broader
+// can_send_company_email() check at the top of this file.
+if ($action === 'launch_class_list') {
+    if (!can_manage_cohorts()) { echo json_encode(['ok'=>false,'error'=>'Forbidden']); exit; }
+    echo json_encode(['ok'=>true, 'classes'=>ce_launch_classes()]);
     exit;
 }
 

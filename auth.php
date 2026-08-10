@@ -43,10 +43,20 @@ function stop_masquerade(): void {
     }
 }
 
+// Only ever a same-app relative path — never let a user-supplied ?next= send
+// someone off to another domain after login (open-redirect).
+function safe_next_path($next): ?string {
+    if (!is_string($next) || $next === '') return null;
+    if ($next[0] !== '/' || ($next[1] ?? '') === '/') return null;
+    if (preg_match('#[\x00-\x1f\\\\]#', $next)) return null;
+    return $next;
+}
+
 function require_login(): array {
     $a = current_agent();
     if (!$a) {
-        header('Location: login.php');
+        $next = $_SERVER['REQUEST_URI'] ?? '';
+        header('Location: login.php' . ($next !== '' ? '?next=' . urlencode($next) : ''));
         exit;
     }
     return $a;

@@ -207,6 +207,12 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email…" autocomplete="off">
           <datalist id="em-person-list"></datalist>
         </div>
+        <div class="field" id="launch-class-target-row" style="display:none">
+          <label>LAUNCH Class <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:#aaa">(optional)</span></label>
+          <select id="em-launch-class" onchange="onAudienceChange()">
+            <option value="">All LAUNCH Agents</option>
+          </select>
+        </div>
       </div>
 
       <p class="reach-note" id="reach-note">Pick at least one audience above.</p>
@@ -557,6 +563,7 @@ const IS_ADMIN     = <?= is_admin() ? 'true' : 'false' ?>;
 const ME_EMAIL     = <?= json_encode(strtolower(trim($agent['email'] ?? ''))) ?>;
 const MC_NAME_MAP  = <?= json_encode($mcNameMap) ?>;
 let PERSON_LIST_LOADED = false;
+let LAUNCH_CLASSES_LOADED = false;
 
 function focusBody(){ document.getElementById('em-body').focus(); }
 
@@ -575,9 +582,11 @@ function selectedMcSlugs() {
 
 function onAudienceChange() {
   const auds = selectedAudiences();
-  document.getElementById('mc-target-row').style.display     = auds.includes('mc')     ? '' : 'none';
-  document.getElementById('person-target-row').style.display = auds.includes('person') ? '' : 'none';
+  document.getElementById('mc-target-row').style.display           = auds.includes('mc')            ? '' : 'none';
+  document.getElementById('person-target-row').style.display       = auds.includes('person')         ? '' : 'none';
+  document.getElementById('launch-class-target-row').style.display = auds.includes('launch_agents')  ? '' : 'none';
   if (auds.includes('person') && !PERSON_LIST_LOADED) loadPersonList();
+  if (auds.includes('launch_agents') && !LAUNCH_CLASSES_LOADED) loadLaunchClasses();
 
   const note = document.getElementById('reach-note');
   if (!auds.length) { note.textContent = 'Pick at least one audience above.'; return; }
@@ -585,6 +594,11 @@ function onAudienceChange() {
     if (a === 'mc') {
       const names = selectedMcSlugs().map(s => MC_NAME_MAP[s] || s);
       return names.length ? names.join(', ') : 'Market Center(s) — none selected yet';
+    }
+    if (a === 'launch_agents') {
+      const sel = document.getElementById('em-launch-class');
+      const opt = sel.options[sel.selectedIndex];
+      return sel.value ? `LAUNCH Agents, ${opt.textContent}` : 'LAUNCH Agents (all)';
     }
     return AUD_LABELS[a] || a;
   });
@@ -603,6 +617,26 @@ function loadPersonList() {
     if (!d.ok) return;
     document.getElementById('em-person-list').innerHTML =
       d.agents.map(a => `<option value="${escapeHtml(a.name)} (${escapeHtml(a.email)})">`).join('');
+  });
+}
+
+function loadLaunchClasses() {
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'launch_class_list'})
+  })
+  .then(r => r.json())
+  .then(d => {
+    LAUNCH_CLASSES_LOADED = true;
+    if (!d.ok) return;
+    const sel = document.getElementById('em-launch-class');
+    d.classes.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.date;
+      opt.textContent = c.label;
+      sel.appendChild(opt);
+    });
   });
 }
 
@@ -1151,6 +1185,7 @@ function sendEmail() {
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
       audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmail,
+      launch_class_date: audiences.includes('launch_agents') ? document.getElementById('em-launch-class').value : '',
       subject, body: bodyHtml, send_at: sendAtIso,
       attachment_tokens: ATTACHMENTS.map(a => a.token),
     })

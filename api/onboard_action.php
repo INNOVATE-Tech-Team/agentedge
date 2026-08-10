@@ -35,30 +35,41 @@ if (!$isAdmin && $action !== 'list_queue') {
 
 $pdo    = local_db();
 
-// Puts an onboarding-queue entry's agent on the active roster as soon as a
-// valid state + Market Center are both known for it — called right after
-// add_to_queue, and again from set_state/set_market_center in case that
-// data wasn't available yet at add-time. Mirrors complete_onboarding's own
-// add_or_reactivate_roster_agent() call, just triggered as early as possible
-// instead of only at the very end of the process. Best-effort/no-op if
-// either field is still missing — roster placement then just waits for
-// whichever of these three call sites fills in the gap next.
+// Puts an onboarding-queue entry's agent on the active roster — once per
+// assigned Market Center — as soon as a valid state+MC pair is known for it.
+// Called right after add_to_queue/add_market_center, and again from set_state
+// in case that data wasn't available yet at add-time. Mirrors
+// complete_onboarding's own per-MC add_or_reactivate_roster_agent() loop,
+// just triggered as early as possible instead of only at the very end of the
+// process. Best-effort/no-op per MC if its state is still missing/invalid —
+// roster placement for that MC then just waits for a later call to fill the
+// gap (e.g. set_state, or the MC being re-added with a state this time).
 function onboard_try_roster_placement(PDO $pdo, int $queueId, string $doneBy): void {
-    $st = $pdo->prepare("SELECT agent_name, market_center, state_code, canonical_agent_id, agent_email, agent_phone FROM onboard_queue WHERE id=?");
+    $st = $pdo->prepare("SELECT agent_name, canonical_agent_id, agent_email, agent_phone, state_code FROM onboard_queue WHERE id=?");
     $st->execute([$queueId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) return;
 
-    $state = strtoupper(trim($row['state_code'] ?? ''));
-    $mc    = trim($row['market_center'] ?? '');
-    if (!in_array($state, ROSTER_VALID_STATES, true) || $mc === '') return;
+    $mcSt = $pdo->prepare("SELECT market_center, state_code FROM onboard_queue_mcs WHERE queue_id=?");
+    $mcSt->execute([$queueId]);
+    $mcs = $mcSt->fetchAll(PDO::FETCH_ASSOC);
 
-    try {
-        add_or_reactivate_roster_agent(
-            $pdo, $row['agent_name'], $state, $mc, '', $row['canonical_agent_id'] ?? null, $doneBy,
-            $row['agent_email'] ?? '', $row['agent_phone'] ?? ''
-        );
-    } catch (\Throwable $e) {}
+    // Fall back to the queue's own license state (set via set_state) when a
+    // Market Center row doesn't carry its own state — kept for back-compat
+    // with rows added before onboard_queue_mcs existed.
+    $fallbackState = strtoupper(trim($row['state_code'] ?? ''));
+
+    foreach ($mcs as $mc) {
+        $state = strtoupper(trim($mc['state_code'] ?? '')) ?: $fallbackState;
+        $name  = trim($mc['market_center'] ?? '');
+        if (!in_array($state, ROSTER_VALID_STATES, true) || $name === '') continue;
+        try {
+            add_or_reactivate_roster_agent(
+                $pdo, $row['agent_name'], $state, $name, '', $row['canonical_agent_id'] ?? null, $doneBy,
+                $row['agent_email'] ?? '', $row['agent_phone'] ?? ''
+            );
+        } catch (\Throwable $e) {}
+    }
 }
 
 // ── GET: list_queue ───────────────────────────────────────────────────────────
@@ -69,23 +80,49 @@ if ($action === 'list_queue') {
         $rows = $pdo->query(
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q ORDER BY q.added_at DESC"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $st = $pdo->prepare(
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q WHERE q.status=? ORDER BY q.added_at DESC"
         );
         $st->execute([$filter]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    // Attach each entry's full Market Center list (an agent can be queued
+    // into more than one) before scoping/filtering, so both the leader
+    // filter below and the UI can see every assigned MC, not just the
+    // scalar "primary" mirror column.
+    if ($rows) {
+        $ids = array_column($rows, 'id');
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $mcSt = $pdo->prepare(
+            "SELECT * FROM onboard_queue_mcs WHERE queue_id IN ({$placeholders}) ORDER BY is_primary DESC, id"
+        );
+        $mcSt->execute($ids);
+        $mcByQueue = [];
+        foreach ($mcSt->fetchAll(PDO::FETCH_ASSOC) as $m) {
+            $mcByQueue[$m['queue_id']][] = $m;
+        }
+        foreach ($rows as &$row) {
+            $row['market_centers'] = $mcByQueue[$row['id']] ?? [];
+        }
+        unset($row);
+    }
+
     if (!$isAdmin) {
         $myMcSlugs = my_mc_slugs();
-        $rows = array_values(array_filter($rows, fn($r) => in_array(slugify_mc($r['market_center'] ?? ''), $myMcSlugs, true)));
+        $rows = array_values(array_filter($rows, function ($r) use ($myMcSlugs) {
+            $slugs = array_map(fn($m) => slugify_mc($m['market_center'] ?? ''), $r['market_centers'] ?? []);
+            return (bool)array_intersect($slugs, $myMcSlugs);
+        }));
     }
 
     // Attach steps for each entry
@@ -110,6 +147,25 @@ if ($action === 'list_queue') {
     }
 
     json_out(['ok'=>true,'queue'=>$rows]);
+}
+
+// ── GET: get_intake ────────────────────────────────────────────────────────────
+// Read-only intake-form summary for a queued agent — lets whoever is
+// creating the agent's AgentEdge/email/MLS accounts see the data they need
+// (address, license #, tax ID last-4, emergency contact, etc.) without
+// waiting for onboarding to be marked complete or leaving this page.
+if ($action === 'get_intake') {
+    $email = strtolower(trim($_GET['email'] ?? ''));
+    if ($email === '') json_out(['ok'=>false,'error'=>'email required'], 400);
+    require_once __DIR__ . '/../lib/agent_profile.php';
+    require_once __DIR__ . '/../lib/crypto.php';
+    $intake = load_agent_profile($email);
+    if (!$intake) json_out(['ok'=>true,'intake'=>null]);
+    $intake['personal_tax_id_last4']  = tax_id_last4($intake['personal_tax_id_enc'] ?? '');
+    $intake['corporate_tax_id_last4'] = tax_id_last4($intake['corporate_tax_id_enc'] ?? '');
+    unset($intake['personal_tax_id_enc'], $intake['corporate_tax_id_enc']);
+    $intake['additional_licenses'] = load_agent_additional_licenses($email);
+    json_out(['ok'=>true,'intake'=>$intake]);
 }
 
 // ── GET: search_crm ───────────────────────────────────────────────────────────
@@ -208,12 +264,18 @@ if ($action === 'add_to_queue') {
         json_out(['ok'=>false,'error'=>'agent_email and agent_name are required']);
     }
 
+    // Accept the new market_centers array shape; fall back to wrapping a
+    // single market_center/state_code pair for any caller not yet updated.
+    $marketCenters = $body['market_centers'] ?? null;
+    if (!is_array($marketCenters)) {
+        $marketCenters = [['market_center' => $body['market_center'] ?? '', 'state_code' => $body['state_code'] ?? '']];
+    }
+
     $result = queue_onboarding_agent(
         $pdo,
         $email,
         $name,
-        $body['market_center'] ?? '',
-        $body['state_code']    ?? '',
+        $marketCenters,
         null,
         $agent['email'],
         $body['start_date'] ?? '',
@@ -250,19 +312,55 @@ if ($action === 'set_state') {
     json_out(['ok'=>true]);
 }
 
-// ── POST: set_market_center ───────────────────────────────────────────────────
-// Lets an admin fix a queue entry's Market Center after the fact — needed
-// because api/onboard_push.php (Advantage CRM) can send a value that doesn't
-// match the canonical market_centers list, which normalize_market_center()
-// then leaves blank rather than passing through untouched.
-if ($action === 'set_market_center') {
+// ── POST: add_market_center ───────────────────────────────────────────────────
+// Adds one more Market Center to a queue entry (an agent can be queued into
+// more than one — e.g. licensed/working in bordering states). Additive: does
+// not touch any Market Center already assigned. Replaces the old
+// overwrite-only set_market_center action.
+if ($action === 'add_market_center') {
     $queueId = (int)($body['queue_id'] ?? 0);
     $mc      = normalize_market_center($pdo, $body['market_center'] ?? '');
+    $state   = strtoupper(trim($body['state_code'] ?? ''));
     if (!$queueId || $mc === '') {
         json_out(['ok'=>false,'error'=>'queue_id and a valid market_center are required']);
     }
-    $pdo->prepare("UPDATE onboard_queue SET market_center = ? WHERE id = ?")->execute([$mc, $queueId]);
+    $hadAny = (int)$pdo->query("SELECT COUNT(*) FROM onboard_queue_mcs WHERE queue_id=" . $queueId)->fetchColumn() > 0;
+    $pdo->prepare("INSERT OR IGNORE INTO onboard_queue_mcs (queue_id, market_center, state_code, is_primary) VALUES (?,?,?,?)")
+        ->execute([$queueId, $mc, $state, $hadAny ? 0 : 1]);
+    if (!$hadAny) {
+        $pdo->prepare("UPDATE onboard_queue SET market_center = ?, state_code = ? WHERE id = ?")->execute([$mc, $state ?: null, $queueId]);
+    }
     onboard_try_roster_placement($pdo, $queueId, $agent['email']);
+    json_out(['ok'=>true]);
+}
+
+// ── POST: remove_market_center ────────────────────────────────────────────────
+// Removes one Market Center from a queue entry. Does NOT remove any
+// innovate_roster row already created for that MC — an MC pulled from the
+// queue before onboarding completes doesn't retroactively un-place an agent
+// already active on the roster under it.
+if ($action === 'remove_market_center') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $mc      = trim($body['market_center'] ?? '');
+    if (!$queueId || $mc === '') {
+        json_out(['ok'=>false,'error'=>'queue_id and market_center are required']);
+    }
+    $pdo->prepare("DELETE FROM onboard_queue_mcs WHERE queue_id=? AND market_center=?")->execute([$queueId, $mc]);
+
+    // If the removed MC was the scalar "primary" mirror, promote whichever
+    // MC remains (or clear the mirror if the queue entry now has none).
+    $row = $pdo->prepare("SELECT market_center FROM onboard_queue WHERE id=?");
+    $row->execute([$queueId]);
+    if (($row->fetchColumn() ?: '') === $mc) {
+        $next = $pdo->prepare("SELECT market_center, state_code FROM onboard_queue_mcs WHERE queue_id=? ORDER BY is_primary DESC, id LIMIT 1");
+        $next->execute([$queueId]);
+        $n = $next->fetch(PDO::FETCH_ASSOC);
+        $pdo->prepare("UPDATE onboard_queue SET market_center=?, state_code=? WHERE id=?")
+            ->execute([$n['market_center'] ?? '', $n['state_code'] ?? null, $queueId]);
+        if ($n) {
+            $pdo->prepare("UPDATE onboard_queue_mcs SET is_primary=1 WHERE queue_id=? AND market_center=?")->execute([$queueId, $n['market_center']]);
+        }
+    }
     json_out(['ok'=>true]);
 }
 
@@ -378,26 +476,36 @@ if ($action === 'complete_onboarding') {
     if (!in_array($state, ROSTER_VALID_STATES, true)) {
         json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
     }
-    // Same treatment as state above — market_center only ever reaches this
-    // table already normalized against the canonical list (see
-    // normalize_market_center()), so a blank value here means it was never
-    // set or didn't match a real Market Center and needs a human to fix it.
-    $mc = trim($row['market_center'] ?? '');
-    if ($mc === '') {
+    // An agent can be queued into more than one Market Center — every one of
+    // them gets its own innovate_roster row + notification below. A blank
+    // list here means none were ever set or matched the canonical list (see
+    // normalize_market_center()) and needs a human to fix it.
+    $mcSt = $pdo->prepare("SELECT market_center, state_code FROM onboard_queue_mcs WHERE queue_id=? ORDER BY is_primary DESC, id");
+    $mcSt->execute([$queueId]);
+    $mcs = $mcSt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$mcs) {
         json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
     }
 
-    add_or_reactivate_roster_agent(
-        $pdo,
-        $row['agent_name'],
-        $state,
-        $row['market_center'] ?? '',
-        '',
-        $row['canonical_agent_id'] ?? null,
-        $agent['email'],
-        $row['agent_email'] ?? '',
-        $row['agent_phone'] ?? ''
-    );
+    $intakeCheck = $pdo->prepare("SELECT submitted FROM agent_intake WHERE email = ?");
+    $intakeCheck->execute([$row['agent_email'] ?? '']);
+    if (!(int)$intakeCheck->fetchColumn()) {
+        json_out(['ok'=>false,'error'=>'This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.']);
+    }
+
+    foreach ($mcs as $mc) {
+        add_or_reactivate_roster_agent(
+            $pdo,
+            $row['agent_name'],
+            strtoupper(trim($mc['state_code'] ?? '')) ?: $state,
+            $mc['market_center'] ?? '',
+            '',
+            $row['canonical_agent_id'] ?? null,
+            $agent['email'],
+            $row['agent_email'] ?? '',
+            $row['agent_phone'] ?? ''
+        );
+    }
 
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
     $upd->execute([$queueId]);
@@ -405,7 +513,9 @@ if ($action === 'complete_onboarding') {
     try {
         require_once __DIR__ . '/../lib/notifications.php';
         notify_onboard_completed($row['agent_name'], $row['agent_email'], $agent['email'], $agent['name'] ?? '');
-        notify_bic_ml_onboard_complete($row['agent_name'], $row['agent_email'], $row['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
+        foreach ($mcs as $mc) {
+            notify_mc_assigned($row['agent_name'], $row['agent_email'], $mc['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
+        }
 
         // Step 11 (Coach/LAUNCH assignment) is new-agents-only — determined by
         // whether the intake form shows a prior brokerage; blank means new.
@@ -439,6 +549,25 @@ if ($action === 'cancel_onboarding') {
     $upd = $pdo->prepare("UPDATE onboard_queue SET status='cancelled' WHERE id=?");
     $upd->execute([$queueId]);
     json_out(['ok'=>true]);
+}
+
+// ── POST: send_intake (manual send / resend of the intake-form email) ────────
+if ($action === 'send_intake') {
+    require_once __DIR__ . '/../lib/notifications.php';
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT agent_name, agent_email FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+
+    notify_intake_request($row['agent_name'], $row['agent_email'], $queueId);
+    $pdo->prepare("UPDATE onboard_queue SET intake_sent_at = datetime('now') WHERE id = ?")->execute([$queueId]);
+
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true]);
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
+    exit;
 }
 
 json_out(['ok'=>false,'error'=>'Unknown action'], 400);

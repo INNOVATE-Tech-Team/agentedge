@@ -32,13 +32,15 @@ $market_centers = $db->query(
 
 // All role assignments
 $agent_roles_raw = $db->query(
-    "SELECT email, role, mc_slugs, own_mc_slug, bic_email
+    "SELECT email, role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email
      FROM agent_roles"
 )->fetchAll(PDO::FETCH_ASSOC);
 
 $agent_roles = [];
 foreach ($agent_roles_raw as $r) {
-    $r['mc_slugs'] = json_decode($r['mc_slugs'] ?: '[]', true) ?: [];
+    $r['mc_slugs']     = json_decode($r['mc_slugs'] ?: '[]', true) ?: [];
+    $ownMcs            = json_decode($r['own_mc_slugs'] ?: '[]', true) ?: [];
+    $r['own_mc_slugs'] = $ownMcs ?: array_values(array_filter([$r['own_mc_slug'] ?? '']));
     $agent_roles[] = $r;
 }
 

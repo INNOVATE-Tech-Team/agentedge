@@ -305,6 +305,14 @@ if ($action === 'lessons_by_ids') {
     $s->execute($ids);
     echo json_encode(['ok'=>true,'lessons'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
 }
+if ($action === 'publish_lesson') {
+    // Flips a Fathom-ingested draft (or any pending_review lesson) live —
+    // see lib/fathom.php / api/fathom_webhook.php for how it got here.
+    $id = (int)($in['id'] ?? 0);
+    if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $db->prepare("UPDATE uni_lessons SET pending_review=0 WHERE id=?")->execute([$id]);
+    echo json_encode(['ok'=>true]); exit;
+}
 if ($action === 'delete_lesson') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }

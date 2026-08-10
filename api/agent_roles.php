@@ -58,22 +58,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         return ['email' => $be, 'name' => $rosterByEmail[$be]['name'] ?? $be];
     }, $bicEmails);
 
-    $st = $pdo->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email FROM agent_roles WHERE email=?");
+    $st = $pdo->prepare("SELECT role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email FROM agent_roles WHERE email=?");
     $st->execute([$email]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
 
-    $role     = canonical_role($row['role'] ?? 'agent');
-    $mc_slugs = $row ? (json_decode($row['mc_slugs'] ?? '[]', true) ?: []) : [];
+    $role      = canonical_role($row['role'] ?? 'agent');
+    $mc_slugs  = $row ? (json_decode($row['mc_slugs'] ?? '[]', true) ?: []) : [];
+    $own_slugs = $row ? (json_decode($row['own_mc_slugs'] ?? '[]', true) ?: []) : [];
+    if (!$own_slugs && !empty($row['own_mc_slug'])) $own_slugs = [$row['own_mc_slug']];
 
     echo json_encode([
-        'ok'          => true,
-        'role'        => $role,
-        'mc_slugs'    => $mc_slugs,
-        'own_mc_slug' => $row['own_mc_slug'] ?? '',
-        'bic_email'   => $row['bic_email']   ?? '',
-        'mc_opts'     => $mc_opts,
-        'bic_list'    => $bicList,
-        'role_labels' => ROLE_LABELS,
+        'ok'           => true,
+        'role'         => $role,
+        'mc_slugs'     => $mc_slugs,
+        'own_mc_slug'  => $row['own_mc_slug'] ?? '',
+        'own_mc_slugs' => $own_slugs,
+        'bic_email'    => $row['bic_email']   ?? '',
+        'mc_opts'      => $mc_opts,
+        'bic_list'     => $bicList,
+        'role_labels'  => ROLE_LABELS,
     ]);
     exit;
 }
@@ -103,25 +106,34 @@ if (in_array($role, ['bic', 'mc_leader'], true) && !empty($body['mc_slugs'])) {
     }
 }
 
-$ownMcSlug = preg_replace('/[^a-z0-9\-]/', '', $body['own_mc_slug'] ?? '');
+// An agent can belong to more than one Market Center — own_mc_slug (scalar)
+// is kept as a "first MC" mirror for any reader that only expects one value.
+$ownMcs = [];
+foreach ((array)($body['own_mc_slugs'] ?? []) as $s) {
+    $s = preg_replace('/[^a-z0-9\-]/', '', $s);
+    if ($s) $ownMcs[] = $s;
+}
+$ownMcs    = array_values(array_unique($ownMcs));
+$ownMcSlug = $ownMcs[0] ?? '';
 $bicEmail  = strtolower(trim($body['bic_email'] ?? ''));
 // Only agents get a bic_email assignment; leaders/admins don't need one.
 if (in_array($role, ['super_admin', 'staff', 'mc_leader', 'bic', 'recruiter'], true)) {
     $bicEmail = '';
 }
 
-$json = json_encode(array_values(array_unique($mcs)));
+$json      = json_encode(array_values(array_unique($mcs)));
+$ownMcJson = json_encode($ownMcs);
 $pdo->prepare(
-    "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, bic_email, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    "INSERT INTO agent_roles (email, role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
        role=excluded.role, mc_slugs=excluded.mc_slugs,
-       own_mc_slug=excluded.own_mc_slug, bic_email=excluded.bic_email,
+       own_mc_slug=excluded.own_mc_slug, own_mc_slugs=excluded.own_mc_slugs, bic_email=excluded.bic_email,
        updated_by=excluded.updated_by, updated_at=excluded.updated_at"
-)->execute([$email, $role, $json, $ownMcSlug, $bicEmail, strtolower($agent['email'])]);
+)->execute([$email, $role, $json, $ownMcSlug, $ownMcJson, $bicEmail, strtolower($agent['email'])]);
 
-if ($role === 'agent' && $ownMcSlug === '' && $bicEmail === '') {
+if ($role === 'agent' && empty($ownMcs) && $bicEmail === '') {
     $pdo->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
 }
 
-echo json_encode(['ok' => true, 'role' => $role, 'mc_slugs' => json_decode($json, true), 'own_mc_slug' => $ownMcSlug, 'bic_email' => $bicEmail]);
+echo json_encode(['ok' => true, 'role' => $role, 'mc_slugs' => json_decode($json, true), 'own_mc_slug' => $ownMcSlug, 'own_mc_slugs' => $ownMcs, 'bic_email' => $bicEmail]);

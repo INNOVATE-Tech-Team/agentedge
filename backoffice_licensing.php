@@ -98,6 +98,7 @@ $superAdmin = is_super_admin();
         <div class="mls-tabs">
           <button class="mls-tab active" id="tab-btn-board" onclick="switchTab('board')">Board Memberships</button>
           <button class="mls-tab" id="tab-btn-mls" onclick="switchTab('mls')">MLS Memberships</button>
+          <button class="mls-tab" id="tab-btn-office" onclick="switchTab('office')">Market Centers</button>
         </div>
 
         <!-- ═══ Board Memberships tab ═══ -->
@@ -172,6 +173,41 @@ $superAdmin = is_super_admin();
               </tr>
             </thead>
             <tbody id="mls-membership-tbody"><tr><td colspan="10" class="empty-note">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        </div>
+
+        <!-- ═══ Market Centers tab ═══ -->
+        <div class="tab-panel" id="tab-office">
+
+        <!-- Summary tiles -->
+        <div class="mls-tiles" id="office-tiles">
+          <div class="mls-tile"><div class="mls-tile-val" id="of-total">—</div><div class="mls-tile-lbl">Total Market Centers</div></div>
+          <div class="mls-tile blue"><div class="mls-tile-val" id="of-states">—</div><div class="mls-tile-lbl">States Covered</div></div>
+          <div class="mls-tile green"><div class="mls-tile-val" id="of-bo">—</div><div class="mls-tile-lbl">Broker-Owned</div></div>
+        </div>
+
+        <div class="toolbar">
+          <?php if ($superAdmin): ?>
+          <button class="btn-primary" onclick="openOfficeModal(null)">+ Add Market Center</button>
+          <?php endif; ?>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="mls-table">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Office</th>
+                <th>Address</th>
+                <th>Phone</th>
+                <th>Designated Broker</th>
+                <th>Market Leader</th>
+                <th>Office Type</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="office-tbody"><tr><td colspan="8" class="empty-note">Loading…</td></tr></tbody>
           </table>
         </div>
         </div>
@@ -266,6 +302,81 @@ $superAdmin = is_super_admin();
   </div>
 </div>
 
+<!-- Market Center Add / Edit Modal -->
+<div class="modal-overlay" id="office-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="office-modal-title">Add Market Center</h3>
+      <button class="modal-close" onclick="closeOfficeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="o-id">
+
+      <div class="form-section">
+        <div class="form-section-title">Office</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>State</label><input type="text" id="o-state" placeholder="e.g. SC or PA | Doylestown"></div>
+          <div class="field field-full" style="grid-column:span 2"><label>Branch / Office Name</label><input type="text" id="o-branch" placeholder="e.g. Hartsville (leave blank for state HQ)"></div>
+          <div class="field field-full" style="grid-column:1/-1"><label>Address</label><input type="text" id="o-address"></div>
+          <div class="field"><label>FUB Phone</label><input type="text" id="o-phone"></div>
+          <div class="field"><label>Office Type</label>
+            <select id="o-office-type">
+              <option value="">—</option>
+              <option value="Broker Owned/State HQ">Broker Owned/State HQ</option>
+              <option value="Corp Owned/State HQ">Corp Owned/State HQ</option>
+              <option value="Branch/Team Office">Branch/Team Office</option>
+              <option value="Referral">Referral</option>
+            </select>
+          </div>
+          <div class="field"><label>Firm Type</label>
+            <select id="o-firm-type">
+              <option value="Residential">Residential</option>
+              <option value="Referral">Referral</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Leadership</div>
+        <div class="field-grid">
+          <div class="field"><label>Designated Broker</label><input type="text" id="o-broker"></div>
+          <div class="field"><label>Market Leader</label><input type="text" id="o-ml"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Licensing</div>
+        <div class="field-grid">
+          <div class="field field-full" style="grid-column:1/-1"><label>Entity Name</label><input type="text" id="o-entity"></div>
+          <div class="field field-full" style="grid-column:1/-1"><label>DBA</label><input type="text" id="o-dba"></div>
+          <div class="field"><label>Office License #</label><input type="text" id="o-office-license"></div>
+          <div class="field"><label>Office License Expires</label><input type="date" id="o-office-license-exp"></div>
+          <div class="field"><label>Broker License #</label><input type="text" id="o-broker-license"></div>
+          <div class="field"><label>Broker License Expires</label><input type="date" id="o-broker-license-exp"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Other</div>
+        <div class="field-grid">
+          <div class="field field-full" style="grid-column:1/-1"><label>Lease Payee</label><input type="text" id="o-lease-payee"></div>
+          <div class="field field-full" style="grid-column:1/-1"><label>Notes</label><textarea id="o-notes" rows="3"></textarea></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <?php if ($superAdmin): ?>
+      <button class="btn-danger btn-sm" id="office-modal-delete-btn" onclick="deleteOffice()" style="margin-right:auto;display:none">Delete</button>
+      <?php endif; ?>
+      <button class="btn-ghost" onclick="closeOfficeModal()">Cancel</button>
+      <?php if ($superAdmin): ?>
+      <button class="btn-primary" id="office-modal-save-btn" onclick="saveOffice()">Save</button>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPER = <?= $superAdmin ? 'true' : 'false' ?>;
 
@@ -275,7 +386,7 @@ let membershipRows = [];
 
 /* ══════════════ Tabs ══════════════ */
 function switchTab(name){
-  ['board','mls'].forEach(n=>{
+  ['board','mls','office'].forEach(n=>{
     document.getElementById('tab-'+n).classList.toggle('active', n===name);
     document.getElementById('tab-btn-'+n).classList.toggle('active', n===name);
   });
@@ -466,7 +577,130 @@ function deleteMembership(){
     .then(r=>r.json()).then(d=>{if(d.ok){closeMembershipModal();load();}else alert(d.error||'Delete failed.');});
 }
 
+/* ══════════════ Market Centers (mls_offices) ══════════════ */
+let officeRows = [];
+
+function loadOffices(){
+  fetch('api/mls_offices_action.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+    officeRows = d.rows || [];
+    renderOfficeTiles(officeRows);
+    renderOfficeTable(officeRows);
+  });
+}
+
+function renderOfficeTiles(rows){
+  const states = new Set(rows.map(r=>(r.state||'').split('|')[0].trim()).filter(Boolean));
+  document.getElementById('of-total').textContent = rows.length;
+  document.getElementById('of-states').textContent = states.size;
+  document.getElementById('of-bo').textContent = rows.filter(r=>(r.office_type||'').toLowerCase().includes('broker owned')).length;
+}
+
+function renderOfficeRow(r){
+  return `<tr onclick="openOfficeModal(${r.id})" style="cursor:pointer">
+    <td><strong>${esc(r.state||'—')}</strong></td>
+    <td style="color:#555">${esc(r.branch_office||'—')}</td>
+    <td style="font-size:12px;color:#555">${esc(r.address||'—')}</td>
+    <td style="font-size:12px;color:#555">${esc(r.fub_phone||'—')}</td>
+    <td style="color:#555">${esc(r.designated_broker||'—')}</td>
+    <td style="color:#555">${esc(r.market_leader||'—')}</td>
+    <td style="font-size:11px;color:#777">${esc(r.office_type||'—')}</td>
+    <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openOfficeModal(${r.id})">Edit</button>`:''}</td>
+  </tr>`;
+}
+
+function renderOfficeTable(rows){
+  const sorted=[...rows].sort((a,b)=>(a.state||'').localeCompare(b.state||'')||(a.branch_office||'').localeCompare(b.branch_office||''));
+  const tbody=document.getElementById('office-tbody');
+  tbody.innerHTML = sorted.length
+    ? sorted.map(renderOfficeRow).join('')
+    : '<tr><td colspan="8" class="empty-note">No market centers on file yet. Click "+ Add Market Center" to get started.</td></tr>';
+}
+
+function officeFieldIds(){
+  return ['o-id','o-state','o-branch','o-address','o-phone','o-office-type','o-firm-type','o-broker','o-ml',
+    'o-entity','o-dba','o-office-license','o-office-license-exp','o-broker-license','o-broker-license-exp',
+    'o-lease-payee','o-notes'];
+}
+
+function openOfficeModal(id){
+  const editing = id != null;
+  document.getElementById('office-modal-title').textContent = editing ? 'Edit Market Center' : 'Add Market Center';
+  const del = document.getElementById('office-modal-delete-btn');
+  if(del) del.style.display = editing ? '' : 'none';
+
+  officeFieldIds().forEach(k=>{ const el=document.getElementById(k); if(el) el.value=''; });
+  document.getElementById('o-firm-type').value = 'Residential';
+
+  if(editing){
+    const r=officeRows.find(x=>x.id===id);
+    if(!r)return;
+    document.getElementById('o-id').value=r.id;
+    document.getElementById('o-state').value=r.state||'';
+    document.getElementById('o-branch').value=r.branch_office||'';
+    document.getElementById('o-address').value=r.address||'';
+    document.getElementById('o-phone').value=r.fub_phone||'';
+    document.getElementById('o-office-type').value=r.office_type||'';
+    document.getElementById('o-firm-type').value=r.firm_type||'Residential';
+    document.getElementById('o-broker').value=r.designated_broker||'';
+    document.getElementById('o-ml').value=r.market_leader||'';
+    document.getElementById('o-entity').value=r.entity_name||'';
+    document.getElementById('o-dba').value=r.dba||'';
+    document.getElementById('o-office-license').value=r.office_license_number||'';
+    document.getElementById('o-office-license-exp').value=r.license_expiration||'';
+    document.getElementById('o-broker-license').value=r.broker_license_number||'';
+    document.getElementById('o-broker-license-exp').value=r.broker_expiration||'';
+    document.getElementById('o-lease-payee').value=r.lease_payee||'';
+    document.getElementById('o-notes').value=r.notes||'';
+  }
+  document.getElementById('office-modal').querySelectorAll('input,select,textarea').forEach(el=>el.disabled=!SUPER);
+  document.getElementById('office-modal').classList.add('open');
+}
+
+function closeOfficeModal(){document.getElementById('office-modal').classList.remove('open');}
+
+function saveOffice(){
+  const id = document.getElementById('o-id').value;
+  const payload={
+    action: id ? 'update' : 'add',
+    id: id ? parseInt(id) : undefined,
+    state: document.getElementById('o-state').value.trim(),
+    branch_office: document.getElementById('o-branch').value.trim(),
+    address: document.getElementById('o-address').value.trim(),
+    fub_phone: document.getElementById('o-phone').value.trim(),
+    office_type: document.getElementById('o-office-type').value,
+    firm_type: document.getElementById('o-firm-type').value,
+    designated_broker: document.getElementById('o-broker').value.trim(),
+    market_leader: document.getElementById('o-ml').value.trim(),
+    entity_name: document.getElementById('o-entity').value.trim(),
+    dba: document.getElementById('o-dba').value.trim(),
+    office_license_number: document.getElementById('o-office-license').value.trim(),
+    license_expiration: document.getElementById('o-office-license-exp').value||null,
+    broker_license_number: document.getElementById('o-broker-license').value.trim(),
+    broker_expiration: document.getElementById('o-broker-license-exp').value||null,
+    lease_payee: document.getElementById('o-lease-payee').value.trim(),
+    notes: document.getElementById('o-notes').value.trim(),
+  };
+  if(!payload.state){alert('State is required.');return;}
+  const btn=document.getElementById('office-modal-save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
+  fetch('api/mls_offices_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='Save';
+      if(d.ok){closeOfficeModal();loadOffices();}else alert(d.error||'Save failed.');
+    }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
+}
+
+function deleteOffice(){
+  const id=parseInt(document.getElementById('o-id').value);
+  if(!id)return;
+  const r=officeRows.find(x=>x.id===id);
+  if(!confirm('Delete the market center "'+((r&&(r.state+' '+(r.branch_office||'')))||'')+'"? This cannot be undone.'))return;
+  fetch('api/mls_offices_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
+    .then(r=>r.json()).then(d=>{if(d.ok){closeOfficeModal();loadOffices();}else alert(d.error||'Delete failed.');});
+}
+
 load();
+loadOffices();
 </script>
 </body>
 </html>

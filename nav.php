@@ -61,6 +61,10 @@ function nav_items(): array {
         ['key' => 'coach_dashboard',   'label' => 'Coach Dashboard',    'href' => 'coach_dashboard.php',   'launchCoachOnly' => true],
         ['key' => 'crm',               'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
         ['key' => 'settings_signature','label' => 'My Email Signature', 'href' => 'settings_signature.php','group_label' => 'My Account', 'staffOnly' => true],
+        // Only for admins, team leaders, and agents who are on a team —
+        // team_dashboard.php itself shows the right view for a leader vs. a
+        // plain member. Not shown to agents with no team at all.
+        ['key' => 'team_dashboard',    'label' => 'Team Dashboard',      'href' => 'team_dashboard.php',    'group_label' => 'My Resources', 'teamOnly' => true],
     ]);
 }
 
@@ -72,6 +76,15 @@ function agent_assets_items(): array {
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         ['key' => 'commission_submit',  'label' => 'Submit Commission Check', 'href' => 'commission_submit.php'],
         ['key' => 'my_activity',        'label' => 'My Weekly Activity',      'href' => 'my_activity.php'],
+        // Buy Back Your Time: every producing agent's own book of business,
+        // not a backoffice/admin tool -- lives here, not in
+        // backoffice_nav_items(), same as profile.php/network.php above.
+        ['key' => 'buyback',            'label' => 'Buy Back Your Time',      'href' => 'buyback.php'],
+        // Listing Intel: existed and worked but had no menu entry anywhere
+        // (confirmed both locally and on production, 2026-08-09) -- only
+        // reachable by typing the URL directly. Same per-agent-book category
+        // as buyback.php above, so it lives here too.
+        ['key' => 'listing_intel',      'label' => 'Listing Intel',           'href' => 'listing_intel.php'],
     ];
 }
 
@@ -94,7 +107,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── My Team (team_leader role) ──────────────────────────────────────────
         // Its own dept so it never entangles with the mc_leader/bic-only
         // 'leaderVisible' filtering already applied to Operations below.
-        ['key'=>'team_dashboard',            'label'=>'Team Dashboard',      'href'=>'team_dashboard.php',             'dept'=>'My Team', 'teamLeaderOnly'=>true],
+        // Team Dashboard itself moved to nav_items()'s 'My Resources' group —
+        // every agent has some form of team status to see there now (leader,
+        // member, or "not on a team yet"), not just leaders.
         ['key'=>'team_recruiting',           'label'=>'Recruiting (Advantage)', 'href'=>'https://advantage.innovateonline.com', 'dept'=>'My Team', 'teamLeaderOnly'=>true, 'external'=>true],
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
@@ -108,6 +123,8 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── Agent Communications ─────────────────────────────────────────────────
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
         ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Agent Communications'],
+        ['key'=>'bo_google_audit',           'label'=>'Google Business Audit','href'=>'backoffice_google_audit.php',  'dept'=>'Agent Communications'],
+        ['key'=>'bo_zillow_reviews',         'label'=>'Zillow Review Requests','href'=>'backoffice_zillow_reviews.php', 'dept'=>'Agent Communications'],
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
@@ -116,6 +133,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
         ['key'=>'bo_workflows',              'label'=>'Workflows',           'href'=>'backoffice_workflows.php',      'dept'=>'Agent Development'],
         ['key'=>'launch_cohorts',            'label'=>'LAUNCH Cohorts',      'href'=>'launch_cohorts.php',            'dept'=>'Agent Development'],
+        ['key'=>'launch_curriculum',         'label'=>'LAUNCH Curriculum',   'href'=>'launch_curriculum.php',         'dept'=>'Agent Development'],
+        ['key'=>'launch_schedule',           'label'=>'Launch Schedule',     'href'=>'launch_schedule.php',           'dept'=>'Agent Development'],
+        ['key'=>'launch_coaching',           'label'=>'Launch Coaching',     'href'=>'launch_coaching.php',           'dept'=>'Agent Development'],
         // ── Finance ─────────────────────────────────────────────────────────────
         ['key'=>'finance_budget',            'label'=>'Department Budget',   'href'=>'finance_budget.php',            'dept'=>'Finance'],
         ['key'=>'finance_statements',        'label'=>'Statement Scanner',   'href'=>'finance_statements.php',        'dept'=>'Finance'],
@@ -123,8 +143,11 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
         ['key'=>'bo_commission_checks',      'label'=>'Commission Checks',   'href'=>'backoffice_commission_checks.php', 'dept'=>'Finance'],
         ['key'=>'finance_checklists',        'label'=>'Accounting Checklists','href'=>'finance_checklists.php',        'dept'=>'Finance', 'financeChecklistItem'=>true],
+        ['key'=>'bo_insurance_quotes',       'label'=>'Insurance Quote Requests','href'=>'backoffice_insurance_quotes.php', 'dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
+        ['key'=>'bo_sync_health',            'label'=>'Sync Health',         'href'=>'backoffice_sync_health.php',    'dept'=>'Technology'],
+        ['key'=>'bo_join_stats',             'label'=>'Join Site Analytics', 'href'=>'backoffice_join_stats.php',     'dept'=>'Technology'],
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
@@ -143,7 +166,38 @@ function backoffice_nav_items(bool $superAdmin): array {
     return $items;
 }
 
+// Best-effort page-view log — never fatal, since a logging failure shouldn't
+// take down the page it's trying to measure.
+function nav_log_page_view(string $key, string $type, string $email): void {
+    if ($key === '') return;
+    try {
+        local_db()->prepare("INSERT INTO page_views (email,page_key,page_type) VALUES (?,?,?)")
+            ->execute([strtolower(trim($email)), $key, $type]);
+    } catch (\Throwable $e) {}
+}
+
+// Every nav item, from every source, key => label. Used to resolve page_views
+// rows to a human-readable label at report time (backoffice_login_report.php)
+// without duplicating the label everywhere a view gets logged.
+function nav_all_items_by_key(): array {
+    $map = [];
+    foreach (nav_items() as $it) $map[$it['key']] = $it;
+    foreach (backoffice_nav_items(true) as $it) $map[$it['key']] = $it;
+    foreach (agent_assets_items() as $it) $map[$it['key']] = $it;
+    return $map;
+}
+
+// Resolves an external nav item by key for go.php's tracked redirect — the
+// URL always comes from this pre-registered lookup, never from a query
+// string, so go.php can't be used as an open redirect.
+function nav_resolve_external(string $key): ?array {
+    $it = nav_all_items_by_key()[$key] ?? null;
+    if (!$it || empty($it['external']) || empty($it['href'])) return null;
+    return ['url' => $it['href'], 'label' => $it['label'] ?? $key];
+}
+
 function render_sidebar(string $current, array $agent): void {
+    nav_log_page_view($current, 'internal', $agent['email'] ?? '');
     $perms = current_perms();
     $admin = !empty($perms['isAdmin']);
     $demo  = !empty(cfg()['demo']);
@@ -179,6 +233,7 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['leaderOnly']) && !can_post_announcements() && !is_recruiter()) continue;
         if (!empty($it['launchCoachOnly']) && !is_launch_coach() && !$admin) continue;
         if (!empty($it['staffOnly']) && in_array(my_role(), ['agent', 'launch_agent'], true)) continue;
+        if (!empty($it['teamOnly']) && !$admin && !is_team_leader() && my_own_team_id() === null) continue;
 
         // Sentinel — inject the personalized assets collapsible inline.
         if ($it['key'] === '__assets__') {
@@ -186,6 +241,10 @@ function render_sidebar(string $current, array $agent): void {
                . $assetsLabel . ' <span class="sb-links-arrow">&#9660;</span></button>';
             echo '<div class="sb-links-sub" hidden>';
             foreach (agent_assets_items() as $ai) {
+                // 'buyback' is the one item here without its own client
+                // book for some roles (recruiting/coaching staff) -- hide
+                // rather than show a tool with nothing to act on.
+                if ($ai['key'] === 'buyback' && !can_use_buyback()) continue;
                 $act = $ai['key'] === $current ? ' sb-active' : '';
                 echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($ai['href']) . '">'
                    . htmlspecialchars($ai['label']) . '</a>';
@@ -211,7 +270,8 @@ function render_sidebar(string $current, array $agent): void {
             $ext    = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
             $arrow  = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
             $badge  = !empty($it['adminOnly']) ? ' <span class="sb-admin">Admin</span>' : '';
-            echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($it['href']) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
+            $href   = !empty($it['external']) ? ('go.php?key=' . urlencode($it['key'])) : $it['href'];
+            echo '<a class="sb-item' . $active . '" href="' . htmlspecialchars($href) . '"' . $ext . '>' . htmlspecialchars($it['label']) . $arrow . $badge . '</a>';
         }
         echo '</div>';
     }
@@ -264,10 +324,11 @@ function render_sidebar(string $current, array $agent): void {
         echo '<div class="sb-links-sub" hidden>';
         foreach ($standalone as $it) {
             if (!empty($it['superOnly']) && !$superAdmin) continue;
-            $act = $it['key'] === $current ? ' sb-active' : '';
-            $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
-            $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
-            echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
+            $act  = $it['key'] === $current ? ' sb-active' : '';
+            $xt   = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+            $arr  = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+            $href = !empty($it['external']) ? ('go.php?key=' . urlencode($it['key'])) : $it['href'];
+            echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($href) . '"' . $xt . '>'
                . htmlspecialchars($it['label']) . $arr . '</a>';
         }
         foreach ($deptOrder as $deptName) {
@@ -277,6 +338,11 @@ function render_sidebar(string $current, array $agent): void {
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) =>
                 (empty($it['superOnly']) || $superAdmin) && (empty($it['teamLeaderOnly']) || is_team_leader())
+                // 'bicOrAdminOnly' — for items narrower than their department's
+                // default visibility (e.g. Agent Communications is otherwise
+                // visible to mc_leader too, matching every other item there,
+                // but a specific feature may need admin/bic only for now).
+                && (empty($it['bicOrAdminOnly']) || $admin || is_bic())
             ));
             if (!$admin && $deptName === 'Operations') {
                 $visible = array_values(array_filter($visible, fn($it) => !empty($it['leaderVisible'])));
@@ -291,10 +357,11 @@ function render_sidebar(string $current, array $agent): void {
                 echo '<span class="sb-dept-empty">No items</span>';
             }
             foreach ($visible as $it) {
-                $act = $it['key'] === $current ? ' sb-active' : '';
-                $xt  = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
-                $arr = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
-                echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($it['href']) . '"' . $xt . '>'
+                $act  = $it['key'] === $current ? ' sb-active' : '';
+                $xt   = !empty($it['external']) ? ' target="_blank" rel="noopener"' : '';
+                $arr  = !empty($it['external']) ? ' <span class="sb-ext">↗</span>' : '';
+                $href = !empty($it['external']) ? ('go.php?key=' . urlencode($it['key'])) : $it['href'];
+                echo '<a class="sb-item sb-depth-2' . $act . '" href="' . htmlspecialchars($href) . '"' . $xt . '>'
                    . htmlspecialchars($it['label']) . $arr . '</a>';
             }
             echo '</div>';
@@ -318,12 +385,22 @@ function render_sidebar(string $current, array $agent): void {
         }
         echo '</select>';
     }
+    // How-To library search -- a single injection point here puts it on
+    // every one of the ~85 pages that already call render_sidebar(), with
+    // no per-page edits. See assets/howto_search.js + api/howto_search.php.
+    echo '<div class="sb-search-wrap">'
+       . '<button class="sb-support" onclick="toggleHowtoSearch()">? How do I...</button>'
+       . '<div class="sb-search-box" id="sb-search-box" hidden>'
+       . '<input type="text" id="sb-search-input" class="sb-search-input" placeholder="Start typing..." autocomplete="off">'
+       . '<div class="sb-search-results" id="sb-search-results" hidden></div>'
+       . '</div></div>';
     echo '<button class="sb-support" onclick="openSupportModal()">Get Support</button>';
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
     echo '<script>window.AE_CSRF = ' . json_encode($_SESSION['csrf']) . ';</script>';
     echo '<script src="assets/mc-links.js"></script>';
     echo '<script src="assets/global.js"></script>';
+    echo '<script src="assets/howto_search.js"></script>';
     if (function_exists('is_masquerading') && is_masquerading()) {
         echo '<script>document.body.classList.add("masquerading")</script>';
     }

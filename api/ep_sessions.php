@@ -31,7 +31,7 @@ function ep_sess_can_manage(array $ev, string $email): bool {
 
 function ep_sess_visible(array $ev): bool {
     if ($ev['mc_slug'] === '') return true;
-    $slugs = array_values(array_unique(array_filter(array_merge(my_mc_slugs(), [my_own_mc_slug()]))));
+    $slugs = array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs())));
     return in_array($ev['mc_slug'], $slugs, true);
 }
 

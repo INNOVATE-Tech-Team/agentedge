@@ -17,10 +17,13 @@ function team_slugify(string $s): string {
 }
 
 if ($action === 'save') {
-    $id          = (int)($in['id'] ?? 0);
-    $name        = trim($in['name'] ?? '');
-    $leaderEmail = strtolower(trim($in['leader_email'] ?? ''));
-    $ord         = (int)($in['sort_ord'] ?? 0);
+    $id   = (int)($in['id'] ?? 0);
+    $name = trim($in['name'] ?? '');
+    $ord  = (int)($in['sort_ord'] ?? 0);
+    // Only meaningful on create — the team's first leader. Edits manage the
+    // full (possibly multi-person) leader list via add_leader/remove_leader
+    // instead, so a plain rename/reorder save never touches leadership.
+    $initialLeaderEmail = strtolower(trim($in['leader_email'] ?? ''));
 
     if (!$name) { echo json_encode(['ok'=>false,'error'=>'Name is required']); exit; }
     $slugBase = team_slugify($name);
@@ -34,8 +37,8 @@ if ($action === 'save') {
             $stmt->execute([$id]);
             $slug = $stmt->fetchColumn();
             if ($slug === false) { echo json_encode(['ok'=>false,'error'=>'Team not found']); exit; }
-            $db->prepare("UPDATE teams SET name=?, leader_email=?, sort_ord=? WHERE id=?")
-               ->execute([$name, $leaderEmail, $ord, $id]);
+            $db->prepare("UPDATE teams SET name=?, sort_ord=? WHERE id=?")
+               ->execute([$name, $ord, $id]);
         } else {
             $slug   = $slugBase;
             $suffix = 1;
@@ -47,9 +50,19 @@ if ($action === 'save') {
                 $slug = $slugBase . '-' . $suffix;
             }
             $db->prepare("INSERT INTO teams (name, slug, leader_email, sort_ord, enabled) VALUES (?, ?, ?, ?, 1)")
-               ->execute([$name, $slug, $leaderEmail, $ord]);
+               ->execute([$name, $slug, $initialLeaderEmail, $ord]);
             $id = (int)$db->lastInsertId();
+            if ($initialLeaderEmail) {
+                $db->prepare("INSERT INTO team_leaders (team_id, agent_email) VALUES (?, ?) ON CONFLICT(team_id, agent_email) DO NOTHING")
+                   ->execute([$id, $initialLeaderEmail]);
+            }
         }
+
+        // teams.leader_email is only a "primary leader" pointer for the
+        // single-leader Advantage push below — read it fresh from the DB
+        // rather than trusting $initialLeaderEmail, which is blank on edits.
+        $leaderEmail = (string)$db->query("SELECT leader_email FROM teams WHERE id=" . (int)$id)->fetchColumn();
+
         // Push to Advantage (coastline-server) so a team created or edited
         // here resolves/creates its leader's Advantage account and Recruiting
         // Outreach team-scoping right away — best-effort, never blocks the
@@ -84,6 +97,7 @@ if ($action === 'delete') {
     if (!$id) { echo json_encode(['ok'=>false,'error'=>'Id required']); exit; }
     $db->prepare("DELETE FROM teams WHERE id=?")->execute([$id]);
     $db->prepare("DELETE FROM team_members WHERE team_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM team_leaders WHERE team_id=?")->execute([$id]);
     echo json_encode(['ok'=>true]);
     exit;
 }
@@ -139,6 +153,41 @@ if ($action === 'remove_member') {
     $email = strtolower(trim($in['agent_email'] ?? ''));
     if (!$email) { echo json_encode(['ok'=>false,'error'=>'agent_email required']); exit; }
     $db->prepare("DELETE FROM team_members WHERE agent_email=?")->execute([$email]);
+    echo json_encode(['ok'=>true]);
+    exit;
+}
+
+// Unlike team_members, a team can have more than one leader — agent_email is
+// not a PK on its own, so adding someone here never bumps an existing leader
+// off the team.
+if ($action === 'add_leader') {
+    $teamId = (int)($in['team_id'] ?? 0);
+    $email  = strtolower(trim($in['agent_email'] ?? ''));
+    if (!$teamId || !$email) { echo json_encode(['ok'=>false,'error'=>'team_id and agent_email required']); exit; }
+    $db->prepare(
+        "INSERT INTO team_leaders (team_id, agent_email) VALUES (?, ?) ON CONFLICT(team_id, agent_email) DO NOTHING"
+    )->execute([$teamId, $email]);
+    // Keep teams.leader_email (the single-value Advantage push pointer) set
+    // to *a* leader — only fills it if the team had none before.
+    $db->prepare("UPDATE teams SET leader_email=? WHERE id=? AND leader_email=''")->execute([$email, $teamId]);
+    echo json_encode(['ok'=>true]);
+    exit;
+}
+
+if ($action === 'remove_leader') {
+    $teamId = (int)($in['team_id'] ?? 0);
+    $email  = strtolower(trim($in['agent_email'] ?? ''));
+    if (!$teamId || !$email) { echo json_encode(['ok'=>false,'error'=>'team_id and agent_email required']); exit; }
+    $db->prepare("DELETE FROM team_leaders WHERE team_id=? AND agent_email=?")->execute([$teamId, $email]);
+    // If the removed leader was the Advantage push pointer, promote whichever
+    // leader is left (if any) so that bridge doesn't silently go stale.
+    $stmt = $db->prepare("SELECT leader_email FROM teams WHERE id=?");
+    $stmt->execute([$teamId]);
+    if (strtolower(trim((string)$stmt->fetchColumn())) === $email) {
+        $next = $db->prepare("SELECT agent_email FROM team_leaders WHERE team_id=? ORDER BY added_at LIMIT 1");
+        $next->execute([$teamId]);
+        $db->prepare("UPDATE teams SET leader_email=? WHERE id=?")->execute([(string)($next->fetchColumn() ?: ''), $teamId]);
+    }
     echo json_encode(['ok'=>true]);
     exit;
 }

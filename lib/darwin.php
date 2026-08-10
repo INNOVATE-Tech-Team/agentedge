@@ -187,6 +187,32 @@ function darwin_sync_cap_progress(): array {
     if ($watermark) $filter .= ' and capStatusModifyDate>=' . darwin_quote_str($watermark);
 
     $rows = darwin_fetch_all('customAPI_InnovateCapProgress', $filter, 200);
+
+    // Read each incoming agent's PRIOR amount_left_to_cap before the upsert
+    // below overwrites it, so a not-capped -> capped transition can be
+    // detected. Only rows Darwin reports as changed (capStatusModifyDate
+    // advanced) come through here at all, so this naturally fires once per
+    // cap event rather than re-checking every active agent daily.
+    $priorStmt = $db->prepare("SELECT amount_left_to_cap FROM darwin_cap_progress WHERE agent_person_id = ?");
+    $newlyCapped = [];
+    foreach ($rows as $r) {
+        $capAmount = darwin_parse_currency($r['capAmount'] ?? null);
+        $leftNow   = darwin_parse_currency($r['amountLeftToCap'] ?? null);
+        if ($capAmount <= 0 || $leftNow > 0) continue; // no real cap, or not capped as of this row
+
+        $priorStmt->execute([(int)$r['agentPersonId']]);
+        $leftBefore = $priorStmt->fetchColumn();
+        $wasCapped  = $leftBefore !== false && (float)$leftBefore <= 0;
+        if (!$wasCapped) {
+            $newlyCapped[] = [
+                'agent_name'    => $r['agentName'] ?? '',
+                'agent_email'   => $r['agentEmail'] ?? '',
+                'office_name'   => $r['officeName'] ?? '',
+                'cap_amount'    => $capAmount,
+            ];
+        }
+    }
+
     $stmt = $db->prepare("INSERT INTO darwin_cap_progress
         (agent_person_id, agent_first_name, agent_last_name, agent_name, agent_email,
          commission_plan_id, commission_plan_name, cap_amount, cap_earned, amount_left_to_cap,
@@ -222,7 +248,17 @@ function darwin_sync_cap_progress(): array {
             (int)($r['isActiveAgent'] ?? 1), $r['capStatusModifyDate'] ?? '',
         ]);
     }
-    return ['synced' => count($rows), 'incremental' => (bool)$watermark];
+
+    if ($newlyCapped) {
+        require_once __DIR__ . '/notifications.php';
+        foreach ($newlyCapped as $nc) {
+            try {
+                notify_agent_capped($nc['agent_name'], $nc['agent_email'], $nc['office_name']);
+            } catch (\Throwable $e) {}
+        }
+    }
+
+    return ['synced' => count($rows), 'incremental' => (bool)$watermark, 'newly_capped' => count($newlyCapped)];
 }
 
 // ── Revenue share (growth network) ──────────────────────────────────────────
@@ -297,4 +333,55 @@ function darwin_sync_all(): array {
         'revenue_share'  => darwin_sync_revenue_share(),
         'sales_volume'   => darwin_sync_sales_volume(),
     ];
+}
+
+// ── Team role suggestion ─────────────────────────────────────────────────────
+// Darwin's commission_plan_name tells us WHETHER someone is on a team-type
+// plan (Team Leader / Team Member / a custom named plan / a Spouse Team
+// pairing) but — confirmed by probing every plausible custom-view name
+// against Darwin's live API (all 404'd, "Could not find stored procedure")
+// — there is no Darwin data exposing WHICH leader a given Team Member
+// reports to. So this only classifies the role; grouping members under a
+// leader stays a manual step on teams.php, same as before.
+function darwin_team_role_suggestion(string $email): ?array {
+    $db = local_db();
+    $emails = [strtolower(trim($email))];
+    if ($emails[0] === '') return null;
+    try {
+        $altRow = $db->prepare("SELECT alt_email FROM agent_extra WHERE email=? AND alt_email != ''");
+        $altRow->execute([$emails[0]]);
+        $alt = $altRow->fetchColumn();
+        if ($alt) $emails[] = strtolower(trim($alt));
+    } catch (\Throwable $e) {}
+    $placeholders = implode(',', array_fill(0, count($emails), '?'));
+
+    $stmt = $db->prepare(
+        "SELECT commission_plan_name FROM darwin_cap_progress
+          WHERE lower(agent_email) IN ($placeholders) AND is_active_agent=1 LIMIT 1"
+    );
+    $stmt->execute($emails);
+    $plan = trim((string)$stmt->fetchColumn());
+    if ($plan === '') return null;
+    $planLower = strtolower($plan);
+
+    // Plain individual/referral/no-cap plans — not team-related at all.
+    if ($planLower === '100% plan') return null;
+    if (preg_match('/^individual agent\b/i', $plan) || preg_match('/^referral agent\b/i', $plan)) return null;
+
+    if (preg_match('/^team leader\b/i', $plan)) {
+        return ['role' => 'leader', 'confidence' => 'high', 'plan' => $plan];
+    }
+    if (preg_match('/^team member\b/i', $plan) || $planLower === 'mega team member') {
+        return ['role' => 'member', 'confidence' => 'high', 'plan' => $plan];
+    }
+    if (preg_match('/^spouse team\s+(.+)$/i', $plan, $m)) {
+        // A 2-person pairing, not a hierarchical team — informational only,
+        // no leader/member action makes sense here.
+        return ['role' => 'spouse_team', 'confidence' => 'n/a', 'plan' => $plan, 'detail' => $m[1]];
+    }
+    // Any other real plan name (person- or company-named, e.g. "Christi
+    // Myers 85/15") reads as a solo team leader on a custom plan, but we
+    // can't be fully sure it's not just a special negotiated rate — flagged
+    // lower-confidence so the admin double-checks before creating a team.
+    return ['role' => 'leader', 'confidence' => 'low', 'plan' => $plan];
 }

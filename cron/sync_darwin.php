@@ -19,6 +19,7 @@ chdir(dirname(__DIR__));
 require_once 'db.php';
 require_once 'local_db.php';
 require_once 'lib/darwin.php';
+require_once 'lib/notifications.php';
 
 $now = date('Y-m-d H:i:s');
 echo "[{$now}] Darwin sync starting\n";
@@ -29,12 +30,18 @@ try {
     $result = darwin_sync_all();
     foreach ($result as $dataset => $r) {
         $mode = $r['incremental'] ? 'incremental' : 'full';
-        echo "  {$dataset}: {$r['synced']} rows synced ({$mode})\n";
+        $extra = isset($r['newly_capped']) && $r['newly_capped'] ? " ({$r['newly_capped']} newly capped)" : '';
+        echo "  {$dataset}: {$r['synced']} rows synced ({$mode}){$extra}\n";
     }
 } catch (\Throwable $e) {
     echo "  ERROR: " . $e->getMessage() . "\n";
     exit(1);
 }
+
+// Cron is not an HTTP request, so dispatch_notification_queue()'s
+// fastcgi_finish_request/flush trick doesn't apply — send queued
+// notifications (e.g. cap-event emails) directly before exiting.
+process_notification_queue();
 
 $done = date('Y-m-d H:i:s');
 echo "[{$done}] Darwin sync done\n";

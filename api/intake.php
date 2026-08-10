@@ -309,6 +309,9 @@ if ($email === $myEmail) {
 
     if ($isSubmitted && !$wasSubmitted) {
         notify_intake_submitted($fv('full_name') ?: $myEmail, $myEmail);
+        notify_upline_intake_submitted($fv('full_name') ?: $myEmail, $myEmail, $fv('office_location'));
+        notify_intake_summary_admins($myEmail);
+        notify_bic_ml_intake_submitted($fv('full_name') ?: $myEmail, $myEmail, $fv('office_location'));
     }
 }
 

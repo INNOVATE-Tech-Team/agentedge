@@ -20,7 +20,7 @@ $reqQ = $db->prepare("
            s.slot_date, s.start_time, s.end_time
     FROM oh_requests r
     JOIN oh_listings l ON l.id = r.listing_id
-    JOIN oh_slots    s ON s.id = r.slot_id
+    LEFT JOIN oh_slots s ON s.id = r.slot_id
     WHERE r.agent_email = ?
     ORDER BY r.created_at DESC
 ");
@@ -72,10 +72,15 @@ $statusLabels = [
           </tr></thead>
           <tbody>
           <?php foreach ($requests as $req):
-            $st     = $statusLabels[$req['status']] ?? ['label'=>ucfirst($req['status']),'cls'=>'badge-pending'];
-            $fd     = date('M j, Y', strtotime($req['slot_date']));
-            $fs     = date('g:i A', strtotime($req['start_time']));
-            $fe     = date('g:i A', strtotime($req['end_time']));
+            $st      = $statusLabels[$req['status']] ?? ['label'=>ucfirst($req['status']),'cls'=>'badge-pending'];
+            $isAdhoc = empty($req['slot_date']);
+            if ($isAdhoc) {
+              $fd = date('M j, Y', strtotime($req['requested_date']));
+              $timeLabel = date('g:i A', strtotime($req['requested_time'])) . ' (requested)';
+            } else {
+              $fd = date('M j, Y', strtotime($req['slot_date']));
+              $timeLabel = date('g:i A', strtotime($req['start_time'])) . '–' . date('g:i A', strtotime($req['end_time']));
+            }
             $createdOn = fmt_dt_et($req['created_at'], 'M j, Y g:i A');
           ?>
           <tr id="reqrow-<?= $req['id'] ?>">
@@ -85,7 +90,7 @@ $statusLabels = [
             </td>
             <td style="font-size:13px;white-space:nowrap">
               <?= h($fd) ?><br>
-              <span style="color:#888;font-size:11px"><?= h($fs) ?>–<?= h($fe) ?></span>
+              <span style="color:#888;font-size:11px"><?= h($timeLabel) ?></span>
             </td>
             <td style="font-size:13px"><?= h($req['listing_agent_name'] ?: $req['listing_agent_email']) ?></td>
             <td><span class="<?= h($st['cls']) ?>"><?= h($st['label']) ?></span></td>

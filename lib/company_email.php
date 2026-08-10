@@ -5,6 +5,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/launch_roster.php';
 
 // Pull the full agent roster — the authoritative "every active agent, with
 // their Market Center" list (agent_roles/notification_prefs only cover agents
@@ -35,6 +36,67 @@ function ce_fetch_crm_roster(): array {
             'marketCenter' => $r['market_center'] ?? '',
             'phone'        => $r['phone'] ?? '',
         ];
+    }
+    return $out;
+}
+
+// LAUNCH Schedule classes (launch_roster.start_date groups) available for
+// narrowing the "LAUNCH Agents" audience to one specific class instead of
+// every LAUNCH agent company-wide — e.g. reminders for just the agents
+// starting the August 10 class. A class more than 10 weeks past its start
+// date is dropped from the list — it's over, not worth cluttering the picker.
+function ce_launch_classes(): array {
+    $db = local_db();
+    $cutoff = (new DateTime('now'))->modify('-10 weeks')->format('Y-m-d');
+    $st = $db->prepare(
+        "SELECT start_date, COUNT(*) AS cnt FROM launch_roster
+         WHERE start_date != '' AND start_date >= ? AND status != 'dropped'
+         GROUP BY start_date ORDER BY start_date"
+    );
+    $st->execute([$cutoff]);
+
+    $out = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $ts   = strtotime($r['start_date']);
+        $cnt  = (int)$r['cnt'];
+        $out[] = [
+            'date'  => $r['start_date'],
+            'label' => ($ts ? date('F j, Y', $ts) : $r['start_date']) . ' (' . $cnt . ' agent' . ($cnt === 1 ? '' : 's') . ')',
+            'count' => $cnt,
+        ];
+    }
+    return $out;
+}
+
+// Resolves one LAUNCH Schedule class to real, emailable recipients.
+// launch_roster rarely has agent_email filled in directly, so this reuses
+// the same Agent Roster (innovate_roster) name-matching chain
+// launch_schedule.php itself uses to find each agent's real email — an
+// agent with no discoverable email anywhere is silently skipped (no way to
+// reach them by email at all), same as a bounced/missing-email roster row
+// would be for any other audience.
+function ce_resolve_launch_class(string $startDate): array {
+    $db = local_db();
+    $st = $db->prepare("SELECT agent_name, agent_email FROM launch_roster WHERE start_date=? AND status != 'dropped'");
+    $st->execute([$startDate]);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    if (!$rows) return [];
+
+    $directory = launch_roster_build_directory($db);
+    $out = [];
+    foreach ($rows as $r) {
+        $email = strtolower(trim($r['agent_email'] ?? ''));
+        if ($email === '') {
+            $nameLower  = strtolower(trim($r['agent_name']));
+            $candidates = $directory['rosterByName'][$nameLower] ?? null;
+            if ($candidates === null) {
+                $fl = lr_first_last_key($nameLower);
+                $candidates = ($fl !== null ? $directory['rosterByFirstLast'][$fl] ?? null : null) ?? [];
+            }
+            if ($candidates) $email = strtolower(trim($candidates[0]['email'] ?? ''));
+        }
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
+        $out[] = ['email' => $email, 'name' => $r['agent_name']];
     }
     return $out;
 }
@@ -80,10 +142,10 @@ function ce_resolve_leaders(PDO $db, array $types): array {
 // emailed once). Each audience is resolved independently by
 // ce_resolve_single_audience() and the results are unioned, then enriched with
 // the extra fields the {{merge_var}} system supports (see ce_enrich_recipients).
-function ce_resolve_recipients(array $audiences, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic']): array {
+function ce_resolve_recipients(array $audiences, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
     $merged = [];
     foreach ($audiences as $audience) {
-        foreach (ce_resolve_single_audience($audience, $mcSlugs, $targetEmail, $leaderTypes) as $r) {
+        foreach (ce_resolve_single_audience($audience, $mcSlugs, $targetEmail, $leaderTypes, $launchClassDate) as $r) {
             $email = strtolower(trim($r['email'] ?? ''));
             if ($email === '') continue;
             // Keep the first non-empty name seen for a given email across audiences.
@@ -104,10 +166,13 @@ function ce_enrich_recipients(array $recipients): array {
     if (!$recipients) return $recipients;
     $db = local_db();
 
+    // An agent can have more than one active innovate_roster row (multiple
+    // Market Centers) — collect all of them per email rather than letting
+    // the last one iterated silently win.
     $rosterByEmail = [];
     foreach (ce_fetch_crm_roster() as $a) {
         $e = strtolower(trim($a['email'] ?? ''));
-        if ($e) $rosterByEmail[$e] = $a;
+        if ($e) $rosterByEmail[$e][] = $a;
     }
 
     $emails = array_column($recipients, 'email');
@@ -120,11 +185,19 @@ function ce_enrich_recipients(array $recipients): array {
     }
 
     foreach ($recipients as &$r) {
-        $ros  = $rosterByEmail[$r['email']] ?? [];
-        $intk = $intakeByEmail[$r['email']] ?? [];
-        $mc = $ros['marketCenter'] ?? '';
-        if ($mc === '' && !empty($ros['marketCenters'])) $mc = $ros['marketCenters'][0]['name'] ?? '';
-        $r['market_center']  = $mc;
+        $rosRows = $rosterByEmail[$r['email']] ?? [];
+        $ros     = $rosRows[0] ?? [];
+        $intk    = $intakeByEmail[$r['email']] ?? [];
+        // Join every Market Center this agent has an active roster row for,
+        // rather than picking whichever row happened to be first — a 2-MC
+        // agent's {{market_center}} merge field should show both, not one
+        // arbitrary one.
+        $mcNames = array_filter(array_unique(array_map(function ($a) {
+            $mc = $a['marketCenter'] ?? '';
+            if ($mc === '' && !empty($a['marketCenters'])) $mc = $a['marketCenters'][0]['name'] ?? '';
+            return $mc;
+        }, $rosRows)));
+        $r['market_center']  = implode(' / ', $mcNames);
         $r['brokerage']      = $ros['brokerage'] ?? '';
         $r['phone']          = ($ros['phone'] ?? '') ?: ($intk['phone'] ?? '');
         $r['license_number'] = $intk['license_number'] ?? '';
@@ -146,7 +219,7 @@ function ce_enrich_recipients(array $recipients): array {
 // 'mc_leader'/'bic' are the modern, independently-selectable audiences; the
 // legacy combined 'leaders' audience (+ $leaderTypes) is still resolved here
 // so any scheduled_emails row written before this split still sends correctly.
-function ce_resolve_single_audience(string $audience, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic']): array {
+function ce_resolve_single_audience(string $audience, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
     $db = local_db();
 
     if ($audience === 'mc_leader' || $audience === 'bic') {
@@ -173,7 +246,12 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 
     // Everyone currently active in a LAUNCH cohort — the cohort_members table
     // (not a role) is the authoritative "who's in LAUNCH right now" signal.
+    // A $launchClassDate narrows this to just one Launch Schedule class
+    // instead of every LAUNCH agent company-wide (see ce_resolve_launch_class).
     if ($audience === 'launch_agents') {
+        if ($launchClassDate !== '') {
+            return ce_resolve_launch_class($launchClassDate);
+        }
         $rows = $db->query(
             "SELECT DISTINCT cm.agent_email AS email FROM cohort_members cm
              JOIN cohorts c ON c.id = cm.cohort_id

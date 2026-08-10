@@ -83,8 +83,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
 .dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
 .dg-field{display:flex;flex-direction:column;gap:2px}
-.dg-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-.dg-value{font-size:12px;color:var(--ink)}
+.dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
+.dg-value{font-size:12.5px;color:var(--muted)}
 .dg-value.empty{color:var(--faint);font-style:italic}
 .dg-bio{grid-column:1/-1}
 .dg-bio .dg-value{white-space:pre-wrap;font-size:12px;line-height:1.55;max-height:140px;overflow-y:auto}
@@ -143,6 +143,12 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .mc-led-section{display:none}.mc-led-section.visible{display:block}
 .field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#666;margin-bottom:4px}
 .form-grid-perm{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start;max-width:760px}
+.license-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:0 10px;align-items:end;margin-bottom:8px}
+.license-row .em-field{margin-bottom:0}
+.btn-remove-license{border:1px solid var(--border);background:#fff;color:#888;border-radius:6px;padding:7px 10px;font-size:12px;cursor:pointer;height:fit-content}
+.btn-remove-license:hover{border-color:#e53935;color:#e53935}
+.btn-add-license{border:1px dashed #82C112;background:#f0f5e8;color:#5b8e0d;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-top:2px}
+.btn-add-license:hover{background:#e4f0d8}
 
 /* Network Tree tab (adapted from network.php) */
 .root-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#f9fdf5;border:2px solid #82C112;border-radius:10px;margin-bottom:20px}
@@ -596,6 +602,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
             <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
             <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+            <div class="em-field em-full">
+              <label>Additional Licensed States</label>
+              <div id="em-additional-licenses"></div>
+              <button type="button" class="btn-add-license" id="em-btn-add-license">+ Add Another License</button>
+            </div>
 
             <div class="em-section">MLS Information</div>
             <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
@@ -971,8 +982,87 @@ var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone
   'referring_agent','bio'];
 var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
 var emExtraBirthday = '';
+// Guards against saving before the async load below finishes (or after it
+// fails) — without this, Save was clickable the instant the modal opened,
+// so a slow/failed load let a mostly-blank payload blindly overwrite a
+// fully-populated profile (see api/intake.php's matching circuit-breaker).
+var emLoaded = false;
+
+function emAddLicenseRow(lic) {
+  lic = lic || {};
+  var row = document.createElement('div');
+  row.className = 'license-row';
+  row.innerHTML =
+    '<div class="em-field"><label>Real Estate License #</label><input type="text" class="em-al-number"></div>' +
+    '<div class="em-field"><label>License State</label><input type="text" class="em-al-state" placeholder="e.g. SC, NC"></div>' +
+    '<div class="em-field"><label>License Expiration Date</label><input type="date" class="em-al-exp"></div>' +
+    '<button type="button" class="btn-remove-license">Remove</button>';
+  row.querySelector('.em-al-number').value = lic.license_number || '';
+  row.querySelector('.em-al-state').value = lic.license_state || '';
+  row.querySelector('.em-al-exp').value = lic.license_exp || '';
+  row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+  document.getElementById('em-additional-licenses').appendChild(row);
+}
+
+function emRenderAdditionalLicenses(list) {
+  var container = document.getElementById('em-additional-licenses');
+  container.innerHTML = '';
+  (list || []).forEach(function (lic) { emAddLicenseRow(lic); });
+}
+
+function emCollectAdditionalLicenses() {
+  var out = [];
+  document.querySelectorAll('#em-additional-licenses .license-row').forEach(function (row) {
+    var number = row.querySelector('.em-al-number').value.trim();
+    var state = row.querySelector('.em-al-state').value.trim();
+    var exp = row.querySelector('.em-al-exp').value.trim();
+    if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+  });
+  return out;
+}
+
+var emBtnAddLicense = document.getElementById('em-btn-add-license');
+if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
+
+function emAddLicenseRow(lic) {
+  lic = lic || {};
+  var row = document.createElement('div');
+  row.className = 'license-row';
+  row.innerHTML =
+    '<div class="em-field"><label>Real Estate License #</label><input type="text" class="em-al-number"></div>' +
+    '<div class="em-field"><label>License State</label><input type="text" class="em-al-state" placeholder="e.g. SC, NC"></div>' +
+    '<div class="em-field"><label>License Expiration Date</label><input type="date" class="em-al-exp"></div>' +
+    '<button type="button" class="btn-remove-license">Remove</button>';
+  row.querySelector('.em-al-number').value = lic.license_number || '';
+  row.querySelector('.em-al-state').value = lic.license_state || '';
+  row.querySelector('.em-al-exp').value = lic.license_exp || '';
+  row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+  document.getElementById('em-additional-licenses').appendChild(row);
+}
+
+function emRenderAdditionalLicenses(list) {
+  var container = document.getElementById('em-additional-licenses');
+  container.innerHTML = '';
+  (list || []).forEach(function (lic) { emAddLicenseRow(lic); });
+}
+
+function emCollectAdditionalLicenses() {
+  var out = [];
+  document.querySelectorAll('#em-additional-licenses .license-row').forEach(function (row) {
+    var number = row.querySelector('.em-al-number').value.trim();
+    var state = row.querySelector('.em-al-state').value.trim();
+    var exp = row.querySelector('.em-al-exp').value.trim();
+    if (number || state || exp) out.push({ license_number: number, license_state: state, license_exp: exp });
+  });
+  return out;
+}
+
+var emBtnAddLicense = document.getElementById('em-btn-add-license');
+if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
 window.openEditModal = function () {
+  emLoaded = false;
+  document.getElementById('em-save-btn').disabled = true;
   document.getElementById('em-save-msg').textContent = 'Loading…';
   document.getElementById('editModalOverlay').style.display = 'flex';
 
@@ -992,6 +1082,7 @@ window.openEditModal = function () {
       var node = document.getElementById('em-' + key);
       if (node) node.checked = intake[key] === undefined ? true : Number(intake[key]) === 1;
     });
+    emRenderAdditionalLicenses(results[0].additional_licenses);
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
     document.getElementById('em-alt_email').value = extra.alt_email || '';
@@ -999,9 +1090,13 @@ window.openEditModal = function () {
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
     document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
+    document.getElementById('em-additional-licenses').innerHTML = '';
+    (results[0].additional_licenses || []).forEach(function (lic) { emAddLicenseRow(lic); });
     document.getElementById('em-save-msg').textContent = '';
+    emLoaded = true;
+    document.getElementById('em-save-btn').disabled = false;
   }).catch(function () {
-    document.getElementById('em-save-msg').textContent = 'Failed to load agent data.';
+    document.getElementById('em-save-msg').textContent = 'Failed to load agent data — cannot save until this loads. Close and try again.';
   });
 };
 
@@ -1009,9 +1104,26 @@ window.closeEditModal = function () {
   document.getElementById('editModalOverlay').style.display = 'none';
 };
 
+// Additional (non-primary) state licenses — see agent_intake_licenses.
+// Rendered as repeatable state/number/expiration rows; api/intake.php
+// rewrites the whole set on save from whatever rows exist at submit time.
+window.emAddLicenseRow = function (lic) {
+  lic = lic || { license_state: '', license_number: '', license_exp: '' };
+  var row = document.createElement('div');
+  row.className = 'em-lic-row';
+  row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center';
+  row.innerHTML =
+    '<input type="text" class="em-lic-state" placeholder="State" style="width:70px" value="' + (lic.license_state || '').replace(/"/g, '&quot;') + '">' +
+    '<input type="text" class="em-lic-number" placeholder="License #" style="flex:1" value="' + (lic.license_number || '').replace(/"/g, '&quot;') + '">' +
+    '<input type="date" class="em-lic-exp" style="width:150px" value="' + (lic.license_exp || '') + '">' +
+    '<button type="button" onclick="this.parentElement.remove()" style="padding:4px 10px;border:1px solid #fcc;background:white;border-radius:4px;font-size:12px;cursor:pointer;color:#c00">Remove</button>';
+  document.getElementById('em-additional-licenses').appendChild(row);
+};
+
 window.saveEditModal = function () {
   var msg = document.getElementById('em-save-msg');
   var btn = document.getElementById('em-save-btn');
+  if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
   btn.disabled = true;
   msg.textContent = 'Saving…';
 
@@ -1026,6 +1138,7 @@ window.saveEditModal = function () {
   });
   payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
   payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
+  payload.additional_licenses = emCollectAdditionalLicenses();
 
   var extraPayload = {
     email: PROFILE_EMAIL,
@@ -1307,14 +1420,20 @@ function renderPermissionForm(d) {
   const wrap = document.getElementById('permission-wrap');
   const roleOpts = Object.keys(d.role_labels).map(k =>
     `<option value="${esc(k)}"${d.role===k?' selected':''}>${esc(d.role_labels[k])}</option>`).join('');
-  const mcOpts = Object.keys(d.mc_opts).map(slug =>
-    `<option value="${esc(slug)}"${d.own_mc_slug===slug?' selected':''}>${esc(d.mc_opts[slug])}</option>`).join('');
+  const ownMcSlugs = d.own_mc_slugs || (d.own_mc_slug ? [d.own_mc_slug] : []);
+  const ownMcChecks = Object.keys(d.mc_opts).map(slug =>
+    `<label class="mc-check"><input type="checkbox" value="${esc(slug)}"${ownMcSlugs.includes(slug)?' checked':''}> ${esc(d.mc_opts[slug])}</label>`).join('');
   const bicOpts = d.bic_list.map(b =>
     `<option value="${esc(b.email)}"${d.bic_email===b.email?' selected':''}>${esc(b.name)} (${esc(b.email)})</option>`).join('');
   const mcChecks = Object.keys(d.mc_opts).map(slug =>
     `<label class="mc-check"><input type="checkbox" value="${esc(slug)}"${d.mc_slugs.includes(slug)?' checked':''}> ${esc(d.mc_opts[slug])}</label>`).join('');
+  const extraRoleOpts = '<option value="">— none —</option>' + Object.keys(d.extra_role_options).map(k =>
+    `<option value="${esc(k)}"${d.extra_role===k?' selected':''}>${esc(d.extra_role_options[k])}</option>`).join('');
+  const extraMcChecks = Object.keys(d.mc_opts).map(slug =>
+    `<label class="mc-check"><input type="checkbox" value="${esc(slug)}"${d.extra_mc_slugs.includes(slug)?' checked':''}> ${esc(d.mc_opts[slug])}</label>`).join('');
   const bicRowHidden = STAFF_ROLES.includes(d.role);
   const mcLedVisible = LEADER_ROLES.includes(d.role);
+  const extraMcLedVisible = LEADER_ROLES.includes(d.extra_role);
 
   wrap.innerHTML = `
     <div class="form-grid-perm">
@@ -1323,8 +1442,8 @@ function renderPermissionForm(d) {
         <select id="perm-role" class="field-select">${roleOpts}</select>
       </div>
       <div>
-        <div class="field-label">Their Market Center</div>
-        <select id="perm-own-mc" class="field-select"><option value="">— not set —</option>${mcOpts}</select>
+        <div class="field-label">Their Market Center(s)</div>
+        <div class="mc-checks" id="perm-own-mc-checks">${ownMcChecks}</div>
       </div>
       <div id="perm-bic-row" style="${bicRowHidden?'display:none':''}">
         <div class="field-label">Assigned BIC</div>
@@ -1334,6 +1453,16 @@ function renderPermissionForm(d) {
     <div id="perm-mc-led" class="mc-led-section${mcLedVisible?' visible':''}" style="margin-top:12px">
       <div class="field-label">Market Centers They Lead</div>
       <div class="mc-checks" id="perm-mc-checks">${mcChecks}</div>
+    </div>
+    <div class="form-grid-perm" style="margin-top:16px;border-top:1px solid var(--border,#eee);padding-top:16px">
+      <div>
+        <div class="field-label">Additional Role</div>
+        <select id="perm-extra-role" class="field-select">${extraRoleOpts}</select>
+      </div>
+    </div>
+    <div id="perm-extra-mc-led" class="mc-led-section${extraMcLedVisible?' visible':''}" style="margin-top:12px">
+      <div class="field-label">Market Centers They Lead (Additional Role)</div>
+      <div class="mc-checks" id="perm-extra-mc-checks">${extraMcChecks}</div>
     </div>
     <div style="margin-top:16px">
       <button type="button" class="btn-detail-link" onclick="savePermission()">Save</button>
@@ -1346,12 +1475,17 @@ function renderPermissionForm(d) {
     document.getElementById('perm-mc-led').classList.toggle('visible', LEADER_ROLES.includes(role));
     document.getElementById('perm-bic-row').style.display = STAFF_ROLES.includes(role) ? 'none' : '';
   });
+  document.getElementById('perm-extra-role').addEventListener('change', function () {
+    document.getElementById('perm-extra-mc-led').classList.toggle('visible', LEADER_ROLES.includes(this.value));
+  });
 }
 
 window.savePermission = function () {
   const msg = document.getElementById('perm-save-msg');
   msg.textContent = 'Saving…';
   const mcSlugs = Array.from(document.querySelectorAll('#perm-mc-checks input:checked')).map(el => el.value);
+  const extraMcSlugs = Array.from(document.querySelectorAll('#perm-extra-mc-checks input:checked')).map(el => el.value);
+  const ownMcSlugs = Array.from(document.querySelectorAll('#perm-own-mc-checks input:checked')).map(el => el.value);
   const bicEl = document.getElementById('perm-bic-email');
   fetch('api/agent_roles.php', {
     method: 'POST', credentials: 'same-origin',
@@ -1359,9 +1493,11 @@ window.savePermission = function () {
     body: JSON.stringify({
       email: PROFILE_EMAIL,
       role: document.getElementById('perm-role').value,
-      own_mc_slug: document.getElementById('perm-own-mc').value,
+      own_mc_slugs: ownMcSlugs,
       bic_email: bicEl ? bicEl.value : '',
-      mc_slugs: mcSlugs
+      mc_slugs: mcSlugs,
+      extra_role: document.getElementById('perm-extra-role').value,
+      extra_mc_slugs: extraMcSlugs
     })
   })
     .then(r => r.json())

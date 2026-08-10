@@ -204,6 +204,8 @@ body{margin:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif;b
 .cal-rsvp-btn:disabled{opacity:.5;cursor:default}
 .cal-edit-btn{padding:5px 12px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
 .cal-edit-btn:hover{border-color:#aaa;color:var(--ink)}
+.cal-copy-link-btn{padding:5px 12px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.cal-copy-link-btn:hover{border-color:#aaa;color:var(--ink)}
 .cal-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
 .cal-modal{background:#fff;border-radius:14px;width:min(520px,100%);max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.18)}
 .cal-modal-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0;font-size:15px;font-weight:800}
@@ -318,6 +320,19 @@ textarea.cal-field-input{resize:vertical;min-height:70px}
 .file-x{background:none;border:none;color:#b91c1c;font-size:14px;line-height:1;cursor:pointer;padding:0 0 0 2px}
 .sb-support{display:block;width:100%;text-align:left;padding:10px 18px;background:none;border:none;border-top:1px solid #222;color:#82C112;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:2px}
 .sb-support:hover{background:#111}
+
+/* How-To library search (nav.php render_sidebar() + assets/howto_search.js) */
+.sb-search-wrap{position:relative}
+.sb-search-box{padding:8px 18px 12px}
+.sb-search-input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:6px;border:1px solid #333;background:#171717;color:#eee;font-size:13px}
+.sb-search-input:focus{outline:none;border-color:#82C112}
+.sb-search-results{position:absolute;left:18px;right:18px;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 8px 20px rgba(0,0,0,.25)}
+.sb-search-item{display:block;padding:10px 12px;text-decoration:none;border-bottom:1px solid #f0f0f0}
+.sb-search-item:last-child{border-bottom:none}
+.sb-search-item:hover,.sb-search-item.active{background:#f5f5f5}
+.sb-search-item-label{font-size:12.5px;font-weight:700;color:#222}
+.sb-search-item-snippet{font-size:11.5px;color:#777;margin-top:2px;line-height:1.4}
+.sb-search-item-snippet mark{background:#eef5e2;color:#5b8e0d;font-weight:700;padding:0 1px;border-radius:2px}
 .btn-loginas{padding:4px 10px;border:1px solid #c9a8f5;background:#f3e8ff;color:#6b21a8;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:.04em}
 .btn-loginas:hover{background:#e9d5ff}
 
@@ -476,3 +491,39 @@ body.masquerading .layout{margin-top:36px}
 .disc-intro-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:520px){.disc-intro-row{grid-template-columns:1fr}}
 .disc-select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%235b5b5b' d='M6 8L0 0h12z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+
+
+/* ── Help Widget ─────────────────────────────────────────────────────────── */
+#help-widget-root{position:fixed;inset:0;pointer-events:none;z-index:1900}
+#help-widget-btn{position:fixed;right:24px;bottom:24px;width:52px;height:52px;border-radius:50%;background:var(--green);color:#000;border:none;font-size:22px;font-weight:900;cursor:grab;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:auto;display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none}
+#help-widget-btn:hover{background:var(--green-d);color:#fff}
+#help-widget-btn:active{cursor:grabbing}
+#help-widget-panel{position:fixed;width:min(360px,calc(100vw - 20px));max-height:min(480px,calc(100vh - 40px));background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden;pointer-events:auto}
+#help-widget-panel.open{display:flex}
+.hw-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;border-bottom:1px solid var(--border)}
+.hw-head h3{margin:0;font-size:15px;font-weight:900;color:var(--ink)}
+.hw-close{border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--faint);padding:0 4px}
+.hw-close:hover{color:var(--ink)}
+.hw-search{margin:12px 18px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;outline:none}
+.hw-search:focus{border-color:var(--green)}
+.hw-body{overflow-y:auto;padding:0 18px 16px;flex:1}
+.hw-empty{text-align:center;color:var(--faint);font-size:13px;padding:30px 10px}
+.hw-shortcut-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--ink);font-size:13px;font-weight:700;margin-bottom:8px}
+.hw-shortcut-row:hover{border-color:var(--green);background:#f9fdf5}
+.hw-shortcut-icon{font-size:18px;width:22px;text-align:center;flex-shrink:0}
+.hw-shortcut-icon-img{width:22px;height:22px;object-fit:contain;flex-shrink:0}
+.hw-shortcut-label{flex:1}
+.hw-shortcut-arrow{color:var(--faint);font-size:18px}
+.hw-result-row{display:block;padding:12px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--ink);margin-bottom:8px}
+.hw-result-row:hover{border-color:var(--green);background:#f9fdf5}
+.hw-result-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.hw-result-title{font-size:13px;font-weight:800;color:var(--ink)}
+.hw-result-obj{font-size:12px;color:var(--faint);margin-bottom:6px}
+.hw-diff{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:10px;white-space:nowrap;flex-shrink:0}
+.hw-diff-beginner{background:#e8f5e9;color:#2e7d32}
+.hw-diff-intermediate{background:#fff3cd;color:#8a6d1f}
+.hw-diff-advanced{background:#fdecea;color:#c0392b}
+.hw-related-list{display:flex;flex-wrap:wrap;gap:6px}
+.hw-related-chip{font-size:11px;font-weight:600;color:var(--green-d);background:#f0f9e8;border:1px solid #cfe6ad;border-radius:10px;padding:2px 8px;text-decoration:none}
+.hw-related-chip:hover{text-decoration:underline}
+@media(max-width:760px){#help-widget-panel{width:calc(100vw - 20px)}}

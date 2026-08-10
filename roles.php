@@ -48,6 +48,7 @@ function default_perms(string $role = 'agent'): array {
         'isAdmin'       => in_array($r, ['super_admin', 'staff'], true),
         'mc_slugs'      => [],
         'own_mc_slug'   => '',
+        'own_mc_slugs'  => [],
         'bic_email'     => '',
         'name'          => '',
     ];
@@ -56,17 +57,27 @@ function default_perms(string $role = 'agent'): array {
 // Check AgentEdge's own agent_roles table first.
 function fetch_perms_local(string $email): ?array {
     if (!function_exists('local_db')) return null;
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, bic_email, extra_roles_json FROM agent_roles WHERE email=?");
+    // Case-insensitive on purpose — the session email comes from tblstaff's
+    // stored casing (whatever Perfex has on file), which doesn't always match
+    // how the email was typed when the agent_roles row was created, and
+    // SQLite's default TEXT comparison is case-sensitive. A mismatch here
+    // silently drops the local role assignment and falls through to the CRM
+    // lookup instead (see fetch_perms()) — confirmed causing a super_admin's
+    // role to not load when their tblstaff email had different casing.
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, extra_roles_json FROM agent_roles WHERE LOWER(email)=LOWER(?)");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
     $r   = canonical_role($row['role'] ?? 'agent');
     $mcs = json_decode($row['mc_slugs'] ?? '[]', true);
     if (!is_array($mcs)) $mcs = [];
+    $ownMcs = json_decode($row['own_mc_slugs'] ?? '[]', true);
+    if (!is_array($ownMcs)) $ownMcs = [];
     $perms = default_perms($r);
-    $perms['mc_slugs']    = $mcs;
-    $perms['own_mc_slug'] = $row['own_mc_slug'] ?? '';
-    $perms['bic_email']   = $row['bic_email']   ?? '';
+    $perms['mc_slugs']     = $mcs;
+    $perms['own_mc_slug']  = $row['own_mc_slug'] ?? '';
+    $perms['own_mc_slugs'] = $ownMcs;
+    $perms['bic_email']    = $row['bic_email']   ?? '';
     // Merge the optional "extra role" (e.g. Team Leader alongside a BIC's
     // primary role) into the effective roles list so course role_filter
     // checks recognize it, not just the primary role.
@@ -98,12 +109,17 @@ function fetch_perms(string $email): array {
     $perms = fetch_perms_local($email) ?? fetch_perms_crm($email);
     // Team leader status is resolved independently of role/agent_roles — a bic
     // or mc_leader can also lead a team, and a team spans multiple MCs, so it
-    // can't live in agent_roles.mc_slugs. The teams/team_members tables are the
-    // sole source of truth, checked live on every request (same as mc_slugs).
+    // can't live in agent_roles.mc_slugs. The teams/team_leaders/team_members
+    // tables are the sole source of truth, checked live on every request (same
+    // as mc_slugs). A team can have more than one leader (team_leaders), so
+    // this reads that join table, not teams.leader_email directly.
     $emailLower = strtolower(trim($email));
     if (function_exists('local_db') && $emailLower !== '') {
         try {
-            $stmt = local_db()->prepare("SELECT id FROM teams WHERE leader_email=? AND enabled=1");
+            $stmt = local_db()->prepare(
+                "SELECT t.id FROM team_leaders tl JOIN teams t ON t.id = tl.team_id
+                  WHERE tl.agent_email=? AND t.enabled=1 LIMIT 1"
+            );
             $stmt->execute([$emailLower]);
             $teamId = $stmt->fetchColumn();
             if ($teamId !== false) {
@@ -140,8 +156,12 @@ function current_perms(): array {
 
 // The MC slugs this user leads (mc_leader / bic).
 function my_mc_slugs(): array    { return current_perms()['mc_slugs'] ?? []; }
-// The MC this agent belongs to (set by admin in agent_roles).
+// The MC this agent belongs to (set by admin in agent_roles). Kept as a
+// scalar "first MC" mirror for callers that only need one value for display.
 function my_own_mc_slug(): string { return current_perms()['own_mc_slug'] ?? ''; }
+// Every MC this agent belongs to (an agent can be in more than one, e.g.
+// licensed/working in bordering states).
+function my_own_mc_slugs(): array { return current_perms()['own_mc_slugs'] ?? []; }
 // The BIC email assigned to this agent.
 function my_bic_email(): string   { return current_perms()['bic_email'] ?? ''; }
 // The team this user leads (one team per leader, resolved live from the teams
@@ -164,6 +184,16 @@ function can_view_leader_docs(): bool { return is_super_admin() || is_mc_leader(
 function is_leader(): bool         { return is_admin() || is_bic() || is_mc_leader(); }
 // Can post announcements (any role except plain agent/recruiter)
 function can_post_announcements(): bool { return is_admin() || is_mc_leader() || is_bic(); }
+// Buy Back Your Time (Eliminate/Automate/Delegate agents): every producing
+// agent's own book of business. Unlike can_send_hot_deals() there's no
+// per-use paid third-party data API here (just Claude + the agent's own
+// FUB contacts/MLS comps), so this isn't admin/BIC-gated -- excluded only
+// for roles that don't have their own client book (recruiting/coaching
+// staff), not allowlisted to producing-role names, so it stays correct as
+// new roles get added.
+function can_use_buyback(): bool {
+    return !in_array(my_role(), ['staff', 'recruiter', 'launch_coach', 'director_of_coaching', 'launch_facilitator'], true);
+}
 // Can send a Company Email — same tier as announcements: admin/staff (any audience),
 // mc_leader/bic (only the Market Centers in their own mc_slugs), plus LAUNCH
 // coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
@@ -172,6 +202,19 @@ function can_send_company_email(): bool { return can_post_announcements() || is_
 function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
 // Can create/edit cohorts and reassign coaches (admin or coaching leadership).
 function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
+// Can view (and edit) the LAUNCH Curriculum reference content — coaching
+// staff only, not agents. launch_facilitator is a separate role from
+// launch_coach/director_of_coaching (is_launch_coach()) since a facilitator
+// may run sessions without carrying an active coaching caseload.
+function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coach() || my_role() === 'launch_facilitator'; }
+// Hot Deals: find best-value listings matching a spec, email FUB leads
+// searching for that type of property. Phase 1 scope is admin/BIC only —
+// widening to all agents is gated on a prepaid-credit wallet / per-use
+// billing existing first (see the coastline-server hot-deal-alerts Phase 2
+// plan) so open access can't run up real AirROI/data costs unrecovered.
+function can_send_hot_deals(): bool { return is_admin() || is_bic(); }
+// Can manage the Launch Schedule / Launch Coaching roster (admin or coaching leadership).
+function can_manage_launch_roster(): bool { return is_admin() || is_launch_coach(); }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }

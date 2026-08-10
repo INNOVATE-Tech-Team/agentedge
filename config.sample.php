@@ -99,6 +99,16 @@ return [
     // app.regrid.com → Account → API. Leave blank to show the "coming soon" banner.
     'regrid_api_key' => '',
 
+    // Google Places API — powers the Google Business Audit dashboard (rating,
+    // review count, open/closed status per agent's self-entered Place ID).
+    // Setup: console.cloud.google.com → APIs & Services → enable "Places API" →
+    // Credentials → Create API Key. No approval process (unlike the separate
+    // Business Profile Management API, which this app does NOT use) — just
+    // billing enabled on the project. Restrict the key to the Places API and,
+    // if possible, to the Lightsail server's IP. Leave blank to disable the
+    // audit sync (rows stay "Not checked").
+    'google_places_key' => '',
+
     // SendGrid — transactional email for announcements and other agent notifications.
     // Get API key at: app.sendgrid.com → Settings → API Keys → Create API Key (Mail Send)
     // Verified sender domain: innovateonline.com (domain auth already complete).
@@ -116,11 +126,17 @@ return [
     'ticket_reply_domain' => 'reply.innovateonline.com',
     'ticket_reply_secret' => '',
 
+    // intake_link_secret signs the tokenized public_intake.php link emailed to
+    // new agents (lib/notifications.php: intake_link_token). Leave blank to
+    // derive it from sendgrid_key instead of provisioning a separate secret.
+    'intake_link_secret' => '',
+
     // Twilio — SMS notifications for announcements.
     // Find credentials at: console.twilio.com → Account Info
     'twilio_sid'   => '',    // ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     'twilio_token' => '',    // your auth token
-    'twilio_from'  => '',    // your Twilio phone number, e.g. +18435551234
+    'twilio_from'  => '',    // fallback from-number, e.g. +18435551234 — only used if no Messaging Service SID is set
+    'twilio_messaging_service_sid' => '',    // MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx — preferred: required for A2P 10DLC delivery + Twilio's Advanced Opt-Out (STOP/HELP handled for you)
 
     // Google Calendar — training events shown on the Calendar page.
     // gcal_key_file: absolute path to the service account JSON key (never commit this file).
@@ -129,7 +145,9 @@ return [
     'gcal_calendar_id' => 'training@innovateonline.com',
 
     // Anthropic Claude API — used by the Finance Statement Scanner to categorize
-    // spending and generate savings recommendations. Get a key at console.anthropic.com.
+    // spending and generate savings recommendations, and by
+    // cron/regen_howto_articles.php to write/update the How-To library.
+    // Get a key at console.anthropic.com.
     'anthropic_api_key' => '',
 
     // Onboarding / offboarding notifications — comma-separated list of email addresses
@@ -170,4 +188,14 @@ return [
     'darwin_access_token'  => '',
     'darwin_refresh_token' => '',
     'darwin_token_expires' => '',  // format: MM/DD/YYYY HH:MM:SS, as issued by AccountTECH
+
+    // Fathom.video API — auto-ingests recorded training calls into University as
+    // hidden draft lessons (lib/fathom.php, api/fathom_webhook.php,
+    // cron/process_fathom_downloads.php). Get a personal API key at Fathom →
+    // Settings → API Access. Register a webhook there pointed at
+    // https://agents.innovateonline.com/api/fathom_webhook.php, subscribed to the
+    // "new-meeting-content-ready" event — Fathom shows the signing secret once, at
+    // creation time; copy it into fathom_webhook_secret below. Docs: https://developers.fathom.ai
+    'fathom_api_key'        => '',
+    'fathom_webhook_secret' => '',
 ];

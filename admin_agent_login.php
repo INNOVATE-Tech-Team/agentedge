@@ -11,11 +11,13 @@ if (!is_admin()) { header('Location: index.php'); exit; }
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
-$db     = local_db();
-$msg    = '';
-$err    = '';
-$link   = '';
-$status = null;
+$db            = local_db();
+$msg           = '';
+$err           = '';
+$link          = '';
+$status        = null;
+$emailResults  = null;
+$emailNewAddr  = '';
 
 // Looks up whether an email has a working login anywhere in the current
 // (post-Perfex) system — used both to show the admin a diagnosis and to
@@ -37,28 +39,103 @@ function agent_login_status(PDO $db, string $email): array {
     ];
 }
 
+// Mints a 24h/single-use password-setup token and emails it, returning the
+// link — shared by the "send a link" action below and the optional
+// "also send a login link" step after a Change Login Email.
+function mint_and_send_setup_link(PDO $db, string $email, string $fromEmail, string $fromName): string {
+    $token = bin2hex(random_bytes(32));
+    $db->prepare(
+        "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+24 hours'))"
+    )->execute([$token, $email]);
+
+    $base = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
+    $link = $base . '/reset_password.php?token=' . urlencode($token);
+
+    $body = '<p>An INNOVATE admin has set up (or reset) your AgentEdge login.</p>'
+          . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES) . '">Set your AgentEdge password</a></p>'
+          . '<p>This link expires in 24 hours and can only be used once.</p>';
+    queue_email_to([$email], 'Set your AgentEdge password', $body, $fromEmail, $fromName);
+    process_notification_queue();
+
+    return $link;
+}
+
+// An agent's identity is split across every table below, each independently
+// keyed by email — there's no single place that renames it, which is exactly
+// what caused a real incident (a roster edit changed one table, leaving the
+// agent's actual login credential — and several others — stuck on the old
+// email, locking them out entirely). This renames it everywhere at once.
+//
+// Scans every local table for an 'email' or 'agent_email' column rather than
+// a hardcoded list, so a table added later is covered automatically. Tables
+// with a unique/primary-key constraint on that column (agent_intake,
+// agent_passwords, agent_extra, agent_roles, agent_admin, email_signatures)
+// will fail the UPDATE if the new email already has an unrelated row there —
+// caught per-table and reported as a conflict needing a manual look, rather
+// than silently overwriting someone else's data or aborting the whole rename.
+// Perfex's tblstaff is deliberately NOT touched — it's a separate production
+// CRM system, not local to AgentEdge; if an agent still needs the legacy
+// Perfex login fallback updated too, that's a manual, separate step.
+function agent_email_rename(PDO $db, string $old, string $new): array {
+    $results = [];
+    $tables = $db->query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    )->fetchAll(PDO::FETCH_COLUMN);
+
+    foreach ($tables as $t) {
+        $emailCol = null;
+        foreach ($db->query('PRAGMA table_info("' . $t . '")')->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            if (in_array($c['name'], ['email', 'agent_email'], true)) { $emailCol = $c['name']; break; }
+        }
+        if (!$emailCol) continue;
+
+        $chk = $db->prepare('SELECT count(*) FROM "' . $t . '" WHERE "' . $emailCol . '" = ?');
+        $chk->execute([$old]);
+        $count = (int)$chk->fetchColumn();
+        if ($count === 0) continue; // nothing to rename in this table — don't clutter the report
+
+        try {
+            $db->prepare('UPDATE "' . $t . '" SET "' . $emailCol . '" = ? WHERE "' . $emailCol . '" = ?')
+               ->execute([$new, $old]);
+            $results[] = ['table' => $t, 'status' => 'renamed', 'count' => $count];
+        } catch (\Throwable $e) {
+            $results[] = ['table' => $t, 'status' => 'conflict', 'count' => $count, 'error' => $e->getMessage()];
+        }
+    }
+
+    return $results;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_link') {
     $email = strtolower(trim($_POST['email'] ?? ''));
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $err = 'Enter a valid email address.';
     } else {
         $status = agent_login_status($db, $email);
+        $link   = mint_and_send_setup_link($db, $email, $agent['email'], $agent['name'] ?? '');
+        $msg    = "Link generated and emailed to $email.";
+    }
+}
 
-        $token = bin2hex(random_bytes(32));
-        $db->prepare(
-            "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+24 hours'))"
-        )->execute([$token, $email]);
-
-        $base = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
-        $link = $base . '/reset_password.php?token=' . urlencode($token);
-
-        $body = '<p>An INNOVATE admin has set up (or reset) your AgentEdge login.</p>'
-              . '<p><a href="' . h($link) . '">Set your AgentEdge password</a></p>'
-              . '<p>This link expires in 24 hours and can only be used once.</p>';
-        queue_email_to([$email], 'Set your AgentEdge password', $body, $agent['email'], $agent['name'] ?? '');
-        process_notification_queue();
-
-        $msg = "Link generated and emailed to $email.";
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'change_email') {
+    $oldEmail = strtolower(trim($_POST['old_email'] ?? ''));
+    $newEmail = strtolower(trim($_POST['new_email'] ?? ''));
+    if (!filter_var($oldEmail, FILTER_VALIDATE_EMAIL) || !filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+        $err = 'Enter two valid email addresses.';
+    } elseif ($oldEmail === $newEmail) {
+        $err = 'Old and new email must be different.';
+    } else {
+        $emailResults = agent_email_rename($db, $oldEmail, $newEmail);
+        $emailNewAddr = $newEmail;
+        if (!$emailResults) {
+            $err = "No records found for $oldEmail — nothing to rename.";
+        } else {
+            $msg = "Renamed $oldEmail to $newEmail.";
+            if (!empty($_POST['send_link'])) {
+                $link = mint_and_send_setup_link($db, $newEmail, $agent['email'], $agent['name'] ?? '');
+                $msg .= " A password-setup link was emailed to $newEmail.";
+            }
+        }
     }
 }
 
@@ -147,6 +224,46 @@ $pending = $db->query(
             <button class="btn" type="button" onclick="navigator.clipboard.writeText('<?= h($link) ?>')">Copy</button>
           </div>
           <p class="vd-sub" style="margin-top:6px">Already emailed above — copy this if you'd rather hand it to them directly (Slack, text) in case email delivery is in question. Expires in 24 hours, single use.</p>
+        <?php endif; ?>
+      </div>
+
+      <div class="vd-card">
+        <h3>Change an Agent's Login Email</h3>
+        <p class="vd-sub">An agent's identity is split across several tables (profile, roster, password, notification prefs, etc.), each keyed independently by email. Editing it in just one place (e.g. the roster) leaves the others on the old email — this renames it everywhere at once.</p>
+        <form method="post">
+          <input type="hidden" name="action" value="change_email">
+          <div class="form-row">
+            <div><label class="fl" style="font-size:11px;font-weight:700;display:block;margin-bottom:3px">Current (old) email</label>
+              <input name="old_email" type="email" required placeholder="old@example.com" style="width:220px"></div>
+            <div><label class="fl" style="font-size:11px;font-weight:700;display:block;margin-bottom:3px">New email</label>
+              <input name="new_email" type="email" required placeholder="new@example.com" style="width:220px"></div>
+            <button class="btn btn-green" type="submit">Rename Everywhere</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-top:10px">
+            <input type="checkbox" name="send_link" value="1">
+            Also email a password-setup link to the new address (use this if they're locked out, not just moving addresses)
+          </label>
+        </form>
+
+        <?php if ($emailResults !== null): ?>
+          <table style="margin-top:16px">
+            <thead><tr><th>Table</th><th>Result</th></tr></thead>
+            <tbody>
+            <?php foreach ($emailResults as $r): ?>
+              <tr>
+                <td><code><?= h($r['table']) ?></code></td>
+                <td>
+                  <?php if ($r['status'] === 'renamed'): ?>
+                    <span class="status-ok">✓ Renamed <?= (int)$r['count'] ?> row<?= $r['count'] === 1 ? '' : 's' ?></span>
+                  <?php else: ?>
+                    <span class="status-warn">⚠ Skipped — <?= h($emailNewAddr) ?> already has a row here. Needs a manual look (possible duplicate profile).</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
+          <p class="vd-sub" style="margin-top:8px">Perfex's legacy staff record (tblstaff) is a separate CRM system and isn't touched by this — only matters if this agent still relies on the old Perfex login fallback.</p>
         <?php endif; ?>
       </div>
 

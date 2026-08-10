@@ -65,6 +65,20 @@ try {
     // "William Kelly", "Paul Mayer" vs "Paul F Mayer"), which can silently
     // miss an agent's production or, worse, match a different person with a
     // similar name.
+    // Optional ?state=XX scopes total_volume/total_deals to one state's roster
+    // (used by the Backoffice Roster summary bar so it reflects whichever
+    // state card is active) — resolved by roster email, same pattern as the
+    // MC scoping above. Per-agent maps below are built unconditionally
+    // regardless of this filter, since individual row lookups should still
+    // work no matter which state tab happens to be showing.
+    $stateFilter = strtoupper(trim($_GET['state'] ?? ''));
+    $rosterStateByEmail = [];
+    if ($stateFilter !== '' && $stateFilter !== 'ALL') {
+        foreach (local_db()->query("SELECT email, state_code FROM innovate_roster WHERE active=1 AND email != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $rosterStateByEmail[strtolower(trim($r['email']))] = $r['state_code'];
+        }
+    }
+
     $agentMap       = [];
     $agentMapByName = [];
     $totalVolume    = 0.0;
@@ -76,16 +90,18 @@ try {
         $deals  = (int)($a['ytd_transaction_count'] ?? 0);
         if ($volume <= 0 && $deals <= 0) continue;
 
-        $totalVolume += $volume;
-        $totalDeals  += $deals;
-        $darwinAgentCount++;
-
         $entry = ['volume' => $volume, 'deals' => $deals];
         $email     = strtolower(trim($a['agent_email'] ?? ''));
         $canonical = $altToCanonical[$email] ?? $email;
         $name      = strtolower(trim($a['agent_name'] ?? ''));
         if ($canonical !== '') $agentMap[$canonical] = $entry;
         if ($name      !== '') $agentMapByName[$name] = $entry;
+
+        if ($rosterStateByEmail && ($rosterStateByEmail[$canonical] ?? null) !== $stateFilter) continue;
+
+        $totalVolume += $volume;
+        $totalDeals  += $deals;
+        $darwinAgentCount++;
     }
 
     echo json_encode([
