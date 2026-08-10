@@ -662,6 +662,21 @@ async function hdSearch() {
   status.textContent = ''; status.className = 'send-status';
   document.getElementById('hd-results').innerHTML = '';
 
+  // This searches an agent's full lead history (not a fast recent sample),
+  // paced to respect FUB's rate limit -- a large contact list can take up
+  // to 1-2 minutes. Without live feedback that read as frozen/broken in
+  // testing (confirmed 2026-08-10: one real search took 93s).
+  const startedAt = Date.now();
+  const tick = () => {
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    status.textContent = secs < 8
+      ? 'Searching your leads…'
+      : `Still searching your leads… (${secs}s — large contact lists can take up to 2 minutes)`;
+    status.className = 'send-status';
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+
   try {
     const r = await fetch('api/buyback_hotdeals_preview.php', {
       method: 'POST', credentials: 'same-origin',
@@ -669,6 +684,7 @@ async function hdSearch() {
       body: JSON.stringify(body),
     });
     const data = await r.json();
+    clearInterval(timer);
     btn.disabled = false; btn.textContent = 'Find Deals';
     if (!r.ok || data.ok === false) {
       status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
@@ -676,9 +692,11 @@ async function hdSearch() {
       return;
     }
     renderHdResults(data.candidates || []);
+    status.textContent = '';
     if (!data.fub_configured) status.textContent = 'Note: FUB lead matching is not configured.';
     if (!data.str_data_configured) status.textContent += (status.textContent ? ' ' : '') + 'Note: rental-income data is not configured — ranked by price vs. comps only.';
   } catch (e) {
+    clearInterval(timer);
     btn.disabled = false; btn.textContent = 'Find Deals';
     status.textContent = 'Network error — could not reach the server.';
     status.className = 'send-status err';
