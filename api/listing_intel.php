@@ -38,34 +38,34 @@ function li_farm_zips(\PDO $db, string $email, string $overrideZip = ''): array 
     return array_unique($zips);
 }
 
-// ── Cached Trestle OAuth token (client_credentials, cached in oh_prefs) ───────
-function li_trestle_token(): string {
-    $trestle_id     = trim(cfg()['trestle_client_id']     ?? '');
-    $trestle_secret = trim(cfg()['trestle_client_secret'] ?? '');
-    if (!$trestle_id || !$trestle_secret) return '';
-    $now    = time();
-    $db2    = local_db();
-    $tokRow = $db2->query("SELECT value FROM oh_prefs WHERE key='trestle_token'")->fetchColumn();
-    $expRow = $db2->query("SELECT value FROM oh_prefs WHERE key='trestle_token_expires'")->fetchColumn();
-    $token  = ($tokRow && $expRow && (int)$expRow > $now + 60) ? $tokRow : '';
-    if ($token) return $token;
-    $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 12,
-        'header'  => "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n",
-        'content' => http_build_query(['client_id' => $trestle_id, 'client_secret' => $trestle_secret, 'grant_type' => 'client_credentials', 'scope' => 'api']),
-        'ignore_errors' => true]]);
-    $raw = @file_get_contents('https://api.cotality.com/trestle/oidc/connect/token', false, $ctx);
-    $d   = $raw ? json_decode($raw, true) : [];
-    $token = $d['access_token'] ?? '';
-    if ($token) {
-        $db2->prepare("INSERT OR REPLACE INTO oh_prefs(key,value) VALUES('trestle_token',?)")->execute([$token]);
-        $db2->prepare("INSERT OR REPLACE INTO oh_prefs(key,value) VALUES('trestle_token_expires',?)")->execute([$now + (int)($d['expires_in'] ?? 3600)]);
-    }
-    return $token;
-}
+// ── GET a coastline-server /public/listing-intel/* endpoint ───────────────────
+// Shared by get_expireds/get_active_listings below. Both used to query
+// Trestle directly from here (CCAR-only, a second live MLS connection
+// duplicating what the ingest pipeline already does); now they reuse the
+// same unified_raw data coastline-server already ingests from every board,
+// scoped to the requesting agent's own MLS membership.
+function li_crm_get(string $path, array $params): array {
+    $c     = cfg();
+    $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
+    $token = $c['crm_token'] ?? '';
+    $qs    = http_build_query(array_merge(['token' => $token], $params));
+    $url   = $base . $path . '?' . $qs;
 
-// ── Format a zip array as an OData 'in (...)' literal list ────────────────────
-function li_zip_list_odata(array $zips): string {
-    return implode(',', array_map(fn($z) => "'" . str_replace("'", "''", $z) . "'", $zips));
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 25,
+    ]);
+    $resp   = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err    = curl_error($ch);
+    curl_close($ch);
+
+    if ($resp === false) err('Could not reach the CRM: ' . $err, 502);
+    $data = json_decode($resp, true);
+    if (!is_array($data)) err('Invalid response from CRM.', 502);
+    if ($status >= 400) err($data['detail'] ?? $data['error'] ?? 'CRM error', $status);
+    return $data;
 }
 
 // ── Score a property from tax/ownership/distress signals; returns the total plus
@@ -296,79 +296,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         exit;
     }
 
-    // ── Expired pipeline — live Trestle query ─────────────────────────────────
+    // ── Expired/withdrawn pipeline — via coastline-server (unified_raw,
+    // cross-MLS, scoped to the agent's own MLS membership). Previously
+    // queried Trestle directly, which was CCAR-only regardless of which
+    // board the agent actually belongs to — see coastline-server's
+    // /public/listing-intel/expireds for the real query.
     if ($action === 'get_expireds') {
-        if (!trim(cfg()['trestle_client_id'] ?? '') || !trim(cfg()['trestle_client_secret'] ?? '')) err('Trestle MLS credentials not configured.');
         $days = max(30, min(365, (int)($_GET['days'] ?? 90)));
         $zips = li_farm_zips($db, $me, trim($_GET['zip'] ?? ''));
         if (empty($zips)) je(['ok' => true, 'listings' => []]);
-        $token = li_trestle_token();
-        if (!$token) err('Could not authenticate with MLS data provider.');
 
-        $zipList = li_zip_list_odata($zips);
-        $cutoff  = date('Y-m-d', strtotime("-{$days} days"));
-        $filter  = "StandardStatus in ('Expired','Withdrawn') and PostalCode in ({$zipList}) and OffMarketDate ge {$cutoff}";
-        $select  = 'ListingId,UnparsedAddress,City,PostalCode,ListPrice,DaysOnMarket,OffMarketDate,StandardStatus,ListAgentFullName';
-        $url     = 'https://api.cotality.com/trestle/odata/Property?$filter=' . rawurlencode($filter)
-                 . '&$select=' . rawurlencode($select) . '&$orderby=OffMarketDate%20desc&$top=200';
-
-        $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 20,
-            'header' => "Authorization: Bearer {$token}\r\nAccept: application/json\r\n",
-            'ignore_errors' => true]]);
-        $raw  = @file_get_contents($url, false, $ctx);
-        $data = $raw ? json_decode($raw, true) : null;
-        if (!is_array($data)) err('Invalid response from MLS provider.');
-        if (isset($data['error'])) err('MLS error: ' . ($data['error']['message'] ?? json_encode($data['error'])));
-
-        $listings = array_map(fn($l) => [
-            'mls_number'         => $l['ListingId']        ?? '',
-            'address'            => $l['UnparsedAddress']  ?? '',
-            'city'               => $l['City']             ?? '',
-            'zip'                => $l['PostalCode']        ?? '',
-            'list_price'         => (int)($l['ListPrice']  ?? 0),
-            'days_on_market'     => (int)($l['DaysOnMarket'] ?? 0),
-            'expiration_date'    => substr($l['OffMarketDate'] ?? '', 0, 10),
-            'status'             => $l['StandardStatus']   ?? '',
-            'listing_agent_name' => $l['ListAgentFullName'] ?? '',
-        ], $data['value'] ?? []);
-
-        je(['ok' => true, 'listings' => $listings]);
+        $data = li_crm_get('/public/listing-intel/expireds', [
+            'email' => $me, 'zips' => implode(',', $zips), 'days' => $days,
+        ]);
+        je(['ok' => true, 'listings' => $data['listings'] ?? []]);
     }
 
-    // ── Active MLS listings for the map — live Trestle query ──────────────────
+    // ── Active MLS listings for the map — via coastline-server ────────────────
     if ($action === 'get_active_listings') {
-        if (!trim(cfg()['trestle_client_id'] ?? '') || !trim(cfg()['trestle_client_secret'] ?? '')) err('Trestle MLS credentials not configured.');
         $zips = li_farm_zips($db, $me, trim($_GET['zip'] ?? ''));
         if (empty($zips)) je(['ok' => true, 'listings' => []]);
-        $token = li_trestle_token();
-        if (!$token) err('Could not authenticate with MLS data provider.');
 
-        $zipList = li_zip_list_odata($zips);
-        $filter  = "StandardStatus eq 'Active' and PostalCode in ({$zipList})";
-        $select  = 'ListingId,UnparsedAddress,City,PostalCode,ListPrice,Latitude,Longitude,ListAgentFullName,StandardStatus';
-        $url     = 'https://api.cotality.com/trestle/odata/Property?$filter=' . rawurlencode($filter)
-                 . '&$select=' . rawurlencode($select) . '&$top=300';
-
-        $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 20,
-            'header' => "Authorization: Bearer {$token}\r\nAccept: application/json\r\n",
-            'ignore_errors' => true]]);
-        $raw  = @file_get_contents($url, false, $ctx);
-        $data = $raw ? json_decode($raw, true) : null;
-        if (!is_array($data)) err('Invalid response from MLS provider.');
-        if (isset($data['error'])) err('MLS error: ' . ($data['error']['message'] ?? json_encode($data['error'])));
-
-        $listings = array_values(array_filter(array_map(fn($l) => [
-            'mls_number'         => $l['ListingId']        ?? '',
-            'address'            => $l['UnparsedAddress']  ?? '',
-            'city'               => $l['City']             ?? '',
-            'zip'                => $l['PostalCode']        ?? '',
-            'list_price'         => (int)($l['ListPrice']  ?? 0),
-            'lat'                => (float)($l['Latitude']  ?? 0),
-            'lon'                => (float)($l['Longitude'] ?? 0),
-            'listing_agent_name' => $l['ListAgentFullName'] ?? '',
-        ], $data['value'] ?? []), fn($l) => $l['lat'] && $l['lon']));
-
-        je(['ok' => true, 'listings' => $listings]);
+        $data = li_crm_get('/public/listing-intel/active', [
+            'email' => $me, 'zips' => implode(',', $zips),
+        ]);
+        je(['ok' => true, 'listings' => $data['listings'] ?? []]);
     }
 
     err('Unknown action');

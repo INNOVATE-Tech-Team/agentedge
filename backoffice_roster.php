@@ -42,23 +42,6 @@ $uniqueSeen = [];
 foreach ($rows as $r) { $uniqueSeen[strtolower(trim($r['agent_name']))] = true; }
 $uniqueTotal = count($uniqueSeen);
 
-// Summary counts per state (unique within each state). MC count excludes the unassigned bucket.
-$stateMeta = [];
-foreach ($byState as $st => $mcs) {
-    $total = 0; $exp = 0; $warn = 0; $seen = [];
-    foreach ($mcs as $mc => $agents) {
-        foreach ($agents as $a) {
-            $key = strtolower($a['agent_name']);
-            if (isset($seen[$key])) continue;
-            $seen[$key] = true; $total++;
-            if ($a['license_exp'] && $a['license_exp'] <= $today) $exp++;
-            elseif ($a['license_exp'] && $a['license_exp'] <= $warn60) $warn++;
-        }
-    }
-    $namedMcCount = count(array_filter(array_keys($mcs), fn($k) => $k !== MC_UNASSIGNED));
-    $stateMeta[$st] = ['total'=>$total,'mc_count'=>$namedMcCount,'expired'=>$exp,'expiring'=>$warn];
-}
-
 $stateNames = [
     'FL'=>'Florida','GA'=>'Georgia','SC'=>'South Carolina','NC'=>'North Carolina',
     'TN'=>'Tennessee','VA'=>'Virginia','MD'=>'Maryland','DE'=>'Delaware',
@@ -69,8 +52,34 @@ $stateTiers = ['FL'=>1,'VA'=>1,'DE'=>1,'RI'=>1,'NH'=>1,'OH'=>1,'NC'=>2,'GA'=>2,'
 $tierLabel  = [1=>'Auto',2=>'Purchase',3=>'FOIA'];
 $tierClass  = [1=>'tier1',2=>'tier2',3=>'tier3'];
 
-$activeState = $_GET['state'] ?? (array_key_first($byState) ?: 'SC');
-if (!isset($byState[$activeState])) $activeState = array_key_first($byState) ?: 'SC';
+// Summary counts per state (unique within each state). MC count excludes the
+// unassigned bucket. Expired/expiring counts are skipped entirely for
+// FOIA/manual-lookup tier (3) states (SC, MD, TN, NJ, MA) — there's no
+// automated feed to keep license_exp current for these, so the "expired"
+// count was really just measuring data staleness, not real license status
+// (confirmed 2026-07-28: ~104 SC agents flagged expired had actually renewed
+// on LLR, license_exp just never got updated since there's no bulk sync,
+// only an individual-lookup-only public site).
+$stateMeta = [];
+foreach ($byState as $st => $mcs) {
+    $total = 0; $exp = 0; $warn = 0; $seen = [];
+    $trackExpiration = ($stateTiers[$st] ?? 0) !== 3;
+    foreach ($mcs as $mc => $agents) {
+        foreach ($agents as $a) {
+            $key = strtolower($a['agent_name']);
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true; $total++;
+            if (!$trackExpiration) continue;
+            if ($a['license_exp'] && $a['license_exp'] <= $today) $exp++;
+            elseif ($a['license_exp'] && $a['license_exp'] <= $warn60) $warn++;
+        }
+    }
+    $namedMcCount = count(array_filter(array_keys($mcs), fn($k) => $k !== MC_UNASSIGNED));
+    $stateMeta[$st] = ['total'=>$total,'mc_count'=>$namedMcCount,'expired'=>$exp,'expiring'=>$warn];
+}
+
+$activeState = $_GET['state'] ?? 'ALL';
+if ($activeState !== 'ALL' && !isset($byState[$activeState])) $activeState = 'ALL';
 
 // MC list for the active state (for the add-agent datalist) — excludes the unassigned bucket
 $mcList = [];
@@ -234,6 +243,11 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                 padding:2px 7px;border-radius:4px;opacity:.5;transition:opacity .15s;white-space:nowrap}
 .btn-edit-agent:hover{opacity:1;background:#f0f5e8;color:#5b8e0d}
 
+/* Login-as button */
+.btn-loginas-agent{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
+                padding:2px 7px;border-radius:4px;opacity:.5;transition:opacity .15s;white-space:nowrap}
+.btn-loginas-agent:hover{opacity:1;background:#f0f5e8;color:#5b8e0d}
+
 /* Move-MC per-row */
 .btn-move-mc{background:none;border:none;color:var(--faint);font-size:11px;cursor:pointer;
              padding:2px 6px;border-radius:4px;opacity:.45;transition:opacity .15s;white-space:nowrap}
@@ -360,26 +374,45 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
   </div>
   <div class="wrap">
 
-    <!-- Summary bar -->
+    <!-- Summary bar — reflects whichever state card is active (or the
+         company-wide total when "All" is active). Expired/expiring counts
+         are summed only across non-FOIA-tier states (see $stateMeta above). -->
+    <?php
+    $totalExp  = array_sum(array_column($stateMeta,'expired'));
+    $totalWarn = array_sum(array_column($stateMeta,'expiring'));
+    if ($activeState === 'ALL') {
+        $viewTotal = $uniqueTotal;
+        $viewExp   = $totalExp;
+        $viewWarn  = $totalWarn;
+        $viewSecondaryNum = count($byState);
+        $viewSecondaryLbl = 'States';
+    } else {
+        $vm = $stateMeta[$activeState];
+        $viewTotal = $vm['total'];
+        $viewExp   = $vm['expired'];
+        $viewWarn  = $vm['expiring'];
+        $viewSecondaryNum = $vm['mc_count'];
+        $viewSecondaryLbl = $vm['mc_count'] === 1 ? 'Market Center' : 'Market Centers';
+    }
+    ?>
     <div class="roster-summary">
       <div class="rs-tile">
-        <div class="rs-num"><?= $uniqueTotal ?></div>
+        <div class="rs-num"><?= $viewTotal ?></div>
         <div class="rs-lbl">Unique Agents</div>
       </div>
       <div class="rs-tile">
-        <div class="rs-num"><?= count($byState) ?></div>
-        <div class="rs-lbl">States</div>
+        <div class="rs-num"><?= $viewSecondaryNum ?></div>
+        <div class="rs-lbl"><?= $viewSecondaryLbl ?></div>
       </div>
-      <?php $totalExp = array_sum(array_column($stateMeta,'expired')); $totalWarn = array_sum(array_column($stateMeta,'expiring')); ?>
-      <?php if ($totalExp): ?>
+      <?php if ($viewExp): ?>
       <div class="rs-tile red">
-        <div class="rs-num"><?= $totalExp ?></div>
+        <div class="rs-num"><?= $viewExp ?></div>
         <div class="rs-lbl">Expired Licenses</div>
       </div>
       <?php endif; ?>
-      <?php if ($totalWarn): ?>
+      <?php if ($viewWarn): ?>
       <div class="rs-tile amber">
-        <div class="rs-num"><?= $totalWarn ?></div>
+        <div class="rs-num"><?= $viewWarn ?></div>
         <div class="rs-lbl">Expiring &lt;60 Days</div>
       </div>
       <?php endif; ?>
@@ -396,6 +429,14 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
 
     <!-- State cards -->
     <div class="state-grid">
+      <a class="state-card<?= $activeState==='ALL'?' active':'' ?>" href="?state=ALL">
+        <div class="sc-code">ALL</div>
+        <div class="sc-name">All States</div>
+        <div class="sc-stats">
+          <span class="sc-stat"><strong><?= $uniqueTotal ?></strong> agents</span>
+          <span class="sc-stat"><strong><?= count($byState) ?></strong> states</span>
+        </div>
+      </a>
       <?php foreach ($byState as $st => $mcs): ?>
       <?php $m = $stateMeta[$st]; $tier = $stateTiers[$st] ?? 0; ?>
       <a class="state-card<?= $st===$activeState?' active':'' ?>" href="?state=<?= urlencode($st) ?>">
@@ -440,7 +481,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                   id="btn-import-mc" onclick="importMCsFromRoster()">↓ Import MCs from CRM</button>
           <button class="btn-add-agent" style="background:#f0f5e8;color:#5b8e0d;border:1px solid #c3dfa8" onclick="openAddMCModal()">+ Add MC</button>
           <?php endif; ?>
-          <?php if ($isAdmin): ?>
+          <?php if (is_super_admin()): ?>
           <button class="btn-add-agent" onclick="openAddModal()">+ Add Agent</button>
           <?php endif; ?>
         </div>
@@ -476,7 +517,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
       <div>
         <div class="mc-heading<?= $isUnassigned ? ' mc-heading-unassigned' : '' ?>"
              data-content-id="mc-content-<?= $mcEditId ?>">
-          <?php if ($isAdmin): ?>
+          <?php if (is_super_admin()): ?>
           <input type="checkbox" class="mc-sel-all" title="Select all in this group"
                  onchange="toggleMcAll(this, <?= $mcJson ?>)">
           <?php endif; ?>
@@ -563,7 +604,6 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
               <th>Name</th>
               <th>Volume</th>
               <th>Deals</th>
-              <?php if ($activeState==='SC'): ?><th>License Expires</th><?php endif; ?>
               <?php if (is_super_admin()): ?><th>Retention</th><?php endif; ?>
               <th style="width:40px"></th>
             </tr>
@@ -572,7 +612,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
             <?php foreach ($agents as $a): ?>
             <tr data-agent="<?= htmlspecialchars($a['agent_name']) ?>" data-email="<?= htmlspecialchars(strtolower($a['email'] ?? '')) ?>" data-mc="<?= htmlspecialchars($mc) ?>" data-roster-id="<?= $a['id'] ?>">
               <td class="cb-cell">
-                <?php if ($isAdmin): ?>
+                <?php if (is_super_admin()): ?>
                 <input type="checkbox" class="agent-cb" data-name="<?= htmlspecialchars($a['agent_name']) ?>" data-mc="<?= htmlspecialchars($mc) ?>">
                 <?php endif; ?>
               </td>
@@ -582,7 +622,11 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
                   <?php if (!empty($a['email'])): ?>
                   <span style="font-size:11px;color:var(--faint)"><?= htmlspecialchars($a['email']) ?></span>
                   <?php endif; ?>
-                  <?php if ($isAdmin): ?>
+                  <?php if (is_super_admin() && !empty($a['email'])): ?>
+                  <button class="btn-loginas-agent" title="Log in as this agent"
+                          onclick="loginAsAgent(<?= htmlspecialchars(json_encode(strtolower($a['email'])), ENT_QUOTES) ?>)">↪ Login as</button>
+                  <?php endif; ?>
+                  <?php if (is_super_admin()): ?>
                   <button class="btn-edit-agent" title="Edit agent details"
                           onclick="openEditAgentModal(<?= htmlspecialchars(json_encode([
                               'id'           => $a['id'],
@@ -612,17 +656,6 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
               </td>
               <td class="prod-cell-vol"><span class="prod-none">—</span></td>
               <td class="prod-cell-deals"><span class="prod-none">—</span></td>
-              <?php if ($activeState==='SC'): ?>
-              <td>
-                <?php
-                $exp = $a['license_exp'];
-                if (!$exp)           echo '<span class="exp-badge none">—</span>';
-                elseif ($exp<=$today) echo '<span class="exp-badge expired">Expired ' . htmlspecialchars($exp) . '</span>';
-                elseif ($exp<=$warn60) echo '<span class="exp-badge expiring">Expiring ' . htmlspecialchars($exp) . '</span>';
-                else                  echo '<span class="exp-badge ok">' . htmlspecialchars($exp) . '</span>';
-                ?>
-              </td>
-              <?php endif; ?>
               <?php if (is_super_admin()): ?>
               <td>
                 <?php
@@ -646,7 +679,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
               </td>
               <?php endif; ?>
               <td style="display:flex;gap:4px;align-items:center">
-                <?php if ($isAdmin): ?>
+                <?php if (is_super_admin()): ?>
                 <button class="btn-remove" title="Remove from roster"
                         onclick="removeAgent(<?= $a['id'] ?>, <?= htmlspecialchars(json_encode($a['agent_name']), ENT_QUOTES) ?>)">✕</button>
                 <?php endif; ?>
@@ -660,6 +693,10 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
         </div><!-- /mc-group-content -->
       </div>
       <?php endforeach; ?>
+    </div>
+    <?php elseif ($activeState === 'ALL'): ?>
+    <div class="detail-panel" style="padding:32px;text-align:center;color:var(--faint)">
+      Select a state above to see its roster.
     </div>
     <?php endif; ?>
 
@@ -967,6 +1004,19 @@ function saveNewMC() {
         btn.disabled = false; btn.textContent = 'Add Market Center';
         err.textContent = 'Network error.'; err.style.display = '';
     });
+}
+
+// ── Login as agent ────────────────────────────────────────────────────────────
+function loginAsAgent(email) {
+    if (!confirm('Log in as ' + email + '?\n\nYou will see AgentEdge as this agent. Click "Back to Admin" in the yellow bar to return.')) return;
+    fetch('api/masquerade.php', {
+        method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'start', email}),
+    }).then(r=>r.json()).then(d=>{
+        if (d.ok) { location.href = d.redirect || 'index.php'; }
+        else { alert('Error: ' + (d.error || 'unknown')); }
+    }).catch(()=>alert('Network error — please try again.'));
 }
 
 // ── Remove agent ─────────────────────────────────────────────────────────────
@@ -1375,7 +1425,7 @@ function fmtVol(v) {
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-fetch('api/backoffice_production.php',{credentials:'same-origin',cache:'no-store'})
+fetch('api/backoffice_production.php?state=<?= urlencode($activeState) ?>',{credentials:'same-origin',cache:'no-store'})
     .then(r=>r.json())
     .then(d=>{
         const loading=document.getElementById('prod-loading');

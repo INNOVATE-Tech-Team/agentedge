@@ -12,6 +12,41 @@ let agentMCSlug = '';
 const evCache = {};
 let hasPersonalCal = false;
 
+// Deep link from an emailed registration link — calendar.php?event=<gcal_id>
+// &scope=training&date=YYYY-MM-DD. Jumps to the right month/tab, then
+// scrolls to and flashes the matching card once it's rendered; the agent
+// still has to click Register themselves (see calRunDeepLink below for why).
+const calDeepLink = (() => {
+  const p  = new URLSearchParams(location.search);
+  const id = p.get('event');
+  if (!id) return null;
+  return { id, scope: p.get('scope') || '', date: p.get('date') || '' };
+})();
+
+if (calDeepLink && /^\d{4}-\d{2}-\d{2}$/.test(calDeepLink.date)) {
+  const [dy, dm] = calDeepLink.date.split('-').map(Number);
+  calYear  = dy;
+  calMonth = dm - 1;
+}
+const CAL_TAB_FILTERS = ['company', 'mc', 'training', 'events', 'birthday', 'anniversary', 'mycal'];
+if (calDeepLink && CAL_TAB_FILTERS.includes(calDeepLink.scope)) {
+  const tab = document.querySelector(`.cal-tab[data-filter="${calDeepLink.scope}"]`);
+  if (tab) {
+    calFilter = calDeepLink.scope;
+    document.querySelectorAll('.cal-tab').forEach(x => x.classList.remove('cal-tab-active'));
+    tab.classList.add('cal-tab-active');
+  }
+}
+
+function calRunDeepLink() {
+  if (!calDeepLink) return;
+  const card = document.querySelector(`.cal-list-ev[data-event-id="${CSS.escape(calDeepLink.id)}"]`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('cal-list-ev-flash');
+  setTimeout(() => card.classList.remove('cal-list-ev-flash'), 1400);
+}
+
 const SCOPES = {
   company:        { bg: '#82C112', text: '#111' },
   'market-center':{ bg: '#2C9CC9', text: '#fff' },
@@ -205,7 +240,7 @@ function renderList(evs) {
   }
   const sc = e => SCOPES[e.scope] || SCOPES.company;
   body.innerHTML = vis.map(ev => `
-    <div class="cal-list-ev">
+    <div class="cal-list-ev" data-event-id="${calEsc(ev.gcal_id || '')}">
       <div class="cal-list-ev-inner">
         <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
         <div class="cal-list-ev-body">
@@ -228,7 +263,8 @@ function renderList(evs) {
               data-rsvped="${ev.rsvped ? '1' : '0'}"
               data-waitlisted="${ev.waitlisted ? '1' : '0'}">${calRsvpLabel(ev)}</button>
             ${(typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
-              ? `<button class="cal-edit-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>`
+              ? `<button class="cal-edit-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}">Edit</button>
+                 <button class="cal-copy-link-btn" data-scope="${ev.scope}" data-event-id="${calEsc(ev.gcal_id || '')}" data-event-date="${calEsc(ev.date)}" data-reg-slug="${calEsc(ev.reg_slug || '')}">Copy Link</button>`
               : ''}` : ''}
         </div>
       </div>
@@ -326,7 +362,7 @@ document.getElementById('cal-next').addEventListener('click', () => {
   delete evCache[calKey()]; calDraw();
 });
 
-loadProfile().then(() => calDraw());
+loadProfile().then(() => calDraw()).then(() => calRunDeepLink());
 
 // My Calendar ICS handlers
 async function savePersonalCalUrl(url) {
@@ -373,6 +409,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evEnd      = document.getElementById('cal-ev-end-time');
   const evLoc      = document.getElementById('cal-ev-location');
   const evDesc     = document.getElementById('cal-ev-description');
+  const evRegDesc  = document.getElementById('cal-ev-reg-desc');
+  const evRegSlug  = document.getElementById('cal-ev-reg-slug');
   const evCapacity = document.getElementById('cal-ev-capacity');
   const attendeesBox = document.getElementById('cal-ev-attendees');
   const errBox     = document.getElementById('cal-modal-err');
@@ -404,6 +442,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evEndDate.value     = ev ? (ev.end_dt !== ev.date ? (ev.end_dt || '') : '') : '';
     evLoc.value         = ev ? (ev.location    || '') : '';
     evDesc.value        = ev ? (ev.description || '') : '';
+    evRegDesc.value     = ev ? (ev.reg_description || '') : '';
+    evRegSlug.value     = ev ? (ev.reg_slug || '') : '';
     evCapacity.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart.value       = '';
     evEnd.value         = '';
@@ -440,6 +480,22 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     if (ev) openModal(ev);
   });
 
+  // Copy Link button — delegated. Builds a public, no-login registration
+  // link (register.php) for this one event — the URL to actually email out.
+  document.getElementById('cal-event-list-body').addEventListener('click', e => {
+    const btn = e.target.closest('.cal-copy-link-btn');
+    if (!btn) return;
+    const base = `${location.origin}${location.pathname.replace(/[^/]*$/, 'register.php')}`;
+    const url = btn.dataset.regSlug
+      ? `${base}?s=${encodeURIComponent(btn.dataset.regSlug)}`
+      : `${base}?` + new URLSearchParams({ event: btn.dataset.eventId, scope: btn.dataset.scope });
+    navigator.clipboard.writeText(url).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
+  });
+
   // Save
   document.getElementById('cal-ev-save').addEventListener('click', async () => {
     const id    = evId.value.trim();
@@ -460,6 +516,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       end_time:    evEnd.value,
       location:    evLoc.value,
       description: evDesc.value,
+      reg_description: evRegDesc.value,
+      reg_slug:    evRegSlug.value,
       capacity:    evCapacity.value.trim(),
     };
 
@@ -521,6 +579,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
   const evEnd2      = document.getElementById('cal-ev2-end-time');
   const evLoc2      = document.getElementById('cal-ev2-location');
   const evDesc2     = document.getElementById('cal-ev2-description');
+  const evRegDesc2  = document.getElementById('cal-ev2-reg-desc');
+  const evRegSlug2  = document.getElementById('cal-ev2-reg-slug');
   const evCapacity2 = document.getElementById('cal-ev2-capacity');
   const attendeesBox2 = document.getElementById('cal-ev2-attendees');
   const errBox2     = document.getElementById('cal-ev2-modal-err');
@@ -552,6 +612,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evEndDate2.value     = ev ? (ev.end_dt !== ev.date ? (ev.end_dt || '') : '') : '';
     evLoc2.value         = ev ? (ev.location    || '') : '';
     evDesc2.value        = ev ? (ev.description || '') : '';
+    evRegDesc2.value     = ev ? (ev.reg_description || '') : '';
+    evRegSlug2.value     = ev ? (ev.reg_slug || '') : '';
     evCapacity2.value    = (ev && ev.capacity != null) ? ev.capacity : '';
     evStart2.value       = '';
     evEnd2.value         = '';
@@ -608,6 +670,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       end_time:    evEnd2.value,
       location:    evLoc2.value,
       description: evDesc2.value,
+      reg_description: evRegDesc2.value,
+      reg_slug:    evRegSlug2.value,
       capacity:    evCapacity2.value.trim(),
     };
 

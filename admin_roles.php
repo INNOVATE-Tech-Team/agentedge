@@ -52,7 +52,7 @@ ksort($mc_opts);
 
 // ── Load assigned roles ──────────────────────────────────────────────────────
 $roleRows = local_db()->query(
-    "SELECT email, role, mc_slugs, own_mc_slug, bic_email, extra_roles_json, updated_at
+    "SELECT email, role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, extra_roles_json, updated_at
      FROM agent_roles
      WHERE role != 'agent' OR extra_roles_json != '[]'
      ORDER BY email"
@@ -116,26 +116,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ? json_encode([['role' => $extraRole, 'mc_slugs' => array_values(array_unique($extraMcs))]])
             : '[]';
 
-        $ownMcSlug = preg_replace('/[^a-z0-9\-]/', '', $_POST['own_mc_slug'] ?? '');
+        // An agent can belong to more than one Market Center — checkbox list,
+        // same pattern as mc_slugs[] above. own_mc_slug (scalar) is kept as
+        // a "first MC" mirror for any reader that only expects one value.
+        $ownMcs = [];
+        foreach ((array)($_POST['own_mc_slugs'] ?? []) as $s) {
+            $s = preg_replace('/[^a-z0-9\-]/', '', $s);
+            if ($s) $ownMcs[] = $s;
+        }
+        $ownMcs    = array_values(array_unique($ownMcs));
+        $ownMcSlug = $ownMcs[0] ?? '';
         $bicEmail  = strtolower(trim($_POST['bic_email'] ?? ''));
         if (in_array($role, ['super_admin', 'staff', 'mc_leader', 'bic', 'recruiter'], true)) {
             $bicEmail = '';
         }
 
         try {
-            $json = json_encode(array_values(array_unique($mcs)));
+            $json      = json_encode(array_values(array_unique($mcs)));
+            $ownMcJson = json_encode($ownMcs);
             local_db()->prepare(
                 "INSERT INTO agent_roles
-                   (email, role, mc_slugs, own_mc_slug, bic_email, extra_roles_json, updated_by, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                   (email, role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, extra_roles_json, updated_by, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                  ON CONFLICT(email) DO UPDATE SET
                    role=excluded.role, mc_slugs=excluded.mc_slugs,
-                   own_mc_slug=excluded.own_mc_slug, bic_email=excluded.bic_email,
+                   own_mc_slug=excluded.own_mc_slug, own_mc_slugs=excluded.own_mc_slugs, bic_email=excluded.bic_email,
                    extra_roles_json=excluded.extra_roles_json,
                    updated_by=excluded.updated_by, updated_at=excluded.updated_at"
-            )->execute([$email, $role, $json, $ownMcSlug, $bicEmail, $extraRolesJson, strtolower($agent['email'])]);
+            )->execute([$email, $role, $json, $ownMcSlug, $ownMcJson, $bicEmail, $extraRolesJson, strtolower($agent['email'])]);
 
-            if ($role === 'agent' && $ownMcSlug === '' && $bicEmail === '' && $extraRolesJson === '[]') {
+            if ($role === 'agent' && empty($ownMcs) && $bicEmail === '' && $extraRolesJson === '[]') {
                 local_db()->prepare("DELETE FROM agent_roles WHERE email=?")->execute([$email]);
                 unset($assigned[$email]);
             } else {
@@ -144,6 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'role'             => $role,
                     'mc_slugs'         => $json,
                     'own_mc_slug'      => $ownMcSlug,
+                    'own_mc_slugs'     => $ownMcJson,
                     'bic_email'        => $bicEmail,
                     'extra_roles_json' => $extraRolesJson,
                     'updated_at'       => date('Y-m-d H:i:s'),
@@ -270,13 +281,15 @@ $roleOrderMap = array_flip(array_keys(ROLE_LABELS));
                 </select>
               </div>
               <div>
-                <div class="field-label">Their Market Center</div>
-                <select name="own_mc_slug" id="assign-own-mc" class="field-select">
-                  <option value="">— not set —</option>
+                <div class="field-label">Their Market Center(s)</div>
+                <div class="mc-checks" id="assign-own-mc">
                   <?php foreach ($mc_opts as $slug => $name): ?>
-                    <option value="<?= h($slug) ?>"><?= h($name) ?></option>
+                    <label class="mc-check">
+                      <input type="checkbox" name="own_mc_slugs[]" value="<?= h($slug) ?>">
+                      <?= h($name) ?>
+                    </label>
                   <?php endforeach; ?>
-                </select>
+                </div>
               </div>
               <div id="assign-bic-row">
                 <div class="field-label">Assigned BIC</div>
@@ -351,6 +364,8 @@ $roleOrderMap = array_flip(array_keys(ROLE_LABELS));
             $role         = canonical_role($r['role']);
             $mcs          = json_decode($r['mc_slugs'] ?? '[]', true) ?: [];
             $ownMc        = $r['own_mc_slug'] ?? '';
+            $ownMcs       = json_decode($r['own_mc_slugs'] ?? '[]', true) ?: [];
+            if (!$ownMcs && $ownMc) $ownMcs = [$ownMc]; // pre-migration rows without own_mc_slugs populated yet
             $bicEmail     = $r['bic_email']   ?? '';
             $extraParsed  = json_decode($r['extra_roles_json'] ?? '[]', true) ?: [];
             $curExtraRole = $extraParsed[0]['role'] ?? '';
@@ -365,9 +380,9 @@ $roleOrderMap = array_flip(array_keys(ROLE_LABELS));
                 if (($er['role'] ?? '') === 'bic')       $bicMcs    = array_merge($bicMcs,    $er['mc_slugs'] ?? []);
             }
 
-            // Derive state(s): own MC first, then led/BIC MCs, then roster home state.
+            // Derive state(s): own MC(s) first, then led/BIC MCs, then roster home state.
             $rowStates = [];
-            if ($ownMc && !empty($mc_state[$ownMc])) $rowStates[] = $mc_state[$ownMc];
+            foreach ($ownMcs as $s) { if (!empty($mc_state[$s])) $rowStates[] = $mc_state[$s]; }
             foreach (array_unique($leaderMcs) as $s) { if (!empty($mc_state[$s])) $rowStates[] = $mc_state[$s]; }
             foreach (array_unique($bicMcs) as $s)    { if (!empty($mc_state[$s])) $rowStates[] = $mc_state[$s]; }
             if (!$rowStates && !empty($info['state'])) $rowStates[] = $info['state'];
@@ -394,13 +409,13 @@ $roleOrderMap = array_flip(array_keys(ROLE_LABELS));
                 <?php endif; ?>
               </td>
               <td style="font-size:12px">
-                <?php if ($ownMc): ?>
-                  <span class="place-chip">MC: <?= h($mc_opts[$ownMc] ?? $ownMc) ?></span><br>
-                <?php endif; ?>
+                <?php foreach ($ownMcs as $s): ?>
+                  <span class="place-chip">MC: <?= h($mc_opts[$s] ?? $s) ?></span><br>
+                <?php endforeach; ?>
                 <?php if ($bicEmail): ?>
                   <span class="place-chip">BIC: <?= h($rosterByEmail[$bicEmail]['name'] ?? $bicEmail) ?></span>
                 <?php endif; ?>
-                <?php if (!$ownMc && !$bicEmail): ?>
+                <?php if (!$ownMcs && !$bicEmail): ?>
                   <span style="color:#ccc;font-size:11px">—</span>
                 <?php endif; ?>
               </td>
@@ -452,13 +467,15 @@ $roleOrderMap = array_flip(array_keys(ROLE_LABELS));
                         </select>
                       </div>
                       <div>
-                        <div class="field-label">Their Market Center</div>
-                        <select name="own_mc_slug" class="field-select">
-                          <option value="">— not set —</option>
+                        <div class="field-label">Their Market Center(s)</div>
+                        <div class="mc-checks">
                           <?php foreach ($mc_opts as $slug => $name): ?>
-                            <option value="<?= h($slug) ?>"<?= $ownMc===$slug?' selected':'' ?>><?= h($name) ?></option>
+                            <label class="mc-check">
+                              <input type="checkbox" name="own_mc_slugs[]" value="<?= h($slug) ?>"<?= in_array($slug,$ownMcs)?' checked':'' ?>>
+                              <?= h($name) ?>
+                            </label>
                           <?php endforeach; ?>
-                        </select>
+                        </div>
                       </div>
                       <div id="bic-row-<?= h($rowId) ?>"<?= in_array($role,['super_admin','staff','mc_leader','bic','recruiter'])?' style="display:none"':'' ?>>
                         <div class="field-label">Assigned BIC</div>
@@ -579,7 +596,7 @@ function selectAgent(a) {
   roleEl.value='agent';
   onRoleChange(roleEl,'assign-mc-led','assign-bic-row');
   syncExtraFilter('assign-role','assign-extra-role');
-  document.getElementById('assign-own-mc').value='';
+  // own_mc_slugs[] checkboxes already reset by the input[type=checkbox] sweep above.
   const bicEl=document.getElementById('assign-bic-email');
   if(bicEl) bicEl.value='';
   const extraEl=document.getElementById('assign-extra-role');

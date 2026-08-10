@@ -58,11 +58,6 @@ try {
     .ann-card-meta{font-size:10px;color:#bbb}
     .ann-card-side{display:flex;align-items:stretch}
     .ann-card-side-img{object-fit:cover;display:block;flex-shrink:0}
-    .rf-item{background:#fff;border:1px solid #eee;border-left:3px solid #82C112;border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;font-size:12.5px}
-    .rf-item-title{font-weight:700;color:#111;margin-bottom:2px}
-    .rf-item-notes{color:#555;margin-bottom:4px}
-    .rf-item-meta{color:#999;font-size:11px}
-    .rf-item-respond{color:#5b8e0d;font-weight:700;text-decoration:none;font-size:11.5px}
   </style>
 </head>
 <body>
@@ -102,11 +97,6 @@ try {
         <div id="ann-panel" class="card ann-panel" style="display:none">
           <h2>Announcements <a href="backoffice_announcements.php" id="ann-manage-link" style="display:none">Manage →</a></h2>
           <div id="ann-list"></div>
-        </div>
-
-        <div id="referral-panel" class="card ann-panel" style="display:none">
-          <h2>Referral Requests <a href="referral_network.php?tab=requests">View all →</a></h2>
-          <div id="referral-list"></div>
         </div>
 
         <div class="grid-dash">
@@ -263,25 +253,6 @@ try {
     document.getElementById('ann-manage-link').style.display='';
     <?php endif; ?>
   })();
-  (function(){
-    fetch('api/referral_network.php?action=open_requests',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
-      const items=(d.requests||[]);
-      if(!items.length)return;
-      const panel=document.getElementById('referral-panel');
-      const list=document.getElementById('referral-list');
-      panel.style.display='';
-      const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-      const typeLabel=t=>({buyer:'Buyer',seller:'Seller'}[t]||'Referral');
-      list.innerHTML=items.map(r=>{
-        const dt=new Date(r.created_at.replace(' ','T')+'Z').toLocaleDateString('en-US',{month:'short',day:'numeric'});
-        return `<div class="rf-item">
-          <div class="rf-item-title">${esc(r.agent_name)} has a ${typeLabel(r.referral_type)} referral in ${esc(r.metro_name)}, ${esc(r.state_code)}</div>
-          ${r.notes ? `<div class="rf-item-notes">${esc(r.notes)}</div>` : ''}
-          <div class="rf-item-meta">${dt} · <a class="rf-item-respond" href="referral_network.php?tab=requests">Respond →</a></div>
-        </div>`;
-      }).join('');
-    }).catch(()=>{});
-  })();
   </script>
   <style>
     .cc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:14px}
@@ -324,8 +295,7 @@ try {
         if(!d.connected){
           document.getElementById('cc-body').innerHTML=
             '<div style="padding:16px;text-align:center;color:#888;font-size:13px">'+
-            'Connect DotLoop to see your closing calendar. '+
-            '<a href="dotloop_connect.php" style="color:#5b8e0d;font-weight:700">Connect →</a></div>';
+            'DotLoop transactions haven\'t synced yet — check back soon.</div>';
           return;
         }
         const evs=d.events||[];

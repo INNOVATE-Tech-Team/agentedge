@@ -49,22 +49,70 @@ $recent = $db->query("
 // ── Daily trend (last 30 days) ────────────────────────────────────────────────
 // SQLite has no IANA timezone support, so day buckets are computed here in PHP
 // against Eastern calendar days rather than via SQL date(logged_in_at) (UTC).
+// Tracks unique users per day (not raw login count) — a heavy re-logger
+// shouldn't make a day look busier than it actually was.
 $trendRaw = $db->query("
-    SELECT logged_in_at
+    SELECT logged_in_at, email
     FROM login_events
     WHERE logged_in_at >= datetime('now','-31 days')
-")->fetchAll(PDO::FETCH_COLUMN);
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$trendMap = []; // 'Y-m-d' (Eastern) => login count
+$trendSets = []; // 'Y-m-d' (Eastern) => set of emails (as array keys)
 $etZone = new DateTimeZone('America/New_York');
-foreach ($trendRaw as $loggedInAt) {
-    $ts = strtotime($loggedInAt . ' UTC');
+foreach ($trendRaw as $row) {
+    $ts = strtotime($row['logged_in_at'] . ' UTC');
     if ($ts === false) continue;
     $d = (new DateTime('@' . $ts))->setTimezone($etZone);
     $day = $d->format('Y-m-d');
-    $trendMap[$day] = ($trendMap[$day] ?? 0) + 1;
+    $trendSets[$day][strtolower(trim($row['email']))] = true;
 }
+$trendMap = array_map('count', $trendSets); // 'Y-m-d' => unique login count
 $trend = !empty($trendMap);
+
+// ── Most Used Pages (last 30 days) ──────────────────────────────────────────
+// 'internal' rows are logged on every page load via nav.php's render_sidebar();
+// 'external' rows are logged by go.php when an agent clicks a link out to
+// another system (Advantage, MLS portals, etc.) — those navigate off-domain,
+// so they can't be captured by a normal AgentEdge page load. Together these
+// answer "are people actually using AgentEdge's own tools, or mostly just
+// launching out to other systems from here."
+// Super admins and darren@darrenwoodard.com (a personal/test login, not a
+// real agent) are excluded — their dev/admin poking around the app would
+// otherwise skew this toward "most-clicked-while-building-it" rather than
+// real agent usage.
+$excludedEmails = $db->query("SELECT email FROM agent_roles WHERE role='super_admin'")->fetchAll(PDO::FETCH_COLUMN);
+$excludedEmails[] = 'darren@darrenwoodard.com';
+$excludedEmails = array_values(array_unique(array_map('strtolower', $excludedEmails)));
+$excludedPlaceholders = implode(',', array_fill(0, count($excludedEmails), '?'));
+
+$pageViews = $db->prepare("
+    SELECT page_key, page_type, COUNT(*) AS views, COUNT(DISTINCT email) AS uniq
+    FROM page_views
+    WHERE viewed_at >= datetime('now','-30 days') AND email NOT IN ($excludedPlaceholders)
+    GROUP BY page_key, page_type
+    ORDER BY views DESC
+    LIMIT 25
+");
+$pageViews->execute($excludedEmails);
+$pageViews = $pageViews->fetchAll(PDO::FETCH_ASSOC);
+$navLabels = nav_all_items_by_key();
+foreach ($pageViews as &$pv) {
+    $pv['label'] = $navLabels[$pv['page_key']]['label'] ?? $pv['page_key'];
+}
+unset($pv);
+
+$viewSplit = $db->prepare("
+    SELECT page_type, COUNT(*) AS c
+    FROM page_views
+    WHERE viewed_at >= datetime('now','-30 days') AND email NOT IN ($excludedPlaceholders)
+    GROUP BY page_type
+");
+$viewSplit->execute($excludedEmails);
+$viewSplit = $viewSplit->fetchAll(PDO::FETCH_KEY_PAIR);
+$internalViews = (int)($viewSplit['internal'] ?? 0);
+$externalViews = (int)($viewSplit['external'] ?? 0);
+$totalViews    = $internalViews + $externalViews;
+$internalPct   = $totalViews > 0 ? round($internalViews / $totalViews * 100) : 0;
 
 function fmt_dt(?string $dt): string {
     return fmt_dt_et($dt);
@@ -106,12 +154,19 @@ function method_badge(string $methods): string {
     .lr-zero{color:#ccc}
     .lr-chart-wrap{padding:16px 18px}
     .lr-bars{display:flex;align-items:flex-end;gap:3px;height:80px}
-    .lr-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+    .lr-bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px;height:100%}
+    .lr-bar-track{width:100%;height:64px;display:flex;align-items:flex-end}
     .lr-bar{width:100%;background:#82C112;border-radius:2px 2px 0 0;min-height:2px;transition:opacity .2s}
     .lr-bar:hover{opacity:.75}
     .lr-bar-lbl{font-size:8px;color:#bbb;white-space:nowrap;transform:rotate(-45deg);transform-origin:top right;margin-top:4px}
     .lr-empty{padding:28px;text-align:center;color:#bbb;font-size:13px;font-style:italic}
     .lr-ip{font-size:11px;color:#aaa;font-family:monospace}
+    .lr-int{background:#e8f5e9;color:#2e7d32}
+    .lr-ext{background:#fff3e0;color:#e65100}
+    .lr-split-bar-wrap{padding:14px 18px;display:flex;align-items:center;gap:12px}
+    .lr-split-bar{flex:1;height:10px;border-radius:5px;background:#fff3e0;overflow:hidden;display:flex}
+    .lr-split-bar-internal{height:100%;background:#82C112}
+    .lr-split-lbl{font-size:12px;color:#555;white-space:nowrap}
     @media(max-width:800px){.lr-tiles{grid-template-columns:repeat(2,1fr)}}
   </style>
 </head>
@@ -150,7 +205,7 @@ function method_badge(string $methods): string {
 
       <!-- 30-day trend chart -->
       <div class="lr-section">
-        <div class="lr-section-head">Daily Logins — Last 30 Days</div>
+        <div class="lr-section-head">Daily Unique Logins — Last 30 Days</div>
         <?php if ($trend): ?>
         <div class="lr-chart-wrap">
           <?php
@@ -164,8 +219,10 @@ function method_badge(string $methods): string {
           <div class="lr-bars">
             <?php foreach ($days as $d): ?>
               <?php $pct = $maxLogins > 0 ? round($d['logins'] / $maxLogins * 100) : 0; ?>
-              <div class="lr-bar-col" title="<?= htmlspecialchars($d['day']) ?>: <?= $d['logins'] ?> login(s)">
-                <div class="lr-bar" style="height:<?= max($pct, $d['logins'] > 0 ? 3 : 0) ?>%"></div>
+              <div class="lr-bar-col" title="<?= htmlspecialchars($d['day']) ?>: <?= $d['logins'] ?> unique login(s)">
+                <div class="lr-bar-track">
+                  <div class="lr-bar" style="height:<?= max($pct, $d['logins'] > 0 ? 3 : 0) ?>%"></div>
+                </div>
                 <?php if ($d['day'] === date('Y-m-d') || date('j', strtotime($d['day'])) == 1): ?>
                   <div class="lr-bar-lbl"><?= date('M j', strtotime($d['day'])) ?></div>
                 <?php else: ?>
@@ -177,6 +234,49 @@ function method_badge(string $methods): string {
         </div>
         <?php else: ?>
           <div class="lr-empty">No login data yet. Logins will appear here once agents sign in.</div>
+        <?php endif; ?>
+      </div>
+
+      <!-- Most used pages -->
+      <div class="lr-section">
+        <div class="lr-section-head">
+          Most Used Pages
+          <span>last 30 days</span>
+        </div>
+        <?php if ($totalViews > 0): ?>
+        <div class="lr-split-bar-wrap">
+          <div class="lr-split-lbl"><?= $internalPct ?>% AgentEdge pages</div>
+          <div class="lr-split-bar"><div class="lr-split-bar-internal" style="width:<?= $internalPct ?>%"></div></div>
+          <div class="lr-split-lbl"><?= 100 - $internalPct ?>% external launches</div>
+        </div>
+        <table class="lr-table">
+          <thead>
+            <tr>
+              <th>Page</th>
+              <th>Type</th>
+              <th>Views</th>
+              <th>Unique Users</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($pageViews as $pv): ?>
+            <tr>
+              <td class="lr-name"><?= htmlspecialchars($pv['label']) ?></td>
+              <td>
+                <?php if ($pv['page_type'] === 'external'): ?>
+                  <span class="lr-badge lr-ext">External ↗</span>
+                <?php else: ?>
+                  <span class="lr-badge lr-int">AgentEdge</span>
+                <?php endif; ?>
+              </td>
+              <td><strong><?= number_format($pv['views']) ?></strong></td>
+              <td><?= number_format($pv['uniq']) ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+        <?php else: ?>
+          <div class="lr-empty">No page-view data yet — this starts collecting from today forward, navigation before this feature was added wasn't tracked.</div>
         <?php endif; ?>
       </div>
 

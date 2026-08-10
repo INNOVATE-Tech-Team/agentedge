@@ -1,5 +1,10 @@
 <?php
 // DotLoop Transactions — main page.
+// Reads from the local synced cache (dotloop_loops / dotloop_loop_participants)
+// instead of calling DotLoop live per page view — see lib/dotloop.php's
+// dotloop_sync_company_loops() and cron/sync_dotloop.php. Every agent sees
+// the same shared connection's data, filtered to loops where their own email
+// matches a participant record, so no per-agent DotLoop connect is needed.
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
@@ -8,49 +13,65 @@ require_once __DIR__ . '/lib/dotloop.php';
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES); }
 
 $agent = require_login();
-$email = $agent['email'];
+$email = strtolower(trim($agent['email']));
 
-$connected = dotloop_is_connected($email);
-$tokens    = $connected ? dotloop_get_tokens($email) : null;
-$profileId = $tokens['profile_id'] ?? '';
+$db = local_db();
 
-// ── Fetch loops server-side if connected ──────────────────────────────────────
+$sharedTokens = dotloop_get_tokens(dotloop_shared_email());
+$profileId    = $sharedTokens['profile_id'] ?? '';
+
+$lastSync = $db->query("SELECT value FROM dotloop_sync_state WHERE key = 'last_full_sync'")->fetchColumn();
+
+// ── Status filter tabs ──────────────────────────────────────────────────────────
 $statusFilter = $_GET['status'] ?? 'ACTIVE';
-$validStatuses = ['ACTIVE', 'PENDING', 'CLOSED', 'CANCELLED', 'ARCHIVE', 'ALL'];
+$validStatuses = ['ACTIVE', 'PENDING', 'CLOSED', 'CANCELLED', 'ALL'];
 if (!in_array($statusFilter, $validStatuses, true)) $statusFilter = 'ACTIVE';
 
-$page     = max(1, (int)($_GET['pg'] ?? 1));
-$loops    = [];
-$loopMeta = ['total' => 0, 'hasMore' => false];
-$apiError = '';
+// Tab keys map to DotLoop's real transaction_status deal-stage values
+// (confirmed via live testing — these do not match the loop's own simple
+// ARCHIVED/SOLD/WITHDRAWN status field, which is a separate concept).
+$dotloopStatusMap = [
+    'ACTIVE'    => 'ACTIVE_LISTING',
+    'PENDING'   => 'UNDER_CONTRACT',
+    'CLOSED'    => 'SOLD',
+    'CANCELLED' => 'WITHDRAWN',
+];
 
-if ($connected && $profileId !== '') {
-    $statusParam = ($statusFilter === 'ALL') ? 'ACTIVE,PENDING,CLOSED,CANCELLED,ARCHIVE' : $statusFilter;
-    $path = "/profile/{$profileId}/loop?" . http_build_query([
-        'pg'      => $page,
-        'pgsize'  => 50,
-        'status'  => $statusParam,
-    ]);
-    $result = dotloop_api($email, 'GET', $path);
+$page    = max(1, (int)($_GET['pg'] ?? 1));
+$perPage = 20;
+$offset  = ($page - 1) * $perPage;
 
-    if ($result['ok']) {
-        $raw   = $result['data'];
-        $loops = $raw['data'] ?? [];
-        $meta  = $raw['meta'] ?? [];
-        $loopMeta['total']   = (int)($meta['total'] ?? count($loops));
-        $loopMeta['hasMore'] = count($loops) === 50 && ($page * 50) < $loopMeta['total'];
-    } elseif (($result['status'] ?? 0) === 401) {
-        $apiError = '401';
-    } else {
-        $apiError = $result['error'] ?? 'Could not load transactions from DotLoop.';
-    }
+// EXISTS (not JOIN) so a loop with more than one of this agent's grouped
+// emails as a participant still counts/lists exactly once.
+$emailGroup   = dotloop_email_group($email);
+$placeholders = implode(',', array_fill(0, count($emailGroup), '?'));
+// Exclude loops the agent/admin archived in DotLoop directly — this is the
+// loop's own status field, a separate concept from the deal_stage tabs above.
+$where  = "UPPER(dl.status) != 'ARCHIVED' AND EXISTS (SELECT 1 FROM dotloop_loop_participants p WHERE p.loop_id = dl.loop_id AND p.email IN ({$placeholders}))";
+$params = $emailGroup;
+if ($statusFilter !== 'ALL' && isset($dotloopStatusMap[$statusFilter])) {
+    $where   .= " AND dl.deal_stage = ?";
+    $params[] = $dotloopStatusMap[$statusFilter];
 }
+
+$countStmt = $db->prepare(
+    "SELECT COUNT(*) FROM dotloop_loops dl WHERE {$where}"
+);
+$countStmt->execute($params);
+$total = (int)$countStmt->fetchColumn();
+
+$listStmt = $db->prepare(
+    "SELECT dl.* FROM dotloop_loops dl
+     WHERE {$where}
+     ORDER BY dl.dl_updated DESC
+     LIMIT {$perPage} OFFSET {$offset}"
+);
+$listStmt->execute($params);
+$loops = $listStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$loopMeta = ['total' => $total, 'hasMore' => ($offset + $perPage) < $total];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function fmt_price(mixed $val): string {
-    if ($val === null || $val === '' || $val === 0) return '—';
-    return '$' . number_format((float)$val, 0);
-}
 function fmt_date(mixed $val): string {
     if (!$val) return '—';
     $ts = strtotime((string)$val);
@@ -82,44 +103,22 @@ $tabs = [
 <?php render_sidebar('dotloop', $agent); ?>
 <main class="main-content">
 
-<?php if (!$connected): ?>
+<?php if (!$lastSync): ?>
   <div class="dl-connect-cta">
     <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:16px;">
       <rect width="48" height="48" rx="10" fill="#f0f7e6"/>
       <path d="M24 14 L34 24 L24 34 L14 24 Z" stroke="#82C112" stroke-width="2.5" fill="none"/>
       <circle cx="24" cy="24" r="4" fill="#82C112"/>
     </svg>
-    <h2>DotLoop Integration — Coming Soon</h2>
-    <p>We're finalizing DotLoop's authorization for AgentEdge. Once that's approved, you'll be able to link your DotLoop account to view transaction loops, track closing dates and commissions, and access documents — all inside AgentEdge.</p>
-  </div>
-
-<?php elseif ($apiError === '401'): ?>
-  <div class="dl-connect-cta">
-    <h2>DotLoop Session Expired</h2>
-    <p>Your DotLoop connection has expired or been revoked. Reconnect to continue viewing your transactions.</p>
-    <a href="dotloop_connect.php" style="display:inline-block;padding:12px 24px;background:#82C112;color:white;border-radius:8px;font-weight:700;font-size:14px;text-decoration:none;">Reconnect DotLoop</a>
+    <h2>DotLoop Sync Not Run Yet</h2>
+    <p>Transactions haven't been synced from DotLoop yet. Run <code>cron/sync_dotloop.php</code> once to populate this page.</p>
   </div>
 
 <?php else: ?>
   <!-- ── Page header ──────────────────────────────────────────────────────── -->
   <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <h1 class="page-title">My Transactions</h1>
-    <a href="dotloop_connect.php" style="font-size:12px;color:#666;text-decoration:none;border:1px solid #ddd;border-radius:6px;padding:6px 12px;">
-      Manage DotLoop Connection
-    </a>
   </div>
-
-  <?php if ($connected && !empty($_GET['connected'])): ?>
-  <div style="margin-bottom:16px;padding:10px 16px;background:#eef5e8;border:1px solid #c3e09a;border-radius:8px;font-size:13px;color:#3a6b1a;font-weight:600;">
-    DotLoop connected successfully!
-  </div>
-  <?php endif; ?>
-
-  <?php if ($apiError && $apiError !== '401'): ?>
-  <div style="margin-bottom:16px;padding:12px 16px;background:#fff3f3;border:1px solid #ffb3b3;border-radius:8px;font-size:13px;color:#c0392b;">
-    <?= h($apiError) ?>
-  </div>
-  <?php endif; ?>
 
   <!-- ── Status filter tabs ───────────────────────────────────────────────── -->
   <div class="dl-tabs">
@@ -140,35 +139,23 @@ $tabs = [
   <?php else: ?>
   <div id="dl-loops">
   <?php foreach ($loops as $loop):
-    $loopId    = (string)($loop['id'] ?? '');
-    $loopName  = $loop['name']   ?? 'Unnamed Loop';
-    $status    = strtoupper($loop['status'] ?? 'ACTIVE');
+    $loopId   = (string)($loop['loop_id'] ?? '');
+    $loopName = $loop['name'] ?: 'Unnamed Loop';
+    $status   = strtoupper($loop['status'] ?: 'ACTIVE');
     if ($status === 'NO_STATUS' || $status === '') $status = 'ACTIVE';
-    $detail    = $loop['detail'] ?? [];
-    $closingRaw    = $detail['closing_date']                 ?? ($loop['closing_date'] ?? null);
-    $priceRaw      = $detail['purchase_price']               ?? ($loop['purchase_price'] ?? null);
-    $listCommRaw   = $detail['listing_commission_amount']    ?? null;
-    $sellCommRaw   = $detail['selling_commission_amount']    ?? null;
-    $docCount      = (int)($loop['document_count'] ?? 0);
   ?>
   <div class="dl-loop-row" id="loop-<?= h($loopId) ?>">
     <div class="dl-loop-head">
       <div style="flex:1;min-width:0;">
         <div class="dl-loop-name"><?= h($loopName) ?></div>
         <div class="dl-loop-meta">
-          <span><?= fmt_date($closingRaw) ?></span>
-          <span><?= fmt_price($priceRaw) ?></span>
-          <?php if ($listCommRaw !== null): ?><span>List comm: <?= fmt_price($listCommRaw) ?></span><?php endif; ?>
-          <?php if ($sellCommRaw !== null): ?><span>Sell comm: <?= fmt_price($sellCommRaw) ?></span><?php endif; ?>
+          <span>Updated <?= fmt_date($loop['dl_updated'] ?? null) ?></span>
         </div>
       </div>
       <span class="<?= status_class($status) ?>"><?= h(ucfirst(strtolower($status))) ?></span>
-      <?php if ($docCount > 0): ?>
-      <span style="font-size:11px;background:#f0f0f0;border-radius:10px;padding:2px 8px;color:#555;white-space:nowrap;"><?= $docCount ?> doc<?= $docCount !== 1 ? 's' : '' ?></span>
-      <?php endif; ?>
       <div class="dl-loop-actions">
         <button class="dl-btn dl-btn-edit" onclick="togglePanel('edit-<?= h($loopId) ?>')">Edit Details</button>
-        <button class="dl-btn dl-btn-docs" onclick="loadDocs('<?= h($loopId) ?>', '<?= h($profileId) ?>')">View Documents</button>
+        <button class="dl-btn dl-btn-docs" onclick="loadDocs('<?= h($loopId) ?>', '<?= h($profileId) ?>', '<?= h(addslashes((string)($loop['loop_url'] ?? ''))) ?>')">View Documents</button>
       </div>
     </div>
 
@@ -178,21 +165,21 @@ $tabs = [
         <div class="dl-form-row">
           <div class="dl-field">
             <label>Closing Date</label>
-            <input type="date" name="closing_date" value="<?= h($closingRaw ?? '') ?>">
+            <input type="date" name="closing_date">
           </div>
           <div class="dl-field">
             <label>Purchase Price</label>
-            <input type="number" name="purchase_price" step="0.01" min="0" placeholder="e.g. 350000" value="<?= h($priceRaw ?? '') ?>">
+            <input type="number" name="purchase_price" step="0.01" min="0" placeholder="e.g. 350000">
           </div>
         </div>
         <div class="dl-form-row">
           <div class="dl-field">
             <label>Listing Commission $</label>
-            <input type="number" name="listing_commission" step="0.01" min="0" placeholder="e.g. 5250" value="<?= h($listCommRaw ?? '') ?>">
+            <input type="number" name="listing_commission" step="0.01" min="0" placeholder="e.g. 5250">
           </div>
           <div class="dl-field">
             <label>Selling Commission $</label>
-            <input type="number" name="selling_commission" step="0.01" min="0" placeholder="e.g. 5250" value="<?= h($sellCommRaw ?? '') ?>">
+            <input type="number" name="selling_commission" step="0.01" min="0" placeholder="e.g. 5250">
           </div>
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
@@ -223,7 +210,7 @@ $tabs = [
   <?php endif; ?>
   <?php endif; // end $loops not empty ?>
 
-<?php endif; // end connected ?>
+<?php endif; // end lastSync ?>
 
 </main>
 </div>
@@ -280,7 +267,7 @@ function saveDetail(e, loopId, profileId) {
 }
 
 // ── Load documents ─────────────────────────────────────────────────────────────
-function loadDocs(loopId, profileId) {
+function loadDocs(loopId, profileId, loopUrl) {
   var panel = document.getElementById('docs-' + loopId);
   if (!panel) return;
 
@@ -310,16 +297,45 @@ function loadDocs(loopId, profileId) {
       return;
     }
     var folders = d.folders || [];
+
+    // DotLoop's API has no way to fetch a document's actual content or a
+    // download link (confirmed against their own public API docs) — viewing
+    // or downloading the real file only works by opening the loop in DotLoop
+    // itself, where whoever's logged in has real access to it.
+    var html = '';
+    if (loopUrl) {
+      html += '<div style="margin-bottom:12px;">'
+            + '<a href="' + escAttr(loopUrl) + '" target="_blank" rel="noopener" '
+            + 'style="font-size:12px;font-weight:700;color:#82C112;text-decoration:none;">View this transaction in DotLoop →</a>'
+            + '</div>';
+    }
+
+    html += '<div style="margin-bottom:14px;">'
+          + '<button type="button" class="dl-btn" style="font-size:12px;padding:6px 12px;" '
+          + 'onclick="toggleUploadForm(\'' + escAttr(loopId) + '\')">+ Upload Document</button>'
+          + '<div id="upload-form-' + loopId + '" style="display:none;margin-top:10px;padding:12px;background:#fafafa;border-radius:8px;">'
+          + '<select id="upload-folder-' + loopId + '" style="width:100%;margin-bottom:8px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;">'
+          + folders.map(function(f) { return '<option value="' + escAttr(String(f.id)) + '">' + escHtml(f.name || ('Folder ' + f.id)) + '</option>'; }).join('')
+          + '</select>'
+          + '<input type="file" id="upload-file-' + loopId + '" style="width:100%;margin-bottom:8px;font-size:13px;">'
+          + '<div style="display:flex;gap:8px;align-items:center;">'
+          + '<button type="button" class="dl-btn dl-btn-edit" style="font-size:12px;" onclick="uploadDocument(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\')">Upload</button>'
+          + '<span id="upload-msg-' + loopId + '" style="font-size:12px;"></span>'
+          + '</div>'
+          + '</div>'
+          + '</div>';
+
     if (!folders.length) {
-      inner.innerHTML = '<span style="color:#aaa;font-size:13px;">No folders found.</span>';
+      html += '<span style="color:#aaa;font-size:13px;">No folders found.</span>';
+      inner.innerHTML = html;
       return;
     }
-    var html = '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#aaa;margin-bottom:8px;">Folders</div>';
+    html += '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#aaa;margin-bottom:8px;">Folders</div>';
     folders.forEach(function(f) {
       var fid   = f.id;
       var fname = f.name || ('Folder ' + fid);
       html += '<div class="dl-folder" id="folder-' + loopId + '-' + fid + '" '
-            + 'onclick="loadFolderDocs(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\',\'' + escAttr(String(fid)) + '\',this)">'
+            + 'onclick="loadFolderDocs(\'' + escAttr(loopId) + '\',\'' + escAttr(profileId) + '\',\'' + escAttr(String(fid)) + '\',this,\'' + escAttr(loopUrl || '') + '\')">'
             + '▶ ' + escHtml(fname)
             + '<div class="dl-folder-docs" id="fdocs-' + loopId + '-' + fid + '" style="margin-top:6px;display:none;"></div>'
             + '</div>';
@@ -331,7 +347,54 @@ function loadDocs(loopId, profileId) {
   });
 }
 
-function loadFolderDocs(loopId, profileId, folderId, folderEl) {
+function toggleUploadForm(loopId) {
+  var form = document.getElementById('upload-form-' + loopId);
+  if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function uploadDocument(loopId, profileId) {
+  var folderSel = document.getElementById('upload-folder-' + loopId);
+  var fileInput = document.getElementById('upload-file-' + loopId);
+  var msg       = document.getElementById('upload-msg-' + loopId);
+  var folderId  = folderSel ? folderSel.value : '';
+  var file      = fileInput && fileInput.files[0];
+
+  if (!file) { msg.textContent = 'Choose a file first.'; msg.style.color = '#c0392b'; return; }
+
+  msg.textContent = 'Uploading…';
+  msg.style.color = '#888';
+
+  var formData = new FormData();
+  formData.append('loop_id', loopId);
+  formData.append('profile_id', profileId);
+  formData.append('folder_id', folderId);
+  formData.append('file', file);
+
+  fetch('api/dotloop_action.php?action=upload_document', {
+    method: 'POST',
+    body:   formData,
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      msg.textContent = 'Uploaded ✓';
+      msg.style.color = '#3a6b1a';
+      fileInput.value = '';
+      // Force a fresh folder-docs load next time that folder is opened.
+      var docsDiv = document.getElementById('fdocs-' + loopId + '-' + folderId);
+      if (docsDiv) delete docsDiv.dataset.loaded;
+    } else {
+      msg.textContent = 'Error: ' + (d.error || 'Upload failed');
+      msg.style.color = '#c0392b';
+    }
+  })
+  .catch(function() {
+    msg.textContent = 'Request failed.';
+    msg.style.color = '#c0392b';
+  });
+}
+
+function loadFolderDocs(loopId, profileId, folderId, folderEl, loopUrl) {
   var docsDiv = document.getElementById('fdocs-' + loopId + '-' + folderId);
   if (!docsDiv) return;
 
@@ -368,12 +431,18 @@ function loadFolderDocs(loopId, profileId, folderId, folderEl) {
     var html = '';
     docs.forEach(function(doc) {
       var name = doc.name || doc.filename || ('Document ' + doc.id);
-      var link = doc.downloadLink || doc.download_link || '';
+      // DotLoop's API never returns a download link for a document (confirmed
+      // against their own docs — only list/get-metadata/upload exist), and
+      // deep-linking to a specific document/tab via URL params didn't hold up
+      // under real testing (landed on the generic loop page every time except
+      // once, likely an artifact of prior browser/tab state) — so this just
+      // links to the loop itself, the one thing confirmed reliable.
+      var link = loopUrl || '';
       html += '<div class="dl-doc">'
             + '<span class="dl-doc-name">' + escHtml(name) + '</span>';
       if (link) {
         html += '<a href="' + escAttr(link) + '" target="_blank" rel="noopener" '
-              + 'style="font-size:11px;font-weight:700;color:#82C112;text-decoration:none;white-space:nowrap;">View / Download</a>';
+              + 'style="font-size:11px;font-weight:700;color:#82C112;text-decoration:none;white-space:nowrap;">View in DotLoop</a>';
       }
       html += '</div>';
     });

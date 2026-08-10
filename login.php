@@ -2,13 +2,19 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/auth.php';
 
-if (current_agent()) { header('Location: index.php'); exit; }
+// Carries the page an unauthenticated visit to a gated URL originally wanted
+// (require_login() sets this) through to right after sign-in — password,
+// Google, or a page reload after a failed attempt all preserve it.
+$next = safe_next_path($_GET['next'] ?? $_POST['next'] ?? null);
+
+if (current_agent()) { header('Location: ' . ($next ?: 'index.php')); exit; }
 
 $c = cfg();
 $google_url = null;
 if (!empty($c['google_client_id'])) {
     $state = bin2hex(random_bytes(16));
     $_SESSION['google_oauth_state'] = $state;
+    $_SESSION['google_oauth_next']  = $next;
     $google_url = 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query([
         'client_id'     => $c['google_client_id'],
         'redirect_uri'  => !empty($c['google_redirect_uri']) ? $c['google_redirect_uri'] : ('https://' . $_SERVER['HTTP_HOST'] . '/auth_google.php'),
@@ -37,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         session_regenerate_id(true);
         $_SESSION['agent'] = $agent;
         log_login_event($agent['email'], $agent['name'] ?? '', 'password');
-        header('Location: index.php');
+        header('Location: ' . ($next ?: 'index.php'));
         exit;
     }
     $err = 'Invalid email or password.';
@@ -75,6 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php endif; ?>
 
     <form method="post" autocomplete="on">
+      <input type="hidden" name="next" value="<?= htmlspecialchars($next ?? '') ?>">
       <label>Email
         <input type="email" name="email" required autofocus value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
       </label>

@@ -191,6 +191,10 @@ function loadMembers(cohortId, btnOrNull) {
         html += `<td>`;
         if (m.status === 'active') {
           html += `<button class="btn-sm" onclick="setStatus(${m.id},'graduated',${cohortId})">Graduate</button> `;
+          html += `<button class="btn-sm" onclick="setStatus(${m.id},'on_hold',${cohortId})">Put On Hold</button> `;
+          html += `<button class="btn-sm" onclick="setStatus(${m.id},'dropped',${cohortId})">Drop</button>`;
+        } else if (m.status === 'on_hold') {
+          html += `<button class="btn-sm" onclick="setStatus(${m.id},'active',${cohortId})">Reactivate</button> `;
           html += `<button class="btn-sm" onclick="setStatus(${m.id},'dropped',${cohortId})">Drop</button>`;
         }
         html += `</td></tr>`;

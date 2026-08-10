@@ -16,4 +16,7 @@ if (is_admin()) {
     $s->execute([$me['email']]);
     $rows = $s->fetchAll(PDO::FETCH_ASSOC);
 }
-echo json_encode(['ok'=>true,'tickets'=>$rows]);
+// See tickets_detail.php for why JSON_INVALID_UTF8_SUBSTITUTE matters here —
+// one ticket with malformed UTF-8 (e.g. from an inbound email reply) would
+// otherwise silently break the entire list for every ticket, not just that one.
+echo json_encode(['ok'=>true,'tickets'=>$rows], JSON_INVALID_UTF8_SUBSTITUTE);

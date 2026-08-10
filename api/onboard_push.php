@@ -58,7 +58,7 @@ $stateCode         = trim($body['state_code']           ?? '');
 $licenseExp        = trim($body['license_exp']          ?? '');
 $canonicalAgentId  = isset($body['canonical_agent_id']) ? (string)$body['canonical_agent_id'] : null;
 
-$result   = queue_onboarding_agent($pdo, $email, $name, $mc, $stateCode, $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes, '', $phone);
+$result   = queue_onboarding_agent($pdo, $email, $name, [['market_center' => $mc, 'state_code' => $stateCode]], $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes, '', $phone);
 $queueId  = $result['id'];
 $queueUrl = $base . '/onboarding.php?open=' . $queueId;
 

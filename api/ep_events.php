@@ -16,7 +16,7 @@ $db    = local_db();
 $email = strtolower(trim($agent['email']));
 
 function ep_my_mc_slugs(): array {
-    return array_values(array_unique(array_filter(array_merge(my_mc_slugs(), [my_own_mc_slug()]))));
+    return array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs())));
 }
 
 function ep_can_manage(array $ev, string $email): bool {

@@ -9,18 +9,45 @@ require_once __DIR__ . '/roster.php';
 
 const ONBOARD_VALID_STATES = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
 
+// Additively records each (market_center, state_code) pair for a queue entry
+// in onboard_queue_mcs — INSERT OR IGNORE so calling this again (e.g. a CRM
+// re-push) never drops a Market Center added since. $normalized entries must
+// already be normalize_market_center()-resolved (non-blank).
+function onboard_queue_add_mcs(PDO $pdo, int $queueId, array $normalized): void {
+    if (!$normalized) return;
+    $countSt = $pdo->prepare("SELECT COUNT(*) FROM onboard_queue_mcs WHERE queue_id=?");
+    $countSt->execute([$queueId]);
+    $hadAny = (int)$countSt->fetchColumn() > 0;
+
+    $ins = $pdo->prepare(
+        "INSERT OR IGNORE INTO onboard_queue_mcs (queue_id, market_center, state_code, is_primary) VALUES (?,?,?,?)"
+    );
+    foreach ($normalized as $i => $mc) {
+        $ins->execute([$queueId, $mc['market_center'], $mc['state_code'], (!$hadAny && $i === 0) ? 1 : 0]);
+    }
+}
+
 // Queue a new agent for onboarding, or update an already-queued active entry
 // for the same email instead of creating a duplicate (an agent can be
 // touched more than once before onboarding completes — e.g. a Market Center
 // reassignment in the CRM re-sends the same push).
+//
+// $marketCenters is a list of ['market_center' => string, 'state_code' => string]
+// pairs — an agent can be queued into more than one Market Center at once
+// (e.g. licensed/working in bordering states). Each pair is normalized
+// against the canonical market_centers list and added to onboard_queue_mcs
+// (additively — INSERT OR IGNORE — so a re-push never drops a Market Center
+// staff already added by hand via the queue card UI). onboard_queue's own
+// market_center/state_code columns are kept as a "primary" mirror, always
+// set from $marketCenters[0] of THIS call, matching the old single-value
+// overwrite behavior exactly for any reader that only knows about one MC.
 //
 // Returns ['id' => int, 'wasNew' => bool].
 function queue_onboarding_agent(
     PDO $pdo,
     string $email,
     string $name,
-    string $marketCenter,
-    string $stateCode,
+    array $marketCenters,
     ?string $canonicalAgentId,
     string $addedBy,
     string $startDate = '',
@@ -33,10 +60,19 @@ function queue_onboarding_agent(
     $email = trim($email);
     $name  = trim($name);
     $phone = trim($phone);
-    // Normalized against the canonical market_centers list — an unrecognized
-    // value (typo, stale office name) lands as blank rather than riding
-    // through untouched, same as the old free-text field used to allow.
-    $marketCenter = normalize_market_center($pdo, $marketCenter);
+
+    // Normalize every pair; an unrecognized Market Center (typo, stale office
+    // name) lands as blank and gets dropped, same "blank until a human fixes
+    // it" policy the old single-value field always used.
+    $normalized = [];
+    foreach ($marketCenters as $entry) {
+        $mc = normalize_market_center($pdo, (string)($entry['market_center'] ?? ''));
+        if ($mc === '') continue;
+        $normalized[] = ['market_center' => $mc, 'state_code' => strtoupper(trim((string)($entry['state_code'] ?? '')))];
+    }
+    $primary      = $normalized[0] ?? ['market_center' => '', 'state_code' => ''];
+    $marketCenter = $primary['market_center'];
+    $stateCode    = $primary['state_code'];
 
     $existing = $pdo->prepare(
         "SELECT id FROM onboard_queue WHERE agent_email = ? AND status = 'active' LIMIT 1"
@@ -51,7 +87,8 @@ function queue_onboarding_agent(
                 SET agent_name = ?, market_center = ?, state_code = ?, canonical_agent_id = ?,
                     agent_phone = CASE WHEN ? != '' THEN ? ELSE agent_phone END
               WHERE id = ?"
-        )->execute([$name, $marketCenter, trim($stateCode) ?: null, $canonicalAgentId, $phone, $phone, $queueId]);
+        )->execute([$name, $marketCenter, $stateCode ?: null, $canonicalAgentId, $phone, $phone, $queueId]);
+        onboard_queue_add_mcs($pdo, $queueId, $normalized);
         return ['id' => $queueId, 'wasNew' => false];
     }
 
@@ -64,9 +101,10 @@ function queue_onboarding_agent(
     $ins->execute([
         $email, $name, $marketCenter, trim($startDate), trim($sponsor),
         trim($role) ?: 'agent', $addedBy, $now, trim($notes),
-        trim($stateCode) ?: null, $canonicalAgentId, $phone,
+        $stateCode ?: null, $canonicalAgentId, $phone,
     ]);
     $queueId = (int)$pdo->lastInsertId();
+    onboard_queue_add_mcs($pdo, $queueId, $normalized);
 
     $stepIns = $pdo->prepare(
         "INSERT OR IGNORE INTO onboard_steps
@@ -93,6 +131,17 @@ function queue_onboarding_agent(
         $stepList = array_filter(onboard_tools(), fn($t) => $t['key'] !== 'agentedge');
         notify_step_assignees_on_create('onboard', $name, $email, $stepList, $fromEmail, $addedByName);
         maybe_notify_next_actionable_step($pdo, 'onboard', $queueId, $fromEmail, $addedByName);
+
+        // Skip when this agent already has a submitted intake on file — covers
+        // the public-intake-form path (api/intake_public.php), which calls
+        // this function AFTER the agent has already filled it out, so
+        // requesting it again would be pointless noise.
+        $intakeCheck = $pdo->prepare("SELECT submitted FROM agent_intake WHERE email = ?");
+        $intakeCheck->execute([$email]);
+        if (!$intakeCheck->fetchColumn()) {
+            notify_intake_request($name, $email, $queueId);
+            $pdo->prepare("UPDATE onboard_queue SET intake_sent_at = ? WHERE id = ?")->execute([$now, $queueId]);
+        }
     } catch (\Throwable $e) {}
 
     return ['id' => $queueId, 'wasNew' => true];

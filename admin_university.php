@@ -38,12 +38,13 @@ $courses = $db->query(
     .btn-sm:hover{border-color:#82C112;color:#5b8e0d}
     .btn-danger{background:#fee2e2;color:#c00;border-color:#f5c6c6}
     .btn-danger:hover{background:#fecaca;border-color:#e53935}
-    .cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+    .cat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
     .cat-card{border:1px solid #e0e0e0;border-radius:8px;padding:14px 16px;background:white;display:flex;align-items:center;gap:10px}
     .cat-icon{font-size:24px;flex-shrink:0}
-    .cat-name{font-size:13px;font-weight:800;color:#111;flex:1}
+    .cat-info{flex:1;min-width:0}
+    .cat-name{font-size:13px;font-weight:800;color:#111}
     .cat-count{font-size:11px;color:#aaa}
-    .cat-actions{display:flex;gap:4px;flex-shrink:0}
+    .cat-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
     .course-table{width:100%;border-collapse:collapse}
     .course-table th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;padding:8px 12px;text-align:left;border-bottom:2px solid #eee;white-space:nowrap}
     .course-table td{padding:12px 12px;border-bottom:1px solid #f0f0f0;vertical-align:middle;font-size:13px}
@@ -114,8 +115,8 @@ $courses = $db->query(
           <?php foreach ($categories as $cat): ?>
           <div class="cat-card">
             <div class="cat-icon"><?= htmlspecialchars($cat['icon']) ?></div>
-            <div>
-              <div class="cat-name"><?= htmlspecialchars($cat['name']) ?></div>
+            <div class="cat-info">
+              <div class="cat-name" title="<?= htmlspecialchars($cat['name']) ?>"><?= htmlspecialchars($cat['name']) ?></div>
               <div class="cat-count"><?= $cat['course_count'] ?> course<?= $cat['course_count'] != 1 ? 's' : '' ?></div>
             </div>
             <?php if ($canEdit): ?>

@@ -21,7 +21,7 @@ $ls = $db->prepare(
 );
 $ls->execute([$lessonId]);
 $lesson = $ls->fetch(PDO::FETCH_ASSOC);
-if (!$lesson || (!$lesson['course_published'] && !is_admin())) { header('Location: university.php'); exit; }
+if (!$lesson || (!is_admin() && (!$lesson['course_published'] || $lesson['pending_review']))) { header('Location: university.php'); exit; }
 
 // Enforce access control for non-admins
 if (!is_admin()) {
@@ -102,6 +102,7 @@ function make_embed_url(string $url): string {
     return $url;
 }
 $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) : '';
+$isPdfDoc = strtolower(pathinfo($lesson['file_key'] ?? '', PATHINFO_EXTENSION)) === 'pdf';
 ?>
 <!doctype html>
 <html lang="en">
@@ -128,6 +129,13 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
     .doc-title{font-size:15px;font-weight:700;color:#111;margin-bottom:8px}
     .doc-dl{display:inline-block;padding:10px 24px;background:#82C112;color:#000;font-weight:800;font-size:13px;border-radius:6px;text-decoration:none}
     .doc-dl:hover{background:#5b8e0d;color:#fff}
+    /* PDF viewer */
+    .pdf-wrap{border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;margin-bottom:20px;background:#f9f9f9}
+    .pdf-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #e0e0e0;background:#fff}
+    .pdf-toolbar .doc-title{margin:0}
+    .pdf-frame{width:100%;height:75vh;min-height:500px;border:0;display:block;background:#fff}
+    .pdf-fallback{font-size:12px;color:#888;padding:10px 16px;text-align:center;border-top:1px solid #eee}
+    .pdf-fallback a{color:#5b8e0d;font-weight:700}
     /* Content HTML */
     .lesson-content{line-height:1.7;font-size:14px;color:#333;margin-bottom:20px}
     .lesson-content p{margin:0 0 12px}
@@ -264,21 +272,30 @@ $embedUrl = !empty($lesson['embed_url']) ? make_embed_url($lesson['embed_url']) 
 
       <!-- Document lesson -->
       <?php elseif ($lesson['type'] === 'doc'): ?>
-      <?php if ($lesson['content_html']): ?>
-      <div class="card" style="padding:20px 24px;margin-bottom:20px">
-        <div class="lesson-content"><?= $lesson['content_html'] ?></div>
+      <?php if ($lesson['file_key'] && $isPdfDoc): ?>
+      <div class="pdf-wrap">
+        <div class="pdf-toolbar">
+          <div class="doc-title"><?= htmlspecialchars($lesson['title']) ?></div>
+          <a class="doc-dl" href="api/uni_download.php?id=<?= $lessonId ?>&download=1" onclick="scheduleComplete()">⬇ Download</a>
+        </div>
+        <iframe class="pdf-frame" src="api/uni_download.php?id=<?= $lessonId ?>" onload="scheduleComplete()"></iframe>
+        <div class="pdf-fallback">Can't see the document above? <a href="api/uni_download.php?id=<?= $lessonId ?>&download=1">Download it</a> instead.</div>
       </div>
-      <?php endif; ?>
-      <?php if ($lesson['file_key']): ?>
+      <?php elseif ($lesson['file_key']): ?>
       <div class="doc-wrap">
         <div class="doc-icon">📄</div>
         <div class="doc-title"><?= htmlspecialchars($lesson['title']) ?></div>
-        <a class="doc-dl" href="api/uni_download.php?id=<?= $lessonId ?>" target="_blank" onclick="scheduleComplete()">⬇ Open / Download</a>
+        <a class="doc-dl" href="api/uni_download.php?id=<?= $lessonId ?>&download=1" target="_blank" onclick="scheduleComplete()">⬇ Open / Download</a>
       </div>
       <?php else: ?>
       <div class="doc-wrap" style="background:#fff3cd;border-color:#ffc107">
         <div class="doc-icon">⚠️</div>
         <div class="doc-title">Document not uploaded yet</div>
+      </div>
+      <?php endif; ?>
+      <?php if ($lesson['content_html']): ?>
+      <div class="card" style="padding:20px 24px;margin-bottom:20px">
+        <div class="lesson-content"><?= $lesson['content_html'] ?></div>
       </div>
       <?php endif; ?>
       <?php render_attachments($attachments); ?>

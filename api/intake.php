@@ -239,19 +239,6 @@ $pr          = $prev->fetch(PDO::FETCH_ASSOC) ?: [];
 $wasSubmitted = !empty($pr['submitted']);
 $isSubmitted  = $complete || $wasSubmitted;
 
-// Circuit-breaker against the failure mode that wiped an agent's profile on
-// 2026-08-07: the admin Edit Profile modal's async load can fail or race with
-// a save, submitting a payload of mostly-blank fields that then blindly
-// overwrites a fully-populated record (every field here is a full REPLACE,
-// not a patch). A real edit of an already-submitted profile never
-// legitimately blanks the agent's own name — treat that combination as a
-// corrupted submission and refuse it outright rather than destroying good data.
-if ($wasSubmitted && $fv('full_name') === '') {
-    intake_json_out(['ok' => false, 'error' =>
-        "Save rejected: full name came back blank for an already-completed profile — the edit form likely didn't finish loading. Reload the page and try again without losing this agent's data."
-    ], 409);
-}
-
 $now  = date('Y-m-d H:i:s');
 $cols = implode(',', $fields);
 $phs  = implode(',', array_fill(0, count($fields), '?'));
@@ -279,26 +266,18 @@ $pdo->prepare(
     [$isSubmitted ? 1 : 0, ($isSubmitted && !$wasSubmitted) ? $now : null, $now]
 ));
 
-// ── Additional licenses (rewritten in full on every save that includes them) ──
-// Only touches this table when the caller actually sent additional_licenses —
-// the admin Edit Profile modals (agent_profile.php, backoffice_agents.php)
-// never collect/send this field, so treating an absent key as "clear them
-// all" was silently deleting every extra license on every admin-side save.
-// A caller that genuinely wants zero licenses sends an empty array, which
-// still clears as before.
-if (array_key_exists('additional_licenses', $body)) {
-    $pdo->prepare("DELETE FROM agent_intake_licenses WHERE agent_email=?")->execute([$email]);
-    $additionalLicenses = is_array($body['additional_licenses']) ? $body['additional_licenses'] : [];
-    $insLicense = $pdo->prepare(
-        "INSERT INTO agent_intake_licenses (agent_email, license_number, license_state, license_exp) VALUES (?,?,?,?)"
-    );
-    foreach ($additionalLicenses as $lic) {
-        $num   = trim($lic['license_number'] ?? '');
-        $state = trim($lic['license_state'] ?? '');
-        $exp   = trim($lic['license_exp'] ?? '');
-        if ($num === '' && $state === '' && $exp === '') continue;
-        $insLicense->execute([$email, $num, $state, $exp]);
-    }
+// ── Additional licenses (rewritten in full on every save) ─────────────────────
+$pdo->prepare("DELETE FROM agent_intake_licenses WHERE agent_email=?")->execute([$email]);
+$additionalLicenses = is_array($body['additional_licenses'] ?? null) ? $body['additional_licenses'] : [];
+$insLicense = $pdo->prepare(
+    "INSERT INTO agent_intake_licenses (agent_email, license_number, license_state, license_exp) VALUES (?,?,?,?)"
+);
+foreach ($additionalLicenses as $lic) {
+    $num   = trim($lic['license_number'] ?? '');
+    $state = trim($lic['license_state'] ?? '');
+    $exp   = trim($lic['license_exp'] ?? '');
+    if ($num === '' && $state === '' && $exp === '') continue;
+    $insLicense->execute([$email, $num, $state, $exp]);
 }
 
 // Heads-up email to Whitney when the AGENT submits their own Intake Form —
@@ -330,6 +309,9 @@ if ($email === $myEmail) {
 
     if ($isSubmitted && !$wasSubmitted) {
         notify_intake_submitted($fv('full_name') ?: $myEmail, $myEmail);
+        notify_upline_intake_submitted($fv('full_name') ?: $myEmail, $myEmail, $fv('office_location'));
+        notify_intake_summary_admins($myEmail);
+        notify_bic_ml_intake_submitted($fv('full_name') ?: $myEmail, $myEmail, $fv('office_location'));
     }
 }
 

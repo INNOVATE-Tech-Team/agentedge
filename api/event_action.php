@@ -26,6 +26,26 @@ if ($cal_id === '') { http_response_code(500); echo json_encode(['error' => 'Eve
 $token = gcal_access_token($key_file);
 if (!$token) { http_response_code(500); echo json_encode(['error' => 'calendar auth failed']); exit; }
 
+// Short registration-link slug (register.php?s=<slug>) — lowercased,
+// non-alphanumerics collapsed to single dashes.
+function slugify_reg_link(string $s): string {
+    $s = strtolower(trim($s));
+    $s = preg_replace('/[^a-z0-9]+/', '-', $s);
+    return trim($s, '-');
+}
+
+// Slugs must be unique across BOTH training_events and events_calendar, since
+// register.php resolves ?s=<slug> without knowing which scope it belongs to.
+// $excludeEventId lets an update ignore the row being saved.
+function reg_slug_taken(PDO $db, string $slug, string $excludeEventId = ''): bool {
+    foreach (['training_events', 'events_calendar'] as $t) {
+        $st = $db->prepare("SELECT 1 FROM {$t} WHERE reg_slug=? AND event_id != ? LIMIT 1");
+        $st->execute([$slug, $excludeEventId]);
+        if ($st->fetchColumn()) return true;
+    }
+    return false;
+}
+
 // ── Create ────────────────────────────────────────────────────────────────────
 if ($action === 'create') {
     $title      = trim($body['title']       ?? '');
@@ -36,8 +56,13 @@ if ($action === 'create') {
     $location   = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
     $capacity   = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
+    $regDesc    = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
+    $regSlug    = slugify_reg_link($body['reg_slug'] ?? '') ?: null;
 
     if (!$title || !$date) { http_response_code(400); echo json_encode(['error' => 'title and date required']); exit; }
+    if ($regSlug !== null && reg_slug_taken(local_db(), $regSlug)) {
+        http_response_code(400); echo json_encode(['error' => 'That short link name is already taken.']); exit;
+    }
 
     if ($start_time && $end_time) {
         $event = [
@@ -60,8 +85,8 @@ if ($action === 'create') {
 
     $result = gcal_create_event($cal_id, $token, $event);
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to create event — check calendar sharing permissions']); exit; }
-    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
-        ->execute([$result['id'], $capacity]);
+    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug) VALUES (?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug")
+        ->execute([$result['id'], $capacity, $regDesc, $regSlug]);
     echo json_encode(['ok' => true, 'event_id' => $result['id']]);
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -75,8 +100,13 @@ if ($action === 'create') {
     $location    = trim($body['location']    ?? '');
     $description = trim($body['description'] ?? '');
     $capacity    = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
+    $regDesc     = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
+    $regSlug     = slugify_reg_link($body['reg_slug'] ?? '') ?: null;
 
     if (!$event_id || !$title || !$date) { http_response_code(400); echo json_encode(['error' => 'event_id, title, date required']); exit; }
+    if ($regSlug !== null && reg_slug_taken(local_db(), $regSlug, $event_id)) {
+        http_response_code(400); echo json_encode(['error' => 'That short link name is already taken.']); exit;
+    }
 
     if ($start_time && $end_time) {
         $patch = [
@@ -101,8 +131,8 @@ if ($action === 'create') {
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to update event']); exit; }
 
     $db = local_db();
-    $db->prepare("INSERT INTO events_calendar (event_id, capacity) VALUES (?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity")
-       ->execute([$event_id, $capacity]);
+    $db->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug) VALUES (?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug")
+       ->execute([$event_id, $capacity, $regDesc, $regSlug]);
 
     // Capacity may have gone up (or been removed) — promote waitlisted agents
     // into any now-open seats, oldest first.

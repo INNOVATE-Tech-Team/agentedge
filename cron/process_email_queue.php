@@ -28,7 +28,7 @@ foreach ($due as $row) {
         $audiences   = array_values(array_filter(explode(',', $row['audience'] ?? '')));
         $mcSlugs     = array_values(array_filter(explode(',', $row['target_mc_slug'] ?? '')));
         $leaderTypes = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
-        $recipients  = ce_resolve_recipients($audiences, $mcSlugs, $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic']);
+        $recipients  = ce_resolve_recipients($audiences, $mcSlugs, $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic'], $row['launch_class_date'] ?? '');
 
         // agent_roles has no display name column — fall back to the email itself,
         // matching what the immediate-send path does when $agent['name'] is empty.

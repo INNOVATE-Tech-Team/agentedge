@@ -7,12 +7,26 @@ $agent = require_login();
 $db    = local_db();
 $email = $agent['email'];
 
-// Resolve this agent's state code via their office location in agent_intake → market_centers
-$agentStateCode = null;
-$aiRow = $db->prepare("SELECT mc.state_code FROM agent_intake ai LEFT JOIN market_centers mc ON mc.slug=ai.office_location OR LOWER(mc.name)=LOWER(ai.office_location) WHERE LOWER(ai.email)=? LIMIT 1");
-$aiRow->execute([strtolower($email)]);
-$aiResult = $aiRow->fetch(PDO::FETCH_ASSOC);
-if ($aiResult) $agentStateCode = $aiResult['state_code'] ?? null;
+// Resolve every state this agent operates in — the union of their own_mc_slug
+// (home office) and mc_slugs (additional offices for a plain agent, or
+// offices led for bic/mc_leader), each mapped to its market center's state.
+// Falls back to the legacy agent_intake→market_centers lookup for anyone not
+// yet using either field, so existing agents don't lose access while data
+// catches up.
+$agentStateCodes = [];
+$mySlugs = array_values(array_unique(array_filter(array_merge([my_own_mc_slug()], my_mc_slugs()))));
+if ($mySlugs) {
+    $ph = implode(',', array_fill(0, count($mySlugs), '?'));
+    $stCodes = $db->prepare("SELECT DISTINCT state_code FROM market_centers WHERE slug IN ($ph)");
+    $stCodes->execute($mySlugs);
+    $agentStateCodes = array_column($stCodes->fetchAll(PDO::FETCH_ASSOC), 'state_code');
+}
+if (!$agentStateCodes) {
+    $aiRow = $db->prepare("SELECT mc.state_code FROM agent_intake ai LEFT JOIN market_centers mc ON mc.slug=ai.office_location OR LOWER(mc.name)=LOWER(ai.office_location) WHERE LOWER(ai.email)=? LIMIT 1");
+    $aiRow->execute([strtolower($email)]);
+    $aiResult = $aiRow->fetch(PDO::FETCH_ASSOC);
+    if ($aiResult && $aiResult['state_code']) $agentStateCodes = [$aiResult['state_code']];
+}
 
 $agentRole  = my_role();
 $agentRoles = my_roles();
@@ -21,7 +35,7 @@ $isAdminUser = is_admin();
 // Load published courses with category info + lesson counts
 $allCourses = $db->query(
     "SELECT c.*, COALESCE(cat.name,'Uncategorized') as cat_name, COALESCE(cat.icon,'📚') as cat_icon,
-     (SELECT COUNT(*) FROM uni_lessons WHERE course_id=c.id) as lesson_count
+     (SELECT COUNT(*) FROM uni_lessons WHERE course_id=c.id AND pending_review=0) as lesson_count
      FROM uni_courses c LEFT JOIN uni_categories cat ON cat.id=c.category_id
      WHERE c.published=1 ORDER BY c.sort_ord,c.id"
 )->fetchAll(PDO::FETCH_ASSOC);
@@ -30,17 +44,17 @@ $allCourses = $db->query(
 if ($isAdminUser) {
     $courses = $allCourses;
 } else {
-    $courses = array_values(array_filter($allCourses, function($c) use ($db, $email, $agentStateCode, $agentRoles) {
+    $courses = array_values(array_filter($allCourses, function($c) use ($db, $email, $agentStateCodes, $agentRoles) {
         // Invite-only: must be on invite list
         if (!empty($c['invite_only'])) {
             $inv = $db->prepare("SELECT 1 FROM uni_course_invites WHERE course_id=? AND LOWER(agent_email)=?");
             $inv->execute([$c['id'], strtolower($email)]);
             if (!$inv->fetchColumn()) return false;
         }
-        // State filter: if set, agent's state must be in the list
+        // State filter: if set, at least one of the agent's states must be in it
         $sf = json_decode($c['state_filter'] ?? '[]', true);
         if (!empty($sf)) {
-            if (!$agentStateCode || !in_array($agentStateCode, $sf, true)) return false;
+            if (!$agentStateCodes || !array_intersect($agentStateCodes, $sf)) return false;
         }
         // Role filter: if set, agent's role must be in the list
         $rf = json_decode($c['role_filter'] ?? '[]', true);

@@ -10,7 +10,7 @@ $canCreate = is_leader();
 $mcRows = local_db()->query("SELECT slug, name FROM market_centers WHERE enabled=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 $mcNameMap = [];
 foreach ($mcRows as $r) $mcNameMap[$r['slug']] = $r['name'];
-$myMcSlugs = array_values(array_unique(array_filter(array_merge(my_mc_slugs(), [my_own_mc_slug()]))));
+$myMcSlugs = array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs())));
 $isAdmin = is_admin();
 
 // Which MCs this user is allowed to create events for.
