@@ -22,7 +22,10 @@ $db = local_db();
 
 $leaderRow = null;
 try {
-    $stmt = $db->prepare("SELECT id, name FROM teams WHERE leader_email = ? AND enabled = 1");
+    $stmt = $db->prepare(
+        "SELECT t.id, t.name FROM team_leaders tl JOIN teams t ON t.id = tl.team_id
+          WHERE tl.agent_email = ? AND t.enabled = 1 LIMIT 1"
+    );
     $stmt->execute([$email]);
     $leaderRow = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 } catch (\Throwable $e) {}

@@ -109,12 +109,17 @@ function fetch_perms(string $email): array {
     $perms = fetch_perms_local($email) ?? fetch_perms_crm($email);
     // Team leader status is resolved independently of role/agent_roles — a bic
     // or mc_leader can also lead a team, and a team spans multiple MCs, so it
-    // can't live in agent_roles.mc_slugs. The teams/team_members tables are the
-    // sole source of truth, checked live on every request (same as mc_slugs).
+    // can't live in agent_roles.mc_slugs. The teams/team_leaders/team_members
+    // tables are the sole source of truth, checked live on every request (same
+    // as mc_slugs). A team can have more than one leader (team_leaders), so
+    // this reads that join table, not teams.leader_email directly.
     $emailLower = strtolower(trim($email));
     if (function_exists('local_db') && $emailLower !== '') {
         try {
-            $stmt = local_db()->prepare("SELECT id FROM teams WHERE leader_email=? AND enabled=1");
+            $stmt = local_db()->prepare(
+                "SELECT t.id FROM team_leaders tl JOIN teams t ON t.id = tl.team_id
+                  WHERE tl.agent_email=? AND t.enabled=1 LIMIT 1"
+            );
             $stmt->execute([$emailLower]);
             $teamId = $stmt->fetchColumn();
             if ($teamId !== false) {

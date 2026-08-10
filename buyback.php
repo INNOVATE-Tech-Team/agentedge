@@ -167,17 +167,62 @@ $googlePlacesKey = google_places_api_key();
       <div id="bb-automate-drafts"></div>
     </div>
 
-    <!-- Eliminate: run the audit, review the queue before send -->
-    <div id="bb-eliminate" class="bb-panel">
+    <!-- Hot Deals: find best-value listings, matched to your own FUB leads only -->
+    <div id="bb-hotdeals" class="bb-panel">
       <div class="bb-form">
-        <h3>Database Audit</h3>
-        <p class="hint">Finds contacts who've gone quiet (90+ days no activity) and drafts a personal check-in — nothing sends until you approve it below.</p>
-        <div style="display:flex;align-items:center;gap:14px">
-          <button class="btn-primary" id="bb-eliminate-btn" onclick="bbEliminateRun()">Run my database audit</button>
-          <span class="send-status" id="bb-eliminate-status"></span>
+        <h3>Find a deal</h3>
+        <div class="field-row">
+          <div class="field">
+            <label>City</label>
+            <input type="text" id="hd-city" placeholder="e.g. North Myrtle Beach">
+          </div>
+          <div class="field">
+            <label>Property Type</label>
+            <select id="hd-sub-type">
+              <option value="Condominium">Condominium</option>
+              <option value="Single Family Residence">Single Family Residence</option>
+              <option value="Townhouse">Townhouse</option>
+              <option value="Detached">Detached</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Beds (min–max)</label>
+            <div style="display:flex;gap:6px">
+              <input type="number" id="hd-min-beds" min="0" placeholder="min">
+              <input type="number" id="hd-max-beds" min="0" placeholder="max">
+            </div>
+          </div>
+          <div class="field">
+            <label>Baths (min–max)</label>
+            <div style="display:flex;gap:6px">
+              <input type="number" id="hd-min-baths" min="0" placeholder="min">
+              <input type="number" id="hd-max-baths" min="0" placeholder="max">
+            </div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Min Price (optional)</label>
+            <input type="number" id="hd-min-price" min="0" placeholder="e.g. 300000">
+          </div>
+          <div class="field">
+            <label>Max Price (optional)</label>
+            <input type="number" id="hd-max-price" min="0" placeholder="e.g. 600000">
+          </div>
+          <label class="hd-check"><input type="checkbox" id="hd-oceanfront"> Oceanfront only</label>
+        </div>
+        <p style="font-size:11px;color:#888;margin:-6px 0 0">Tip: leaving Min Price blank ranks by the very cheapest listings citywide, which often won't match what your leads are actually searching for — most real saved searches have a price floor (e.g. "$300,000+"). Set one close to what your leads are searching for real matches.</p>
+        <p class="hint" style="margin-top:10px">Only matches leads assigned to you in Follow Up Boss — never another agent's contacts.</p>
+        <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
+          <button class="btn-primary" id="hd-search-btn" onclick="hdSearch()">Find Deals</button>
+          <span class="send-status" id="hd-search-status"></span>
         </div>
       </div>
-      <div id="bb-eliminate-drafts"></div>
+      <div id="hd-results"></div>
+      <div style="margin-top:32px">
+        <div class="section-label">Past Sends</div>
+        <div id="hd-history"><div class="empty-note">Loading…</div></div>
+      </div>
     </div>
 
     <!-- Hot Deals: find best-value listings, matched to your own FUB leads only -->
@@ -581,31 +626,6 @@ async function bbAutomateGenerate(personId, btn) {
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Generate review';
     alert('Network error.');
-  }
-}
-
-// ── Eliminate ────────────────────────────────────────────────────────────────
-async function bbEliminateRun() {
-  const btn = document.getElementById('bb-eliminate-btn');
-  const status = document.getElementById('bb-eliminate-status');
-  btn.disabled = true; btn.textContent = 'Running…';
-  status.textContent = ''; status.className = 'send-status';
-  try {
-    const r = await fetch('api/buyback_eliminate_run.php', {method: 'POST', credentials: 'same-origin'});
-    const data = await r.json();
-    btn.disabled = false; btn.textContent = 'Run my database audit';
-    if (!r.ok || data.ok === false) {
-      status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
-      status.className = 'send-status err';
-      return;
-    }
-    status.textContent = `Generated ${data.created} new draft(s).`;
-    status.className = 'send-status ok';
-    loadDrafts('eliminate', 'bb-eliminate-drafts', true);
-  } catch (e) {
-    btn.disabled = false; btn.textContent = 'Run my database audit';
-    status.textContent = 'Network error.';
-    status.className = 'send-status err';
   }
 }
 

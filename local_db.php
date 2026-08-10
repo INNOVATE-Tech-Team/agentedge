@@ -1452,10 +1452,11 @@ function local_db(): PDO {
 
     // ── Teams (Team Leader platform) ──────────────────────────────────────────
     // Distinct from market_centers: a team spans agents across multiple MCs,
-    // led by a single team_leader. leader_email is the source of truth for the
-    // team_leader role (roles.php reads this table directly rather than storing
-    // it in agent_roles.extra_roles_json, which already silently drops scope
-    // data for other extra roles).
+    // and can now have more than one leader (co-leads, spouse teams, etc.) —
+    // see team_leaders below, which is the real source of truth for who leads
+    // a team. teams.leader_email is kept only as a single-value "primary"
+    // pointer for the Advantage push bridge (api/team_action.php, api/export.php),
+    // which has never been extended to a multi-leader contract.
     $pdo->exec("CREATE TABLE IF NOT EXISTS teams (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         name         TEXT    NOT NULL,
@@ -1466,6 +1467,22 @@ function local_db(): PDO {
         created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_teams_leader ON teams(leader_email)");
+
+    // A team can have multiple leaders; roles.php's team_leader role check and
+    // my_team_id() read this table directly, not teams.leader_email.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS team_leaders (
+        team_id     INTEGER NOT NULL,
+        agent_email TEXT    NOT NULL,
+        added_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (team_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_team_leaders_email ON team_leaders(agent_email)");
+    // Backfill: every team's existing single leader_email becomes its first
+    // team_leaders row, so pre-existing teams don't lose their leader.
+    $pdo->exec("INSERT INTO team_leaders (team_id, agent_email)
+                SELECT id, leader_email FROM teams
+                 WHERE leader_email != ''
+                   AND NOT EXISTS (SELECT 1 FROM team_leaders tl WHERE tl.team_id = teams.id AND tl.agent_email = teams.leader_email)");
 
     // One team per agent — agent_email is the PK, so adding someone to a new
     // team silently moves them off any prior one.

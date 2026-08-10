@@ -535,6 +535,9 @@ function dotloop_sync_company_loops(
             $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('zillow_review_request_backfill_done', '1')"), []
         );
     }
+    if (!$zillowReviewBackfillDone) {
+        $db->prepare("INSERT OR REPLACE INTO dotloop_sync_state (key, value) VALUES ('zillow_review_request_backfill_done', '1')")->execute();
+    }
 
     return $summary;
 }
@@ -684,6 +687,69 @@ function queue_zillow_review_request_for_loop(string $loopId, string $loopName, 
         ),
         [$loopId, $loopName, $agentEmail, $recipientEmails, $recipientNames, $reviewLink, $subject, $body, $status]
     );
+}
+
+/**
+ * Same as queue_review_request_for_loop() above, for Zillow instead of
+ * Google -- see that function's docstring for the shared design (client
+ * matching by exact Buyer/Seller role, never sends anything itself). The
+ * one real difference: there's no Place-ID-style discovery API for
+ * Zillow, so agent_intake.zillow_review_link is just whatever full URL
+ * the agent pasted in themselves -- no ID-to-URL construction needed here.
+ */
+function queue_zillow_review_request_for_loop(string $loopId, string $loopName, string $loopUrl): void {
+    $db = local_db();
+
+    $already = $db->prepare("SELECT 1 FROM zillow_review_request_queue WHERE loop_id = ?");
+    $already->execute([$loopId]);
+    if ($already->fetchColumn()) return;
+
+    $clientsStmt = $db->prepare(
+        "SELECT name, email, role FROM dotloop_loop_participants
+         WHERE loop_id = ? AND role IN ('Buyer', 'Seller')"
+    );
+    $clientsStmt->execute([$loopId]);
+    $clients = $clientsStmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$clients) return; // no identifiable buyer/seller on file — nothing to send to
+
+    $recipientEmails = implode(',', array_unique(array_map(fn($c) => strtolower(trim($c['email'])), $clients)));
+    $recipientNames  = implode(', ', array_filter(array_map(fn($c) => trim($c['name']), $clients)));
+
+    $agentStmt = $db->prepare(
+        "SELECT email FROM dotloop_loop_participants
+         WHERE loop_id = ? AND role LIKE '%agent%' LIMIT 1"
+    );
+    $agentStmt->execute([$loopId]);
+    $agentEmail = strtolower(trim((string)($agentStmt->fetchColumn() ?: '')));
+
+    $reviewLink = '';
+    $optedIn = false;
+    if ($agentEmail !== '') {
+        $linkStmt = $db->prepare("SELECT zillow_review_link, zillow_review_requests_opt_in FROM agent_intake WHERE email = ?");
+        $linkStmt->execute([$agentEmail]);
+        $agentRow   = $linkStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $reviewLink = trim((string)($agentRow['zillow_review_link'] ?? ''));
+        $optedIn    = !empty($agentRow['zillow_review_requests_opt_in']);
+    }
+
+    $status = !$optedIn
+        ? 'blocked_not_opted_in'
+        : ($reviewLink === '' ? 'blocked_no_link' : 'awaiting_approval');
+
+    $firstNames = trim($recipientNames) !== '' ? explode(',', $recipientNames)[0] : 'there';
+    $subject = "Would you mind leaving us a quick review on Zillow?";
+    $body = "<p>Hi " . htmlspecialchars(trim($firstNames)) . ",</p>"
+          . "<p>Congratulations again on closing on <strong>" . htmlspecialchars($loopName) . "</strong>! "
+          . "If you have a minute, we'd love it if you could share your experience with a quick Zillow review "
+          . "— it helps us a lot and only takes a moment.</p>"
+          . ($reviewLink !== '' ? "<p><a href=\"" . htmlspecialchars($reviewLink) . "\">Leave a review</a></p>" : "<p>[review link pending — agent has no Zillow review link on file]</p>")
+          . "<p>Thank you!</p>";
+
+    $db->prepare(
+        "INSERT INTO zillow_review_request_queue
+            (loop_id, loop_name, agent_email, recipient_emails, recipient_names, review_link, subject, body, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )->execute([$loopId, $loopName, $agentEmail, $recipientEmails, $recipientNames, $reviewLink, $subject, $body, $status]);
 }
 
 // ── Folder helpers ────────────────────────────────────────────────────────────

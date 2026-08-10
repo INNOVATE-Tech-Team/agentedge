@@ -16,6 +16,11 @@ foreach ($db->query("SELECT team_id, agent_email FROM team_members ORDER BY agen
     $membersByTeam[(int)$m['team_id']][] = $m['agent_email'];
 }
 
+$leadersByTeam = [];
+foreach ($db->query("SELECT team_id, agent_email FROM team_leaders ORDER BY agent_email")->fetchAll(PDO::FETCH_ASSOC) as $l) {
+    $leadersByTeam[(int)$l['team_id']][] = $l['agent_email'];
+}
+
 // Active roster agents — source for both the leader picker and the member
 // picker/name-resolution. Only agents with a resolvable email are eligible,
 // since team_members joins purely on email. Sent to the client as a small
@@ -162,11 +167,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           </tr>
         </thead>
         <tbody>
-        <?php foreach ($teams as $t): $rowId = 'edit-' . $t['id']; $members = $membersByTeam[(int)$t['id']] ?? []; ?>
+        <?php foreach ($teams as $t): $rowId = 'edit-' . $t['id']; $members = $membersByTeam[(int)$t['id']] ?? []; $leaders = $leadersByTeam[(int)$t['id']] ?? []; ?>
           <tr class="data-row<?= $t['enabled'] ? '' : ' disabled' ?>" id="row-<?= $t['id'] ?>">
             <td><strong><?= h($t['name']) ?></strong></td>
             <td><span class="slug-chip"><?= h($t['slug']) ?></span></td>
-            <td><?= $t['leader_email'] ? '<span class="leader-chip">' . h(team_name_for_email($nameByEmail, $t['leader_email'])) . '</span>' : '<span style="color:var(--faint)">— none —</span>' ?></td>
+            <td><?= $leaders ? implode(' ', array_map(fn($le) => '<span class="leader-chip">' . h(team_name_for_email($nameByEmail, $le)) . '</span>', $leaders)) : '<span style="color:var(--faint)">— none —</span>' ?></td>
             <td><?= count($members) ?> agent<?= count($members)!==1?'s':'' ?></td>
             <td>
               <button class="toggle-btn <?= $t['enabled'] ? 'enabled' : 'disabled' ?>"
@@ -187,21 +192,35 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
                     <div class="field-label">Name</div>
                     <input type="text" class="field-input edit-name" value="<?= h($t['name']) ?>" autocomplete="off">
                   </div>
-                  <div class="field-group grow">
-                    <div class="field-label">Team Leader</div>
-                    <div class="agent-search-wrap">
-                      <input type="text" class="field-input agent-search-input edit-leader"
-                             placeholder="Type a name…" autocomplete="off"
-                             value="<?= h(team_name_for_email($nameByEmail, $t['leader_email'])) ?>"
-                             data-email="<?= h($t['leader_email']) ?>">
-                    </div>
-                  </div>
                   <div class="field-group sm">
                     <div class="field-label">Sort</div>
                     <input type="number" class="field-input edit-sort" value="<?= (int)$t['sort_ord'] ?>" min="0">
                   </div>
                   <button class="btn-save-row" onclick="saveEdit(<?= $t['id'] ?>, '<?= h($rowId) ?>')">Save</button>
                   <button class="btn-cancel-row" onclick="closeEditRow('<?= h($rowId) ?>')">Cancel</button>
+                </div>
+                <div class="members-section leaders-section">
+                  <div class="members-label">Leaders</div>
+                  <table class="members-table leaders-table">
+                    <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+                    <tbody>
+                      <?php if (!$leaders): ?>
+                      <tr class="no-leaders-row"><td colspan="3" class="no-members">No leaders yet — add one below.</td></tr>
+                      <?php else: foreach ($leaders as $le): ?>
+                      <tr data-email="<?= h($le) ?>">
+                        <td><?= h(team_name_for_email($nameByEmail, $le)) ?></td>
+                        <td class="member-email"><?= h($le) ?></td>
+                        <td style="text-align:right"><button class="btn-rm-member" title="Remove as leader" onclick="removeLeader(this, <?= (int)$t['id'] ?>)">✕</button></td>
+                      </tr>
+                      <?php endforeach; endif; ?>
+                    </tbody>
+                  </table>
+                  <div class="member-add-row leader-add-row">
+                    <div class="agent-search-wrap">
+                      <input type="text" class="field-input agent-search-input leader-add-input" placeholder="Type a name…" autocomplete="off" data-email="">
+                    </div>
+                    <button class="btn-add-member" onclick="addLeader(<?= $t['id'] ?>, this)">+ Add Leader</button>
+                  </div>
                 </div>
                 <div class="members-section">
                   <div class="members-label">Members</div>
@@ -374,12 +393,11 @@ function closeEditRow(rowId) {
 }
 
 function saveEdit(id, rowId) {
-  const row    = document.getElementById(rowId);
-  const name   = row.querySelector('.edit-name').value.trim();
-  const leader = row.querySelector('.edit-leader').dataset.email || '';
-  const sort   = parseInt(row.querySelector('.edit-sort').value) || 0;
+  const row  = document.getElementById(rowId);
+  const name = row.querySelector('.edit-name').value.trim();
+  const sort = parseInt(row.querySelector('.edit-sort').value) || 0;
   if (!name) { flash('Team name is required.', 'err'); return; }
-  post({action:'save', id, name, leader_email:leader, sort_ord:sort})
+  post({action:'save', id, name, sort_ord:sort})
     .then(d => {
       if (!d.ok) { flash(d.error || 'Save failed', 'err'); return; }
       flash('Saved.');
@@ -406,6 +424,61 @@ function deleteTeam(id, name) {
     if (row) row.remove();
     flash(`Deleted <strong>${esc(name)}</strong>.`);
   });
+}
+
+// ── Leaders — same in-place add/remove pattern as Members below, but a team
+// can have more than one, and an agent isn't exclusive to one team the way
+// team_members.agent_email (a PK) forces membership to be. ──────────────────
+function updateLeaderChips(teamId) {
+  const cell = document.querySelector('#row-' + teamId + ' td:nth-child(3)');
+  if (!cell) return;
+  const rows = document.querySelectorAll('#edit-' + teamId + ' .leaders-section tr[data-email]');
+  if (!rows.length) { cell.innerHTML = '<span style="color:var(--faint)">— none —</span>'; return; }
+  cell.innerHTML = [...rows].map(r => `<span class="leader-chip">${r.children[0].innerHTML}</span>`).join(' ');
+}
+
+function addLeader(teamId, btn) {
+  const wrap  = btn.closest('.leader-add-row');
+  const input = wrap.querySelector('.leader-add-input');
+  const email = input.dataset.email || '';
+  const name  = input.value.trim();
+  if (!email) { flash('Pick an agent from the list.', 'err'); return; }
+  post({action:'add_leader', team_id: teamId, agent_email: email})
+    .then(d => {
+      if (!d.ok) { flash(d.error || 'Add failed', 'err'); return; }
+      const section = wrap.closest('.leaders-section');
+      const tbody   = section.querySelector('.leaders-table tbody');
+      const noRow   = tbody.querySelector('.no-leaders-row');
+      if (noRow) noRow.remove();
+      const existing = tbody.querySelector(`tr[data-email="${CSS.escape(email)}"]`);
+      if (existing) existing.remove();
+      const tr = document.createElement('tr');
+      tr.dataset.email = email;
+      tr.innerHTML = `<td>${esc(name)}</td><td class="member-email">${esc(email)}</td>` +
+        `<td style="text-align:right"><button class="btn-rm-member" title="Remove as leader" onclick="removeLeader(this, ${teamId})">✕</button></td>`;
+      tbody.appendChild(tr);
+      updateLeaderChips(teamId);
+      input.value = '';
+      input.dataset.email = '';
+      flash('Leader added.');
+    });
+}
+
+function removeLeader(btn, teamId) {
+  const tr    = btn.closest('tr');
+  const email = tr.dataset.email;
+  if (!confirm(`Remove ${email} as a leader of this team?`)) return;
+  post({action:'remove_leader', team_id: teamId, agent_email: email})
+    .then(d => {
+      if (!d.ok) { flash(d.error||'Remove failed','err'); return; }
+      const tbody = tr.closest('tbody');
+      tr.remove();
+      if (!tbody.querySelector('tr[data-email]')) {
+        tbody.innerHTML = '<tr class="no-leaders-row"><td colspan="3" class="no-members">No leaders yet — add one below.</td></tr>';
+      }
+      updateLeaderChips(teamId);
+      flash('Leader removed.');
+    });
 }
 
 // ── Members — added/removed in place, no page reload, so you can add several
