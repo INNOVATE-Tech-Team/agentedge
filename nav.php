@@ -73,6 +73,11 @@ function nav_items(): array {
 function agent_assets_items(): array {
     return [
         ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
+        // Referral Network: existed and worked (5 real commits, Facebook
+        // cross-posting and all) but had no menu entry anywhere -- same
+        // missing-nav-entry bug as Listing Intel below, just never caught
+        // for this one. Only reachable by typing the URL directly until now.
+        ['key' => 'referral_network',   'label' => 'Referral Network',        'href' => 'referral_network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         // Buy Back Your Time: every producing agent's own book of business,
         // not a backoffice/admin tool -- lives here, not in
