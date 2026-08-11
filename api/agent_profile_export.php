@@ -8,7 +8,12 @@
 // GET /api/agent_profile_export.php?token=...
 //   Bulk metadata only (no image bytes) — cheap to call for the whole roster.
 //   Response: { profiles: [{ email, bio, phone, license_number, license_state,
-//              specialty, headshot_uploaded_at }] }
+//              specialty, languages, headshot_uploaded_at }] }
+//   is_military/first_responder/is_teacher were considered for this export
+//   too but turned out to be free-text self-descriptions ("Veteran", "NYPD
+//   Sergeant", "not_applicable", "Substitute Teacher" in the is_military
+//   column) rather than real yes/no flags -- confirmed 2026-08-10, not
+//   usable as a clean filter without real normalization work, so left out.
 //
 // GET /api/agent_profile_export.php?action=headshot&email=...&token=...
 //   Streams the agent's most recently uploaded headshot image.
@@ -75,18 +80,19 @@ if ($action === 'headshot') {
 
 // ── Bulk profile + headshot-freshness metadata ──────────────────────────
 // Broadened from bio/headshot-only so the website can carry phone/license/
-// specialty too, not just bio+photo — every field intake.php collects that
-// the site has a column for. Filter widened to match: anyone with ANY of
-// these fields set, not just bio or a headshot.
+// specialty/languages too, not just bio+photo — feeds the specialty +
+// language filters on the public agent directory. Filter widened to
+// match: anyone with ANY of these fields set, not just bio or a headshot.
 header('Content-Type: application/json');
 $rows = $pdo->query(
-    "SELECT i.email, i.bio, i.phone, i.license_number, i.license_state, i.specialty,
+    "SELECT i.email, i.bio, i.phone, i.license_number, i.license_state, i.specialty, i.languages,
             (SELECT MAX(f.uploaded_at) FROM agent_intake_files f WHERE f.agent_email = i.email) AS headshot_uploaded_at
      FROM agent_intake i
      WHERE i.bio IS NOT NULL AND i.bio != ''
         OR i.phone IS NOT NULL AND i.phone != ''
         OR i.license_number IS NOT NULL AND i.license_number != ''
         OR i.specialty IS NOT NULL AND i.specialty != ''
+        OR i.languages IS NOT NULL AND i.languages != ''
         OR EXISTS (SELECT 1 FROM agent_intake_files f WHERE f.agent_email = i.email)"
 )->fetchAll(PDO::FETCH_ASSOC);
 
