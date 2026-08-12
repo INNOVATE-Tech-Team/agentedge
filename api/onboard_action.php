@@ -570,4 +570,38 @@ if ($action === 'send_intake') {
     exit;
 }
 
+// ── POST: mark_intake_submitted (admin override when agent filled out form but didn't click submit) ──
+if ($action === 'mark_intake_submitted') {
+    require_once __DIR__ . '/../lib/notifications.php';
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT agent_name, agent_email, market_center FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+
+    $agentEmail = $row['agent_email'];
+
+    // Upsert the intake row as submitted
+    $exists = $pdo->prepare("SELECT COUNT(*) FROM agent_intake WHERE email=?");
+    $exists->execute([$agentEmail]);
+    if ((int)$exists->fetchColumn() > 0) {
+        $pdo->prepare("UPDATE agent_intake SET submitted=1, submitted_at=datetime('now') WHERE email=? AND submitted=0")
+            ->execute([$agentEmail]);
+    } else {
+        $pdo->prepare("INSERT OR IGNORE INTO agent_intake (email, submitted, submitted_at) VALUES (?,1,datetime('now'))")
+            ->execute([$agentEmail]);
+    }
+
+    notify_intake_submitted($row['agent_name'], $agentEmail);
+    if (trim($row['market_center'] ?? '') !== '') {
+        notify_bic_ml_intake_submitted($row['agent_name'], $agentEmail, $row['market_center']);
+    }
+
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true]);
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
+    exit;
+}
+
 json_out(['ok'=>false,'error'=>'Unknown action'], 400);

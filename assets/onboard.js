@@ -290,7 +290,7 @@
     const intakeStatusHtml = entry.intake_submitted
       ? `<button class="ob-btn-sm ob-btn-done" onclick="toggleIntake(${entry.id})">${intakeOpenIds.has(entry.id) ? 'Hide' : 'View'} Intake Form</button>`
       : entry.intake_sent_at
-        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button>`
+        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this)">Mark Submitted</button>`
         : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button>`;
 
     const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
@@ -651,6 +651,17 @@
     if (!confirm('Send the intake form link to this agent by email?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=send_intake', { queue_id: queueId })
+      .then(d => {
+        if (d.ok) { loadQueue(); }
+        else { btn.disabled = false; alert(d.error || 'Error'); }
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
+  window.markIntakeSubmitted = function (queueId, btn) {
+    if (!confirm('Mark this agent\'s intake form as submitted? This will notify staff.')) return;
+    btn.disabled = true;
+    post('api/onboard_action.php?action=mark_intake_submitted', { queue_id: queueId })
       .then(d => {
         if (d.ok) { loadQueue(); }
         else { btn.disabled = false; alert(d.error || 'Error'); }
