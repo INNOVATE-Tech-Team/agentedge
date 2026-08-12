@@ -39,6 +39,9 @@ $superAdmin = is_super_admin();
     /* Table */
     .mls-table{width:100%;border-collapse:collapse;font-size:13px}
     .mls-table th{text-align:left;padding:8px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;border-bottom:2px solid #f0f0f0}
+    .mls-table th.th-sort{cursor:pointer;user-select:none}
+    .mls-table th.th-sort:hover{color:#5b8e0d}
+    .sort-arrow{margin-left:4px;font-size:9px;color:#5b8e0d}
     .mls-table td{padding:10px 12px;border-bottom:1px solid #f5f5f5;vertical-align:middle}
     .mls-table tr:hover td{background:#fafafa;cursor:pointer}
     .mls-table tr.no-click:hover td{cursor:default}
@@ -118,14 +121,14 @@ $superAdmin = is_super_admin();
           <table class="mls-table">
             <thead>
               <tr>
-                <th>MLS Name</th>
-                <th>Code</th>
-                <th>Region / States</th>
-                <th>Feed Source</th>
-                <th>Feed Type</th>
-                <th>Status</th>
-                <th>Monthly Fee</th>
-                <th>Products</th>
+                <th class="th-sort" onclick="sortTable('name')">MLS Name<span class="sort-arrow" id="arrow-name"></span></th>
+                <th class="th-sort" onclick="sortTable('code')">Code<span class="sort-arrow" id="arrow-code"></span></th>
+                <th class="th-sort" onclick="sortTable('region')">Region / States<span class="sort-arrow" id="arrow-region"></span></th>
+                <th class="th-sort" onclick="sortTable('feed_source')">Feed Source<span class="sort-arrow" id="arrow-feed_source"></span></th>
+                <th class="th-sort" onclick="sortTable('feed_type')">Feed Type<span class="sort-arrow" id="arrow-feed_type"></span></th>
+                <th class="th-sort" onclick="sortTable('status')">Status<span class="sort-arrow" id="arrow-status"></span></th>
+                <th class="th-sort" onclick="sortTable('monthly_fee')">Monthly Fee<span class="sort-arrow" id="arrow-monthly_fee"></span></th>
+                <th class="th-sort" onclick="sortTable('products')">Products<span class="sort-arrow" id="arrow-products"></span></th>
                 <th></th>
               </tr>
             </thead>
@@ -289,6 +292,28 @@ function feedTypeLabel(r){
 
 let allRows = [];
 let viewId = null;
+let sortKey = null;
+let sortAsc = true;
+
+const STATUS_ORDER = ['active','approved','applied','researching','paused','rejected'];
+const SORT_VALUE = {
+  name:        r => (r.mls_name||'').toLowerCase(),
+  code:        r => (r.mls_code||'').toLowerCase(),
+  region:      r => (r.region||'').toLowerCase(),
+  feed_source: r => (FEED_SOURCE_LABELS[r.feed_type]||r.feed_type||'').toLowerCase(),
+  feed_type:   r => feedTypeLabel(r).toLowerCase(),
+  status:      r => STATUS_ORDER.indexOf(r.status),
+  monthly_fee: r => parseFloat(r.monthly_fee||0),
+  products:    r => (r.products||'').toLowerCase(),
+};
+
+function sortTable(key){
+  if(sortKey===key) sortAsc=!sortAsc; else { sortKey=key; sortAsc=true; }
+  document.querySelectorAll('.sort-arrow').forEach(el=>el.textContent='');
+  const arrow=document.getElementById('arrow-'+key);
+  if(arrow) arrow.textContent = sortAsc ? '▲' : '▼';
+  renderTable(allRows);
+}
 
 function load(){
   fetch('api/mls_action.php',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
@@ -311,8 +336,12 @@ function renderTiles(rows){
 function renderTable(rows){
   const tbody=document.getElementById('mls-tbody');
   if(!rows.length){tbody.innerHTML='<tr><td colspan="9" class="empty-note">No MLS integrations yet. Click "+ Add MLS" to get started.</td></tr>';return;}
-  const order=['active','approved','applied','researching','paused','rejected'];
-  rows=[...rows].sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status));
+  rows=[...rows].sort((a,b)=>{
+    const key = sortKey || 'status';
+    const va=SORT_VALUE[key](a), vb=SORT_VALUE[key](b);
+    const cmp = typeof va==='number' ? va-vb : String(va).localeCompare(String(vb));
+    return sortKey && !sortAsc ? -cmp : cmp;
+  });
   tbody.innerHTML=rows.map(r=>{
     const prods=(r.products||'').split(',').filter(Boolean).map(p=>esc(PROD_LABELS[p]||p)).join(', ')||'—';
     return `<tr onclick="viewRow(${r.id})" style="cursor:pointer">
