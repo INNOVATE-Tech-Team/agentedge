@@ -45,6 +45,22 @@ function toggleSbLinks(btn) {
   });
 })();
 
+// ── Mobile sidebar toggle ─────────────────────────────────────────────────────
+
+function toggleSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const open = sidebar.classList.toggle('sidebar-open');
+  document.getElementById('sb-overlay')?.remove();
+  if (open) {
+    const overlay = document.createElement('div');
+    overlay.id = 'sb-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.45)';
+    overlay.addEventListener('click', toggleSidebar);
+    document.body.appendChild(overlay);
+  }
+}
+
 // ── Masquerade stop ───────────────────────────────────────────────────────────
 
 function stopMasquerade() {
@@ -54,7 +70,7 @@ function stopMasquerade() {
     body: JSON.stringify({ action: 'stop' }),
   })
     .then(r => r.json())
-    .then(d => { location.href = d.redirect || 'roster.php'; })
+    .then(d => { location.href = d.redirect || 'index.php'; })
     .catch(() => location.reload());
 }
 
