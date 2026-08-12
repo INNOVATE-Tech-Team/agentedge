@@ -597,6 +597,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
         </div>
         <?php endif; ?>
         <div class="mc-group-content" id="mc-content-<?= $mcEditId ?>">
+        <div style="overflow-x:auto">
         <table class="agent-table">
           <thead>
             <tr>
@@ -690,6 +691,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
             <?php endforeach; ?>
           </tbody>
         </table>
+        </div><!-- /overflow-x -->
         </div><!-- /mc-group-content -->
       </div>
       <?php endforeach; ?>

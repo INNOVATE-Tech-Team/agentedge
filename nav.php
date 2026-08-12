@@ -74,8 +74,6 @@ function agent_assets_items(): array {
     return [
         ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
-        ['key' => 'commission_submit',  'label' => 'Submit Commission Check', 'href' => 'commission_submit.php'],
-        ['key' => 'my_activity',        'label' => 'My Weekly Activity',      'href' => 'my_activity.php'],
         // Buy Back Your Time: every producing agent's own book of business,
         // not a backoffice/admin tool -- lives here, not in
         // backoffice_nav_items(), same as profile.php/network.php above.
@@ -103,6 +101,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
         ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations', 'leaderVisible'=>true],
+        // Company-wide cross-MC list — intentionally admin-only, no 'leaderVisible'
+        // (see project_mc_leader_bic_operations_access memory).
+        ['key'=>'backoffice_production_ranking', 'label'=>'Production Ranking', 'href'=>'backoffice_production_ranking.php', 'dept'=>'Operations'],
         ['key'=>'recruit_prospects',         'label'=>'Recruiting Prospects','href'=>'backoffice_prospects.php',      'dept'=>'Operations', 'superOnly'=>true],
         // ── My Team (team_leader role) ──────────────────────────────────────────
         // Its own dept so it never entangles with the mc_leader/bic-only
@@ -210,7 +211,7 @@ function render_sidebar(string $current, array $agent): void {
            . '<button class="masq-back" onclick="stopMasquerade()">Back to Admin</button></div>';
     }
 
-    echo '<aside class="sidebar"><a class="sb-brand" href="index.php" style="display:block;text-decoration:none;color:inherit"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></a><nav class="sb-nav">';
+    echo '<aside class="sidebar"><div class="sb-top"><a class="sb-brand" href="index.php" style="text-decoration:none;color:inherit"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></a><button class="sb-toggle" onclick="toggleSidebar()" aria-label="Open navigation">&#9776;</button></div><nav class="sb-nav">';
     $superAdmin = !empty($perms['isSuperAdmin']);
     // Build personalized label once for use in the loop.
     $nameParts = preg_split('/\s+/', trim($agent['name'] ?? ''));

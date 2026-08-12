@@ -119,6 +119,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
       <main class="wrap">
         <section class="card">
           <div class="roster-count" id="roster-count">Loading agents…</div>
+          <div style="overflow-x:auto">
           <table class="tx sortable" id="roster-table" hidden>
             <thead><tr>
               <th data-sort="name">Agent</th>
@@ -129,6 +130,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
+          </div>
           <div id="roster-empty" class="network-empty" hidden>No agents found.</div>
         </section>
       </main>
