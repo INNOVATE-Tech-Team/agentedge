@@ -316,12 +316,27 @@ function darwin_sync_sales_volume(): array {
             ytd_transaction_count=excluded.ytd_transaction_count, volume_modify_date=excluded.volume_modify_date,
             company_id=excluded.company_id, synced_at=datetime('now')");
 
+    // Append-only daily snapshot log — see darwin_sales_volume_history's
+    // comment in local_db.php for why this exists (future trailing-12-month
+    // ranking). One row per agent per day it actually changed; re-running the
+    // cron the same day is a no-op via the UNIQUE(agent_person_id, snapshot_date).
+    $today = date('Y-m-d');
+    $histStmt = $db->prepare("INSERT OR IGNORE INTO darwin_sales_volume_history
+        (agent_person_id, agent_name, ytd_sales_volume, ytd_transaction_count, snapshot_date, company_id)
+        VALUES (?,?,?,?,?,?)");
+
     foreach ($rows as $r) {
+        $volume = darwin_parse_currency($r['ytdSalesVolume'] ?? null);
+        $deals  = (float)($r['ytdTransactionCount'] ?? 0);
         $stmt->execute([
             (int)$r['agentPersonId'], $r['agentName'] ?? '',
-            darwin_parse_currency($r['ytdSalesVolume'] ?? null), darwin_parse_currency($r['ytdSalesVolumeProcessedBasis'] ?? null),
+            $volume, darwin_parse_currency($r['ytdSalesVolumeProcessedBasis'] ?? null),
             darwin_parse_currency($r['ytdListVolume'] ?? null), darwin_parse_currency($r['ytdSellVolume'] ?? null),
-            (float)($r['ytdTransactionCount'] ?? 0), $r['volumeModifyDate'] ?? '', (string)($r['companyID'] ?? ''),
+            $deals, $r['volumeModifyDate'] ?? '', (string)($r['companyID'] ?? ''),
+        ]);
+        $histStmt->execute([
+            (int)$r['agentPersonId'], $r['agentName'] ?? '', $volume, $deals,
+            $today, (string)($r['companyID'] ?? ''),
         ]);
     }
     return ['synced' => count($rows), 'incremental' => (bool)$watermark];
