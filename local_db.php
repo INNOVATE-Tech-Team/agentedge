@@ -1427,6 +1427,23 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
+    // Savannah, GA: the MLS membership (mls_memberships/mls_integrations,
+    // "Savannah Area Realtors"), GA license, and Darwin production data for
+    // this office already existed under Michael Fries -- this was the one
+    // missing piece, so it surfaces in every UI that reads market_centers
+    // (roster, agent directory, profile MC-assignment, conference rooms) the
+    // same way every other market center does. address/city/zip/mc_leader_email
+    // intentionally left blank, matching most existing rows, for the broker
+    // to fill in via the Market Centers admin page.
+    $pdo->exec("INSERT OR IGNORE INTO market_centers (slug, name, state_code, sort_ord, enabled, bic_email, mc_leader_email)
+                VALUES ('savannah', 'Savannah', 'GA', 0, 1, 'michaelfriesrealestate@gmail.com', '')");
+
+    // Re-point the pre-existing Savannah MLS resource link + its unfilled
+    // placeholder links (ShowingTime / GA License Renewal / GA State
+    // Resources) off the stale 'georgia' slug -- which matches no
+    // market_centers row and so was orphaned/invisible -- onto 'savannah'.
+    $pdo->exec("UPDATE mc_resource_links SET mc_slug='savannah' WHERE mc_slug='georgia'");
+
     // Market-Center-scoped events, self-service for MC Leaders/BICs (own MC
     // only) and admins (any MC) — see mc_events.php/api/mc_events_action.php.
     // Distinct from custom_events (Industry Events), which is one shared
