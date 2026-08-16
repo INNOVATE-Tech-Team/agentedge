@@ -297,7 +297,7 @@ function findDotloopMatch(btn) {
       box.innerHTML = matches.map(function(m) {
         return '<div class="sh-match-row"><span>' + escapeHtml(m.email) + ' (' + m.loop_count
           + ' loop' + (m.loop_count == 1 ? '' : 's') + ')</span>'
-          + '<button type="button" class="sh-btn-use" onclick="useDotloopMatch(' + JSON.stringify(staffEmail) + ',' + JSON.stringify(m.email) + ', this)">Use this</button></div>';
+          + '<button type="button" class="sh-btn-use" data-staff-email="' + escapeHtml(staffEmail) + '" data-candidate-email="' + escapeHtml(m.email) + '" onclick="useDotloopMatch(this)">Use this</button></div>';
       }).join('');
     })
     .catch(function() {
@@ -306,7 +306,9 @@ function findDotloopMatch(btn) {
       box.innerHTML = '<span class="sh-no-match">Search failed.</span>';
     });
 }
-function useDotloopMatch(staffEmail, candidateEmail, btn) {
+function useDotloopMatch(btn) {
+  var staffEmail = btn.dataset.staffEmail;
+  var candidateEmail = btn.dataset.candidateEmail;
   if (!confirm('Set "' + candidateEmail + '" as the DotLoop alternate email for ' + staffEmail + '?')) return;
   btn.disabled = true;
   // Fetch existing agent_extra fields first so this save only touches
