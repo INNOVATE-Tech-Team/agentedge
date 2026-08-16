@@ -63,6 +63,16 @@ foreach ($db->query("SELECT email, alt_email, dotloop_alt_email FROM agent_extra
     ];
 }
 
+// Non-selling AgentEdge roles (admin/office/recruiting staff) never produce
+// Darwin or DotLoop activity, so they'd otherwise sit in "In Neither"
+// forever. Sourced from agent_roles rather than tblstaff.admin — the latter
+// flags some genuine producing agents (e.g. an owner who still sells) who
+// should still surface here if their sync is actually broken.
+$nonSellingEmails = array_flip(array_map(
+    fn($e) => strtolower(trim($e)),
+    $db->query("SELECT email FROM agent_roles WHERE role IN ('staff','recruiter','super_admin')")->fetchAll(PDO::FETCH_COLUMN)
+));
+
 $staff = db_query_safe("SELECT email, firstname, lastname FROM tblstaff WHERE active=1", []);
 
 $buckets = ['darwin_only' => [], 'dotloop_only' => [], 'both' => [], 'neither' => []];
@@ -70,6 +80,7 @@ foreach ($staff as $s) {
     $email = trim($s['email']);
     $name  = trim($s['firstname'] . ' ' . $s['lastname']);
     if (sync_health_is_noise($name, $email)) continue;
+    if (isset($nonSellingEmails[strtolower($email)])) continue;
 
     $e          = strtolower($email);
     $altDarwin  = $altEmails[$e]['alt_email'] ?? '';
