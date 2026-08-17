@@ -226,6 +226,10 @@ $googlePlacesKey = google_places_api_key();
       </div>
       <div id="hd-results"></div>
       <div style="margin-top:32px">
+        <div class="section-label">Saved Deals</div>
+        <div id="hd-saved"><div class="empty-note">Loading…</div></div>
+      </div>
+      <div style="margin-top:32px">
         <div class="section-label">Past Sends</div>
         <div id="hd-history"><div class="empty-note">Loading…</div></div>
       </div>
@@ -256,7 +260,7 @@ document.querySelectorAll('.bb-tab').forEach(tab => {
     document.getElementById(tab.dataset.panel).classList.add('active');
     if (tab.dataset.panel === 'bb-automate') { loadCandidates(); loadDrafts('automate', 'bb-automate-drafts'); }
     if (tab.dataset.panel === 'bb-eliminate') { loadDrafts('eliminate', 'bb-eliminate-drafts'); }
-    if (tab.dataset.panel === 'bb-hotdeals') { loadHdHistory(); loadHdSyncStatus(); } else { hdStopSyncPoll(); }
+    if (tab.dataset.panel === 'bb-hotdeals') { loadHdHistory(); loadHdSyncStatus(); loadHdSaved(); } else { hdStopSyncPoll(); }
     if (tab.dataset.panel === 'bb-admin') { loadAdminTable(); }
   });
 });
@@ -758,8 +762,11 @@ async function hdRefreshLeads() {
   }
 }
 
+let hdLastCandidates = [];
+
 function renderHdResults(candidates) {
   const container = document.getElementById('hd-results');
+  hdLastCandidates = candidates;
   if (!candidates.length) {
     container.innerHTML = '<div class="empty-note">No active listings matched this spec (within your own assigned leads).</div>';
     return;
@@ -788,11 +795,12 @@ function renderHdResults(candidates) {
           ${rows}
           <div class="deal-send-bar">
             <button class="btn-secondary" onclick="hdSend(${idx})">Send to selected</button>
+            <button class="btn-secondary" onclick="hdSaveDeal(${idx})">Save deal</button>
             <span class="send-status" id="hd-send-status-${idx}"></span>
           </div>
         </div>`;
     } else {
-      leadsHtml = `<div class="leads-box"><span class="empty-note" style="padding:4px 0">No leads currently searching for this type of property.</span></div>`;
+      leadsHtml = `<div class="leads-box"><span class="empty-note" style="padding:4px 0">No leads have viewed a similar property recently.</span></div>`;
     }
 
     return `<div class="deal-card" data-listing-key="${bbEscape(c.listing_key)}" data-rationale="${bbEscape(c.rationale || '')}">
@@ -846,6 +854,171 @@ async function hdSend(idx) {
   } catch (e) {
     statusEl.textContent = 'Network error — could not reach the server.';
     statusEl.className = 'send-status err';
+  }
+}
+
+// ── Saved Deals ──────────────────────────────────────────────────────────────
+// A search result only lived on screen until you navigated away or re-ran
+// the search -- this persists a listing + the leads you had checked so it's
+// waiting the next time you open the tool, instead of needing a fresh search.
+// Sending a saved deal still goes through the same hotdeals/send.php path as
+// a live result (with saved_deal_id attached so the CRM marks it sent
+// afterward) -- nothing about a save is trusted at send time; the CRM
+// re-verifies every recipient live against FUB regardless.
+async function hdSaveDeal(idx) {
+  const card = document.querySelectorAll('.deal-card')[idx];
+  const listingKey = card.dataset.listingKey;
+  const rationale = card.dataset.rationale;
+  const candidate = hdLastCandidates[idx];
+  const checkedIds = Array.from(card.querySelectorAll(`.hd-lead-cb[data-deal="${idx}"]:checked`))
+    .map(cb => parseInt(cb.dataset.personId, 10));
+  const selectedLeads = (candidate.matching_leads || []).filter(l => checkedIds.includes(l.person_id));
+  const statusEl = document.getElementById('hd-send-status-' + idx);
+  if (!selectedLeads.length) {
+    statusEl.textContent = 'Select at least one lead to save.';
+    statusEl.className = 'send-status err';
+    return;
+  }
+  // matching_leads/_has_lead_interest are dropped from the stored snapshot --
+  // selected_leads above already carries what's needed to render/send this
+  // saved deal, so keeping the full match list too would just be dead weight.
+  const snapshot = Object.assign({}, candidate);
+  delete snapshot.matching_leads;
+  delete snapshot._has_lead_interest;
+
+  statusEl.textContent = 'Saving…'; statusEl.className = 'send-status';
+  try {
+    const r = await fetch('api/buyback_hotdeals_save.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({listing_key: listingKey, listing_snapshot: snapshot, selected_leads: selectedLeads, rationale: rationale}),
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      statusEl.textContent = 'Error: ' + (data.error || data.detail || 'could not save');
+      statusEl.className = 'send-status err';
+      return;
+    }
+    statusEl.textContent = 'Saved.';
+    statusEl.className = 'send-status ok';
+    loadHdSaved(true);
+  } catch (e) {
+    statusEl.textContent = 'Network error — could not reach the server.';
+    statusEl.className = 'send-status err';
+  }
+}
+
+let hdSavedItems = [];
+
+async function loadHdSaved(force) {
+  const el = document.getElementById('hd-saved');
+  if (!force && el.dataset.loaded === '1') return;
+  el.dataset.loaded = '1';
+  try {
+    const r = await fetch('api/buyback_hotdeals_saved.php', {credentials: 'same-origin'});
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      el.innerHTML = '<div class="empty-note">Could not load saved deals.</div>';
+      return;
+    }
+    hdSavedItems = data.saved || [];
+    renderHdSaved();
+  } catch (e) {
+    el.innerHTML = '<div class="empty-note">Could not load saved deals.</div>';
+  }
+}
+
+function renderHdSaved() {
+  const el = document.getElementById('hd-saved');
+  if (!hdSavedItems.length) {
+    el.innerHTML = '<div class="empty-note">No saved deals yet — use "Save deal" on a search result above.</div>';
+    return;
+  }
+  el.innerHTML = hdSavedItems.map((item, i) => {
+    const c = item.listing || {};
+    const badges = [];
+    if (c.value_score !== null && c.value_score !== undefined) {
+      badges.push(`<span class="badge ${c.value_score >= 0 ? 'value-good' : 'value-bad'}">${hdPct(c.value_score)} vs. comps</span>`);
+    }
+    if (c.net_roi !== null && c.net_roi !== undefined) {
+      badges.push(`<span class="badge roi">${hdPct(c.net_roi)} net ROI</span>`);
+    }
+    const leads = item.selected_leads || [];
+    const rows = leads.map(l =>
+      `<div class="lead-row"><label><input type="checkbox" class="hd-saved-lead-cb" data-saved="${i}" data-person-id="${l.person_id}" checked> ${bbEscape(l.name || l.email)} (${bbEscape(l.email)})</label></div>`
+    ).join('');
+    return `<div class="deal-card" data-saved-id="${bbEscape(item.id)}">
+      <div class="deal-top">
+        <div>
+          <div class="deal-price">${hdMoney(c.list_price)}</div>
+          <div class="deal-addr">${bbEscape(c.unparsed_address)} · ${c.bedrooms_total}bd/${c.bathrooms_full}ba · ${c.living_area_sqft ? Math.round(c.living_area_sqft).toLocaleString() + ' sqft' : ''}</div>
+        </div>
+        <div class="deal-badges">${badges.join('')}</div>
+      </div>
+      <div class="leads-box">
+        <div class="section-label">Selected leads (${leads.length})</div>
+        ${rows}
+        <div class="deal-send-bar">
+          <button class="btn-secondary" onclick="hdSendSaved(${i})">Send to selected</button>
+          <button class="btn-danger" onclick="hdDeleteSaved(${i})">Delete</button>
+          <span class="send-status" id="hd-saved-status-${i}"></span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function hdSendSaved(i) {
+  const item = hdSavedItems[i];
+  const card = document.querySelectorAll('[data-saved-id]')[i];
+  const personIds = Array.from(card.querySelectorAll(`.hd-saved-lead-cb[data-saved="${i}"]:checked`))
+    .map(cb => parseInt(cb.dataset.personId, 10));
+  const statusEl = document.getElementById('hd-saved-status-' + i);
+  if (!personIds.length) {
+    statusEl.textContent = 'Select at least one lead.';
+    statusEl.className = 'send-status err';
+    return;
+  }
+  if (!confirm(`Send the hot-deal email for ${item.listing_key} to ${personIds.length} lead(s)? This sends a real email and cannot be undone.`)) return;
+
+  statusEl.textContent = 'Sending…'; statusEl.className = 'send-status';
+  try {
+    const r = await fetch('api/buyback_hotdeals_send.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({listing_key: item.listing_key, person_ids: personIds, rationale: item.rationale, saved_deal_id: item.id}),
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      statusEl.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
+      statusEl.className = 'send-status err';
+      return;
+    }
+    statusEl.textContent = `Sent to ${data.sent.length} lead(s)` + (data.errors.length ? `, ${data.errors.length} failed` : '') + '.';
+    statusEl.className = 'send-status ok';
+    loadHdHistory(true);
+    loadHdSaved(true);
+  } catch (e) {
+    statusEl.textContent = 'Network error — could not reach the server.';
+    statusEl.className = 'send-status err';
+  }
+}
+
+async function hdDeleteSaved(i) {
+  const item = hdSavedItems[i];
+  if (!confirm('Delete this saved deal? This cannot be undone.')) return;
+  try {
+    const r = await fetch('api/buyback_hotdeals_saved_delete.php?saved_id=' + encodeURIComponent(item.id), {
+      method: 'POST', credentials: 'same-origin',
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      alert('Error: ' + (data.error || 'could not delete'));
+      return;
+    }
+    loadHdSaved(true);
+  } catch (e) {
+    alert('Network error — could not reach the server.');
   }
 }
 

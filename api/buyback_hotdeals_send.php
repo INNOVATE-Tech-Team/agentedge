@@ -38,11 +38,14 @@ $sender  = [
     'phone' => $profile['phone'] ?? '',
 ];
 
+$savedDealId = trim($body['saved_deal_id'] ?? '');
+
 $payload = json_encode([
-    'listing_key' => $listingKey,
-    'person_ids'  => array_values(array_map('intval', $personIds)),
-    'rationale'   => $rationale !== '' ? $rationale : null,
-    'sender'      => $sender,
+    'listing_key'   => $listingKey,
+    'person_ids'    => array_values(array_map('intval', $personIds)),
+    'rationale'     => $rationale !== '' ? $rationale : null,
+    'sender'        => $sender,
+    'saved_deal_id' => $savedDealId !== '' ? $savedDealId : null,
 ]);
 
 $ch = curl_init($url);
