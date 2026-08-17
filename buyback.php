@@ -44,6 +44,11 @@ $googlePlacesKey = google_places_api_key();
 .send-status.ok{color:#2e7d32}
 .send-status.err{color:#c0392b}
 .empty-note{color:var(--faint);font-style:italic;text-align:center;padding:20px}
+.hd-sync-status{margin-top:12px;font-size:12px;color:#888;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hd-sync-status.syncing{color:#5b8e0d}
+.hd-sync-status.err{color:#c0392b}
+.hd-sync-status a{color:#5b8e0d;font-weight:700;cursor:pointer;text-decoration:none}
+.hd-sync-status a:hover{text-decoration:underline}
 .packet-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:20px 24px;margin-top:20px}
 .packet-card h4{margin:0 0 8px;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#333}
 .packet-card p{font-size:13px;line-height:1.6;color:#333;margin:0 0 16px}
@@ -213,64 +218,7 @@ $googlePlacesKey = google_places_api_key();
         </div>
         <p style="font-size:11px;color:#888;margin:-6px 0 0">Tip: leaving Min Price blank ranks by the very cheapest listings citywide, which often won't match what your leads are actually searching for — most real saved searches have a price floor (e.g. "$300,000+"). Set one close to what your leads are searching for real matches.</p>
         <p class="hint" style="margin-top:10px">Only matches leads assigned to you in Follow Up Boss — never another agent's contacts.</p>
-        <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
-          <button class="btn-primary" id="hd-search-btn" onclick="hdSearch()">Find Deals</button>
-          <span class="send-status" id="hd-search-status"></span>
-        </div>
-      </div>
-      <div id="hd-results"></div>
-      <div style="margin-top:32px">
-        <div class="section-label">Past Sends</div>
-        <div id="hd-history"><div class="empty-note">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Hot Deals: find best-value listings, matched to your own FUB leads only -->
-    <div id="bb-hotdeals" class="bb-panel">
-      <div class="bb-form">
-        <h3>Find a deal</h3>
-        <div class="field-row">
-          <div class="field">
-            <label>City</label>
-            <input type="text" id="hd-city" placeholder="e.g. North Myrtle Beach">
-          </div>
-          <div class="field">
-            <label>Property Type</label>
-            <select id="hd-sub-type">
-              <option value="Condominium">Condominium</option>
-              <option value="Single Family Residence">Single Family Residence</option>
-              <option value="Townhouse">Townhouse</option>
-              <option value="Detached">Detached</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Beds (min–max)</label>
-            <div style="display:flex;gap:6px">
-              <input type="number" id="hd-min-beds" min="0" placeholder="min">
-              <input type="number" id="hd-max-beds" min="0" placeholder="max">
-            </div>
-          </div>
-          <div class="field">
-            <label>Baths (min–max)</label>
-            <div style="display:flex;gap:6px">
-              <input type="number" id="hd-min-baths" min="0" placeholder="min">
-              <input type="number" id="hd-max-baths" min="0" placeholder="max">
-            </div>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Min Price (optional)</label>
-            <input type="number" id="hd-min-price" min="0" placeholder="e.g. 300000">
-          </div>
-          <div class="field">
-            <label>Max Price (optional)</label>
-            <input type="number" id="hd-max-price" min="0" placeholder="e.g. 600000">
-          </div>
-          <label class="hd-check"><input type="checkbox" id="hd-oceanfront"> Oceanfront only</label>
-        </div>
-        <p style="font-size:11px;color:#888;margin:-6px 0 0">Tip: leaving Min Price blank ranks by the very cheapest listings citywide, which often won't match what your leads are actually searching for — most real saved searches have a price floor (e.g. "$300,000+"). Set one close to what your leads are searching for real matches.</p>
-        <p class="hint" style="margin-top:10px">Only matches leads assigned to you in Follow Up Boss — never another agent's contacts.</p>
+        <div id="hd-sync-status" class="hd-sync-status"></div>
         <div style="margin-top:14px;display:flex;align-items:center;gap:14px">
           <button class="btn-primary" id="hd-search-btn" onclick="hdSearch()">Find Deals</button>
           <span class="send-status" id="hd-search-status"></span>
@@ -308,7 +256,7 @@ document.querySelectorAll('.bb-tab').forEach(tab => {
     document.getElementById(tab.dataset.panel).classList.add('active');
     if (tab.dataset.panel === 'bb-automate') { loadCandidates(); loadDrafts('automate', 'bb-automate-drafts'); }
     if (tab.dataset.panel === 'bb-eliminate') { loadDrafts('eliminate', 'bb-eliminate-drafts'); }
-    if (tab.dataset.panel === 'bb-hotdeals') { loadHdHistory(); }
+    if (tab.dataset.panel === 'bb-hotdeals') { loadHdHistory(); loadHdSyncStatus(); } else { hdStopSyncPoll(); }
     if (tab.dataset.panel === 'bb-admin') { loadAdminTable(); }
   });
 });
@@ -360,17 +308,52 @@ function bbAdjustRadius(delta) {
 // Callback fired by the Maps JS API <script> tag's ?callback= param once it's
 // loaded — reuses the same API key already configured for Google Business
 // Profile matching (lib/google_business.php), no new key needed.
+//
+// google.maps.places.Autocomplete silently returns zero predictions on this
+// key/project (confirmed live 2026-08-13 via the browser console: "As of
+// March 1st, 2025, google.maps.places.Autocomplete is not available to new
+// customers" -- Google's own replacement is PlaceAutocompleteElement, a
+// self-contained custom element rather than an enhancement of a plain
+// <input>. bbPrep() and everything else still reads address text from the
+// original #bb-address input, so that input stays in the DOM (hidden) as
+// the single source of truth -- the new element's shadow-DOM input is kept
+// synced into it on every keystroke (not just on suggestion-select), since
+// not every address (new construction, rural) will be in Google's
+// suggestions and agents need to be able to type one in free-hand exactly
+// like before. Wrapped defensively: if this fast-evolving API's shape ever
+// shifts again, construction/access failures fail soft back to the plain,
+// fully-usable text input rather than a half-broken page.
 function bbGmapsReady() {
-  const input = document.getElementById('bb-address');
-  if (!input || !window.google || !google.maps || !google.maps.places) return;
-  const ac = new google.maps.places.Autocomplete(input, {
-    types: ['address'], componentRestrictions: {country: 'us'},
-    fields: ['formatted_address'],
-  });
-  ac.addListener('place_changed', () => {
-    const place = ac.getPlace();
-    if (place && place.formatted_address) input.value = place.formatted_address;
-  });
+  const legacyInput = document.getElementById('bb-address');
+  if (!legacyInput || !window.google || !google.maps || !google.maps.places) return;
+  if (!google.maps.places.PlaceAutocompleteElement) return;
+
+  try {
+    const ac = new google.maps.places.PlaceAutocompleteElement();
+    ac.id = 'bb-address-ac';
+    ac.style.display = 'block';
+    ac.style.width = '100%';
+    if (legacyInput.placeholder) ac.setAttribute('placeholder', legacyInput.placeholder);
+    legacyInput.insertAdjacentElement('afterend', ac);
+    legacyInput.style.display = 'none';
+
+    const wireShadowSync = () => {
+      const innerInput = ac.shadowRoot && ac.shadowRoot.querySelector('input');
+      if (innerInput) innerInput.addEventListener('input', () => { legacyInput.value = innerInput.value; });
+    };
+    requestAnimationFrame(wireShadowSync);
+
+    ac.addEventListener('gmp-select', async (event) => {
+      try {
+        const place = event.placePrediction.toPlace();
+        await place.fetchFields({fields: ['formattedAddress']});
+        if (place.formattedAddress) legacyInput.value = place.formattedAddress;
+      } catch (e) { /* selection didn't resolve -- legacy input keeps whatever text is already there */ }
+    });
+  } catch (e) {
+    // PlaceAutocompleteElement unavailable/failed to construct -- leave the
+    // plain input visible and fully usable, just without suggestions.
+  }
 }
 
 // ── Delegate packet + comp map/list/CMA ─────────────────────────────────────
@@ -678,10 +661,100 @@ async function hdSearch() {
     renderHdResults(data.candidates || []);
     if (!data.fub_configured) status.textContent = 'Note: FUB lead matching is not configured.';
     if (!data.str_data_configured) status.textContent += (status.textContent ? ' ' : '') + 'Note: rental-income data is not configured — ranked by price vs. comps only.';
+    // The preview response already carries this agent's lead-interest sync
+    // status (see innovate.buyback_lead_sync_state on the CRM side) -- reuse
+    // it directly instead of a second round-trip to sync-status.php.
+    renderHdSyncStatus({status: data.leads_sync_status, last_synced_at: data.leads_last_synced_at});
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Find Deals';
     status.textContent = 'Network error — could not reach the server.';
     status.className = 'send-status err';
+  }
+}
+
+// ── Hot Deals lead-interest sync status ─────────────────────────────────────
+// Matching leads now comes from a per-agent cache (innovate.buyback_lead_
+// interest_cache) instead of a live FUB crawl on every search -- that live
+// crawl took 5+ minutes for a large book, which is why this exists: an
+// agent should be able to see whether their leads have ever been synced,
+// trigger a sync themselves, and watch it finish, rather than wondering why
+// a search shows no matches.
+let hdSyncPollTimer = null;
+
+function hdRelativeTime(iso) {
+  if (!iso) return null;
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return hours + (hours === 1 ? ' hour ago' : ' hours ago');
+  const days = Math.round(hours / 24);
+  return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+function renderHdSyncStatus(data) {
+  const el = document.getElementById('hd-sync-status');
+  if (!el) return;
+  const status = data.status;
+  const lastSynced = data.last_synced_at;
+  el.className = 'hd-sync-status';
+
+  if (status === 'running' || status === 'started') {
+    el.classList.add('syncing');
+    el.innerHTML = 'Gathering your lead activity from Follow Up Boss (can take a few minutes for a large book) — matches will improve once this finishes.';
+    hdStartSyncPoll();
+  } else if (status === 'error') {
+    el.classList.add('err');
+    el.innerHTML = 'Last sync failed' + (lastSynced ? ' (last good sync ' + hdRelativeTime(lastSynced) + ')' : '') + '. <a onclick="hdRefreshLeads()">Try again</a>';
+    hdStopSyncPoll();
+  } else if (status === 'never_synced' || !status) {
+    el.innerHTML = 'Your lead activity hasn\'t been synced yet — the first search will start this automatically, or <a onclick="hdRefreshLeads()">sync now</a>.';
+    hdStopSyncPoll();
+  } else {
+    el.innerHTML = 'Leads last synced ' + (hdRelativeTime(lastSynced) || 'recently') + '. <a onclick="hdRefreshLeads()">Refresh</a>';
+    hdStopSyncPoll();
+  }
+}
+
+function hdStartSyncPoll() {
+  if (hdSyncPollTimer) return;
+  hdSyncPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('api/buyback_hotdeals_sync_status.php', {credentials: 'same-origin'});
+      const data = await r.json();
+      if (data.ok !== false) renderHdSyncStatus(data);
+    } catch (e) { /* transient network blip -- keep polling silently */ }
+  }, 15000);
+}
+
+function hdStopSyncPoll() {
+  if (hdSyncPollTimer) { clearInterval(hdSyncPollTimer); hdSyncPollTimer = null; }
+}
+
+async function loadHdSyncStatus() {
+  try {
+    const r = await fetch('api/buyback_hotdeals_sync_status.php', {credentials: 'same-origin'});
+    const data = await r.json();
+    if (data.ok !== false) renderHdSyncStatus(data);
+  } catch (e) { /* non-critical status line -- fail silently */ }
+}
+
+async function hdRefreshLeads() {
+  const el = document.getElementById('hd-sync-status');
+  try {
+    const r = await fetch('api/buyback_hotdeals_sync.php', {method: 'POST', credentials: 'same-origin'});
+    const data = await r.json();
+    if (data.ok === false) {
+      if (el) { el.className = 'hd-sync-status err'; el.textContent = 'Error: ' + (data.error || 'could not start sync'); }
+      return;
+    }
+    if (data.status === 'recently_synced') {
+      renderHdSyncStatus({status: 'done', last_synced_at: data.last_synced_at});
+      return;
+    }
+    renderHdSyncStatus({status: data.status === 'already_running' ? 'running' : 'started'});
+  } catch (e) {
+    if (el) { el.className = 'hd-sync-status err'; el.textContent = 'Network error — could not reach the server.'; }
   }
 }
 
@@ -822,6 +895,16 @@ function bbToggleDraftCard(topEl) {
   const details = card.querySelector('.draft-details');
   details.hidden = !details.hidden;
   card.classList.toggle('expanded', !details.hidden);
+  // A Google Map initialized while its container is still `hidden` renders
+  // blank (zero-size at init time) -- so the map is built lazily on first
+  // expand instead of at insertion time, once the div actually has size.
+  if (!details.hidden) {
+    const mapEl = details.querySelector('.comp-map[data-draft-id]');
+    if (mapEl && !mapEl.dataset.rendered) {
+      mapEl.dataset.rendered = '1';
+      renderSavedCompMap(mapEl, bbSavedSnapshots[mapEl.dataset.draftId]);
+    }
+  }
 }
 
 // Renders the comps a saved Delegate search actually used, from the stored
@@ -829,11 +912,27 @@ function bbToggleDraftCard(topEl) {
 // even if a comp has since sold/gone under contract/been delisted. Reuses
 // compPriceLabel(), which only cares about status/closePrice/listPrice --
 // the same shape _comp_out() already produces server-side.
-function renderSavedComps(d) {
+// Comp-level detail (address/price/lat-lon) wasn't always saved into
+// context_snapshot -- older searches only have aggregate stats, so there's
+// nothing here to list or plot on a map. No reliable cutoff timestamp to
+// key off of, so just say so whenever the array is missing/empty.
+const bbSavedSnapshots = {};
+
+function renderSavedComps(d, agentType) {
   const snap = d.contextSnapshot;
-  if (!snap || !Array.isArray(snap.comps) || !snap.comps.length) return '';
+  if (!snap || !Array.isArray(snap.comps) || !snap.comps.length) {
+    // Automate/Eliminate snapshots never carry a comps array by design --
+    // only note the absence for Delegate, where a map/list is expected.
+    return agentType === 'delegate'
+      ? '<div class="empty-note" style="margin-top:8px">Comp details weren\'t saved for this search — only the summary above is available.</div>'
+      : '';
+  }
+  bbSavedSnapshots[d.id] = snap;
   const subjectLine = snap.subject ? `<div class="draft-meta" style="margin:8px 0 4px">Subject: ${bbEscape(snap.subject.address || d.targetLabel)}</div>` : '';
-  return subjectLine + '<div class="saved-comp-list">' + snap.comps.map((c, i) => `
+  const mapDiv = snap.comps.some(c => c.lat && c.lon)
+    ? `<div id="saved-comp-map-${bbEscape(d.id)}" class="comp-map" data-draft-id="${bbEscape(d.id)}"></div>`
+    : '';
+  return subjectLine + mapDiv + '<div class="saved-comp-list">' + snap.comps.map((c, i) => `
     <div class="saved-comp-row">
       <span class="comp-num">${i + 1}</span>
       <div>
@@ -842,6 +941,50 @@ function renderSavedComps(d) {
       </div>
       <div class="comp-price">${bbEscape(compPriceLabel(c))}</div>
     </div>`).join('') + '</div>';
+}
+
+// Mirrors renderCompMap() but reads from a saved snapshot instead of the
+// bbLast* globals, and takes an explicit target element -- a history list
+// can have several cards, each needing its own independent map instance.
+function renderSavedCompMap(mapEl, snap) {
+  if (!snap) return;
+  if (!window.google || !google.maps) { mapEl.outerHTML = '<p class="empty-note">Map unavailable (Google Maps not configured).</p>'; return; }
+  const comps = snap.comps || [];
+  const subject = snap.subject || null;
+  const pts = comps.filter(c => c.lat && c.lon);
+  const center = (subject && subject.lat && subject.lon)
+    ? {lat: subject.lat, lng: subject.lon}
+    : (pts[0] ? {lat: pts[0].lat, lng: pts[0].lon} : {lat: 33.69, lng: -78.89});
+
+  const map = new google.maps.Map(mapEl, {center, zoom: 13});
+  const infoWindow = new google.maps.InfoWindow();
+
+  if (subject && subject.lat && subject.lon) {
+    const subjectMarker = new google.maps.Marker({
+      position: {lat: subject.lat, lng: subject.lon}, map,
+      title: 'Subject: ' + (subject.address || ''),
+      icon: {path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: '#82C112', fillOpacity: 1, strokeColor: '#1a1a1a', strokeWeight: 2},
+      zIndex: 999,
+    });
+    subjectMarker.addListener('mouseover', () => {
+      infoWindow.setContent(gmHoverCardHtml('Subject: ' + (subject.address || ''), subject));
+      infoWindow.open(map, subjectMarker);
+    });
+    subjectMarker.addListener('mouseout', () => infoWindow.close());
+  }
+  comps.forEach((c, i) => {
+    if (!c.lat || !c.lon) return;
+    const marker = new google.maps.Marker({
+      position: {lat: c.lat, lng: c.lon}, map,
+      title: c.address + ' — ' + compPriceLabel(c),
+      label: {text: String(i + 1), color: '#fff', fontSize: '10px', fontWeight: '700'},
+    });
+    marker.addListener('mouseover', () => {
+      infoWindow.setContent(gmHoverCardHtml('#' + (i + 1) + ' — ' + c.address, c));
+      infoWindow.open(map, marker);
+    });
+    marker.addListener('mouseout', () => infoWindow.close());
+  });
 }
 
 async function loadDrafts(agentType, containerId, force) {
@@ -873,7 +1016,7 @@ async function loadDrafts(agentType, containerId, force) {
         <div class="draft-details" hidden>
           <div class="draft-subject">${bbEscape(d.subject)}</div>
           <div class="draft-body">${bbEscape(d.bodyText)}</div>
-          ${renderSavedComps(d)}
+          ${renderSavedComps(d, agentType)}
           ${d.status === 'draft' ? `
             <div class="draft-actions">
               <button class="btn-primary" onclick="bbApprove('${d.id}', this)">Approve & send</button>

@@ -40,7 +40,12 @@ curl_setopt_array($ch, [
     CURLOPT_POST           => true,
     CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
     CURLOPT_POSTFIELDS     => $payload,
-    CURLOPT_TIMEOUT        => 45,
+    // The FUB lead-interest crawl this used to run inline is now cached
+    // (buyback_lead_interest_cache) and read instantly instead -- what's
+    // left is comps + up to 5 external STR rental-estimate lookups, which
+    // can vary. 90s gives real headroom without masking a genuinely stuck
+    // request forever.
+    CURLOPT_TIMEOUT        => 90,
 ]);
 $resp   = curl_exec($ch);
 $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
