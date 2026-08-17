@@ -3,9 +3,16 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 $agent = require_login();
 if (!is_leader()) { header('Location: index.php'); exit; }
 $superAdmin = is_super_admin();
+
+// Staff/admin pool for the "tag a teammate" picker on the Activity modal —
+// same pool used by admin_step_notify.php's staff assignment.
+$staffList = local_db()->query(
+    "SELECT email FROM agent_roles WHERE role IN ('super_admin','staff') ORDER BY email"
+)->fetchAll(PDO::FETCH_COLUMN);
 ?>
 <!doctype html>
 <html lang="en">
@@ -88,6 +95,16 @@ $superAdmin = is_super_admin();
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
     .fee-val{font-size:12px;font-weight:700;color:#555}
+
+    /* Notes button + hover preview */
+    .notes-actions{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+    .notes-btn[data-note]:not([data-note=""]){border-color:#c3dfa8;color:#5b8e0d}
+    #notes-tip{
+      position:fixed;display:none;max-width:280px;white-space:pre-wrap;
+      background:#222;color:#fff;font-size:11px;font-weight:500;
+      padding:8px 10px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.25);
+      z-index:9999;line-height:1.4;pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -175,7 +192,12 @@ $superAdmin = is_super_admin();
               <option value="Self">Self</option>
             </select>
           </div>
-          <div class="field"><label>Monthly Fee ($)</label><input type="number" id="f-fee" min="0" step="0.01" placeholder="0.00"></div>
+          <div class="field"><label>Monthly Fee ($)</label>
+            <div class="field-row" style="display:flex;gap:6px">
+              <input type="number" id="f-fee" min="0" step="0.01" placeholder="0.00" style="flex:1">
+              <button type="button" class="btn-sm" title="Recalculate from Office/Broker/Admin fees below" onclick="recalcMonthlyFee()">↻</button>
+            </div>
+          </div>
         </div>
         <div style="margin-top:10px">
           <div class="field"><label>Feed Type</label>
@@ -192,6 +214,48 @@ $superAdmin = is_super_admin();
               <label class="check-item"><input type="checkbox" id="f-prod-crm" value="crm"> Advantage</label>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Membership / Login -->
+      <div class="form-section">
+        <div class="form-section-title">Membership / Login</div>
+        <div class="field-grid cols-3">
+          <div class="field"><label>Board / MLS</label>
+            <select id="f-board-or-mls">
+              <option value="">—</option>
+              <option value="Board">Board</option>
+              <option value="MLS">MLS</option>
+              <option value="Board & MLS">Board &amp; MLS</option>
+            </select>
+          </div>
+          <div class="field"><label>Membership Type</label><input type="text" id="f-membership-type" placeholder="e.g. MLS, Matrix, Primary (Board)"></div>
+          <div class="field"><label>Office ID</label><input type="text" id="f-office-id"></div>
+          <div class="field"><label>Broker of Record</label><input type="text" id="f-broker-of-record"></div>
+          <div class="field"><label>Login Username</label><input type="text" id="f-login-username" autocomplete="off"></div>
+          <div class="field"><label>Login Password</label><input type="password" id="f-login-password" autocomplete="new-password"></div>
+        </div>
+        <div class="field-grid" style="margin-top:10px">
+          <div class="field field-full"><label>Address</label><input type="text" id="f-mm-address"></div>
+          <div class="field"><label>Phone</label><input type="text" id="f-mm-phone"></div>
+          <div class="field"><label>Login Link</label><input type="text" id="f-login-link" placeholder="URL or portal name"></div>
+        </div>
+        <div class="field-grid cols-3" style="margin-top:10px">
+          <div class="field"><label>Office Fee</label><input type="text" id="f-office-fees" placeholder="e.g. $313.13/quarter" oninput="recalcMonthlyFee()"></div>
+          <div class="field"><label>Broker Fee</label><input type="text" id="f-broker-fees" placeholder="e.g. $75/quarter" oninput="recalcMonthlyFee()"></div>
+          <div class="field"><label>Admin Fee</label><input type="text" id="f-admin-fees" placeholder="e.g. $30/quarterly" oninput="recalcMonthlyFee()"></div>
+        </div>
+        <div style="font-size:11px;color:#999;margin-top:4px">Monthly Fee above auto-recalculates from these three as you type (converts quarterly/yearly/weekly amounts to a monthly equivalent) — edit Monthly Fee directly afterward to override.</div>
+      </div>
+
+      <!-- Billing -->
+      <div class="form-section">
+        <div class="form-section-title">Billing</div>
+        <div class="field-grid">
+          <div class="field field-full"><label>Billing Site</label><input type="text" id="f-billing-site" placeholder="URL"></div>
+          <div class="field"><label>Billing Frequency</label><input type="text" id="f-billing-frequency" placeholder="e.g. quarterly"></div>
+          <div class="field"><label>Billing Username</label><input type="text" id="f-billing-username" autocomplete="off"></div>
+          <div class="field"><label>Billing Password</label><input type="password" id="f-billing-password" autocomplete="new-password"></div>
         </div>
       </div>
 
@@ -269,6 +333,73 @@ $superAdmin = is_super_admin();
   </div>
 </div>
 
+<!-- Notes Modal -->
+<div class="modal-overlay" id="notes-modal">
+  <div class="modal" style="width:480px">
+    <div class="modal-head">
+      <h3 id="notes-modal-title">Notes</h3>
+      <button class="modal-close" onclick="closeNotesModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="n-id">
+      <textarea id="n-notes" rows="8" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical" placeholder="No notes yet."></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" onclick="closeNotesModal()">Cancel</button>
+      <button class="btn-primary" id="notes-save-btn" onclick="saveNotes()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Activity Modal: tag-a-teammate notes thread + agreement document uploads.
+     Deliberately separate IDs/functions from the Notes modal above (which
+     edits the single mls_integrations.notes field) — this is a running
+     thread (mls_notes table) plus file storage (mls_agreements table). -->
+<div class="modal-overlay" id="mls-activity-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="activity-modal-title">Activity</h3>
+      <button class="modal-close" onclick="closeActivityModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-section">
+        <div class="form-section-title">Add a Note</div>
+        <div class="field field-full"><textarea id="activity-note-text" rows="2" placeholder="Status update, contact response, next step…"></textarea></div>
+        <div class="field-grid" style="margin-top:8px">
+          <div class="field"><label>Tag a Teammate (optional)</label>
+            <select id="activity-note-tag">
+              <option value="">— No tag —</option>
+              <?php foreach ($staffList as $email): ?>
+              <option value="<?= htmlspecialchars($email, ENT_QUOTES) ?>"><?= htmlspecialchars($email, ENT_QUOTES) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="field" style="justify-content:flex-end">
+            <button class="btn-primary" id="activity-note-post-btn" onclick="postActivityNote()">Post Note</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Activity</div>
+        <div id="activity-notes-list" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Agreements</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+          <input type="file" id="activity-agreement-file" style="font-size:13px">
+          <button class="btn-ghost" id="activity-agreement-upload-btn" onclick="uploadActivityAgreement()">Upload</button>
+        </div>
+        <div id="activity-agreements-list" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-primary" onclick="closeActivityModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPER = <?= $superAdmin ? 'true' : 'false' ?>;
 
@@ -279,6 +410,29 @@ function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
 const FEED_SOURCE_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark',Bridge:'Bridge',Self:'Self'};
 const PROD_LABELS={idx:'Website',crm:'Advantage'};
+
+// Parses free-text fee strings like "$313.13/quarter", "$75/quarter", "$30/quarterly",
+// "$10/monthly", "$120/year", "None" into a monthly-equivalent dollar amount.
+// Unrecognized frequency defaults to treating the number as already monthly.
+function parseMonthlyEquivalent(str){
+  if(!str) return 0;
+  const s=String(str).toLowerCase();
+  const numMatch=s.match(/[\d,]+\.?\d*/);
+  if(!numMatch) return 0;
+  const amount=parseFloat(numMatch[0].replace(/,/g,''));
+  if(!isFinite(amount)) return 0;
+  if(/year|annual/.test(s)) return amount/12;
+  if(/quarter/.test(s)) return amount/3;
+  if(/week/.test(s)) return amount*52/12;
+  return amount; // month/monthly, or no unit given
+}
+
+function recalcMonthlyFee(){
+  const total = parseMonthlyEquivalent(document.getElementById('f-office-fees').value)
+              + parseMonthlyEquivalent(document.getElementById('f-broker-fees').value)
+              + parseMonthlyEquivalent(document.getElementById('f-admin-fees').value);
+  document.getElementById('f-fee').value = total ? Math.round(total*100)/100 : '';
+}
 
 function feedTypeLabel(r){
   const parts=[];
@@ -316,7 +470,7 @@ function renderTable(rows){
   tbody.innerHTML=rows.map(r=>{
     const prods=(r.products||'').split(',').filter(Boolean).map(p=>esc(PROD_LABELS[p]||p)).join(', ')||'—';
     return `<tr onclick="viewRow(${r.id})" style="cursor:pointer">
-      <td><strong>${esc(r.mls_name)}</strong></td>
+      <td><strong>${esc(r.mls_name)}</strong>${(r.membership_type||r.office_id||r.broker_of_record)?`<div style="font-size:10px;color:#999;margin-top:2px">${esc([r.membership_type,r.office_id?('#'+r.office_id):'',r.broker_of_record].filter(Boolean).join(' · '))}</div>`:''}</td>
       <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.mls_code||'—')}</code></td>
       <td style="color:#555">${esc(r.region||'—')}</td>
       <td style="color:#555">${esc(FEED_SOURCE_LABELS[r.feed_type]||r.feed_type||'—')}</td>
@@ -324,7 +478,12 @@ function renderTable(rows){
       <td><span class="badge badge-${esc(r.status)}">${esc(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td class="fee-val">${fmtFee(r.monthly_fee)}</td>
       <td style="font-size:11px;color:#777">${esc(prods)}</td>
-      <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openModal(${r.id})">Edit</button>`:''}
+      <td onclick="event.stopPropagation()">
+        <div class="notes-actions">
+          <button class="btn-sm notes-btn" data-note="${esc(r.notes||'')}" onclick="openNotesModal(${r.id})">Notes</button>
+          <button class="btn-sm" onclick="openActivityModal(${r.id})">Activity</button>
+          ${SUPER?`<button class="btn-sm" onclick="openModal(${r.id})">Edit</button>`:''}
+        </div>
       </td>
     </tr>`;
   }).join('');
@@ -388,6 +547,28 @@ function viewRow(id){
       <div><span style="color:#888">Email:</span> ${r.contact_email?`<a href="mailto:${esc(r.contact_email)}" style="color:#5b8e0d">${esc(r.contact_email)}</a>`:'—'}</div>
       <div><span style="color:#888">Phone:</span> ${esc(r.contact_phone||'—')}</div>
     </div>`:''}
+    ${(r.membership_type||r.office_id||r.broker_of_record||r.login_username||r.office_fees||r.broker_fees||r.admin_fees||r.address||r.phone||r.login_link||r.board_or_mls)?`
+    <hr style="border:none;border-top:1px solid #f0f0f0;margin:16px 0">
+    <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">Membership / Login</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:8px">
+      <div><span style="color:#888">Board / MLS:</span> ${esc(r.board_or_mls||'—')}</div>
+      <div><span style="color:#888">Membership Type:</span> ${esc(r.membership_type||'—')}</div>
+      <div><span style="color:#888">Office ID:</span> ${esc(r.office_id||'—')}</div>
+      <div><span style="color:#888">Broker of Record:</span> ${esc(r.broker_of_record||'—')}</div>
+      <div><span style="color:#888">Phone:</span> ${esc(r.phone||'—')}</div>
+      <div><span style="color:#888">Address:</span> ${esc(r.address||'—')}</div>
+      <div><span style="color:#888">Login Link:</span> ${r.login_link?(/^https?:\/\//i.test(r.login_link)?`<a href="${esc(r.login_link)}" target="_blank" style="color:#5b8e0d">Open ↗</a>`:esc(r.login_link)):'—'}</div>
+      <div><span style="color:#888">Office/Broker/Admin Fees:</span> ${esc([r.office_fees,r.broker_fees,r.admin_fees].filter(Boolean).join(' · ')||'—')}</div>
+    </div>
+    ${SUPER?`
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${r.login_username?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Login Username</span><div class="cred-val">${esc(r.login_username)}</div></div>`:''}
+      ${r.login_password?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Login Password</span><div class="cred-val" id="vs-loginpw">••••••••</div><button class="cred-reveal" onclick="toggleCred('vs-loginpw','${esc(r.login_password).replace(/'/g,"\\'")}')">Reveal</button></div>`:''}
+      ${r.billing_site?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Billing Site</span><div class="cred-val">${esc(r.billing_site)}</div></div>`:''}
+      ${r.billing_frequency?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Billing Freq.</span><div class="cred-val">${esc(r.billing_frequency)}</div></div>`:''}
+      ${r.billing_username?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Billing User</span><div class="cred-val">${esc(r.billing_username)}</div></div>`:''}
+      ${r.billing_password?`<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:#888;min-width:90px">Billing Pass</span><div class="cred-val" id="vs-billingpw">••••••••</div><button class="cred-reveal" onclick="toggleCred('vs-billingpw','${esc(r.billing_password).replace(/'/g,"\\'")}')">Reveal</button></div>`:''}
+    </div>`:''}`:''}
     ${(r.api_base_url||r.api_username||r.api_key)&&SUPER?`
     <hr style="border:none;border-top:1px solid #f0f0f0;margin:16px 0">
     <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">API Credentials</div>
@@ -427,12 +608,17 @@ function openModal(id){
   // Clear
   ['f-id','f-name','f-code','f-region','f-fee','f-app-date','f-appr-date',
    'f-agreement-url','f-contact-name','f-contact-org','f-contact-email','f-contact-phone',
-   'f-api-url','f-api-user','f-api-secret','f-api-key','f-notes'].forEach(k=>{
+   'f-api-url','f-api-user','f-api-secret','f-api-key','f-notes',
+   'f-membership-type','f-office-id','f-broker-of-record','f-login-username','f-login-password',
+   'f-office-fees','f-broker-fees','f-admin-fees',
+   'f-mm-address','f-mm-phone','f-login-link',
+   'f-billing-site','f-billing-frequency','f-billing-username','f-billing-password'].forEach(k=>{
     const el=document.getElementById(k);
     if(el)el.value='';
   });
   document.getElementById('f-status').value='researching';
   document.getElementById('f-feed-source').value='RETS';
+  document.getElementById('f-board-or-mls').value='';
   ['f-prod-idx','f-prod-crm','f-feed-bbo','f-feed-idx'].forEach(k=>document.getElementById(k).checked=false);
 
   if(editing){
@@ -459,6 +645,22 @@ function openModal(id){
     document.getElementById('f-api-secret').value=r.api_secret||'';
     document.getElementById('f-api-key').value=r.api_key||'';
     document.getElementById('f-notes').value=r.notes||'';
+    document.getElementById('f-membership-type').value=r.membership_type||'';
+    document.getElementById('f-office-id').value=r.office_id||'';
+    document.getElementById('f-broker-of-record').value=r.broker_of_record||'';
+    document.getElementById('f-login-username').value=r.login_username||'';
+    document.getElementById('f-login-password').value=r.login_password||'';
+    document.getElementById('f-office-fees').value=r.office_fees||'';
+    document.getElementById('f-broker-fees').value=r.broker_fees||'';
+    document.getElementById('f-admin-fees').value=r.admin_fees||'';
+    document.getElementById('f-board-or-mls').value=r.board_or_mls||'';
+    document.getElementById('f-mm-address').value=r.address||'';
+    document.getElementById('f-mm-phone').value=r.phone||'';
+    document.getElementById('f-login-link').value=r.login_link||'';
+    document.getElementById('f-billing-site').value=r.billing_site||'';
+    document.getElementById('f-billing-frequency').value=r.billing_frequency||'';
+    document.getElementById('f-billing-username').value=r.billing_username||'';
+    document.getElementById('f-billing-password').value=r.billing_password||'';
     const prods=(r.products||'').split(',').filter(Boolean);
     if(prods.includes('idx')) document.getElementById('f-prod-idx').checked=true;
     if(prods.includes('crm')) document.getElementById('f-prod-crm').checked=true;
@@ -497,6 +699,22 @@ function saveMls(){
     api_secret:   document.getElementById('f-api-secret').value,
     api_key:      document.getElementById('f-api-key').value.trim(),
     notes:        document.getElementById('f-notes').value.trim(),
+    membership_type:  document.getElementById('f-membership-type').value.trim(),
+    office_id:        document.getElementById('f-office-id').value.trim(),
+    broker_of_record: document.getElementById('f-broker-of-record').value.trim(),
+    login_username:   document.getElementById('f-login-username').value.trim(),
+    login_password:   document.getElementById('f-login-password').value,
+    office_fees:  document.getElementById('f-office-fees').value.trim(),
+    broker_fees:  document.getElementById('f-broker-fees').value.trim(),
+    admin_fees:   document.getElementById('f-admin-fees').value.trim(),
+    board_or_mls: document.getElementById('f-board-or-mls').value,
+    address: document.getElementById('f-mm-address').value.trim(),
+    phone:   document.getElementById('f-mm-phone').value.trim(),
+    login_link: document.getElementById('f-login-link').value.trim(),
+    billing_site:      document.getElementById('f-billing-site').value.trim(),
+    billing_frequency: document.getElementById('f-billing-frequency').value.trim(),
+    billing_username:  document.getElementById('f-billing-username').value.trim(),
+    billing_password:  document.getElementById('f-billing-password').value,
   };
   if(!payload.mls_name){alert('MLS Name is required.');return;}
   const btn=document.getElementById('modal-save-btn');
@@ -508,6 +726,154 @@ function saveMls(){
     }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
 }
 
+function openNotesModal(id){
+  const r=allRows.find(x=>x.id===id);
+  if(!r)return;
+  document.getElementById('notes-modal-title').textContent = r.mls_name + ' — Notes';
+  document.getElementById('n-id').value=r.id;
+  document.getElementById('n-notes').value=r.notes||'';
+  document.getElementById('n-notes').disabled=!SUPER;
+  document.getElementById('notes-save-btn').style.display=SUPER?'':'none';
+  document.getElementById('notes-modal').classList.add('open');
+}
+
+function closeNotesModal(){document.getElementById('notes-modal').classList.remove('open');}
+
+function saveNotes(){
+  const id=parseInt(document.getElementById('n-id').value);
+  const notes=document.getElementById('n-notes').value;
+  const btn=document.getElementById('notes-save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
+  fetch('api/mls_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_notes',id,notes})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='Save';
+      if(d.ok){closeNotesModal();load();}else alert(d.error||'Save failed.');
+    }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
+}
+
+// ── Activity modal: tag-a-teammate notes thread + agreement uploads ────────
+let activityMlsId = null;
+
+function activityFmtDT(s){
+  if(!s) return '—';
+  // SQLite datetime('now') is UTC without a timezone suffix — append one so
+  // the browser doesn't parse it as local time and skew every timestamp.
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return esc(s);
+  return d.toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'});
+}
+
+function activityFmtBytes(n){
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
+  return (n/1073741824).toFixed(2) + ' GB';
+}
+
+function openActivityModal(id){
+  activityMlsId = id;
+  const r = allRows.find(x=>x.id===id);
+  document.getElementById('activity-modal-title').textContent = (r?r.mls_name:'MLS') + ' — Activity';
+  document.getElementById('activity-note-text').value = '';
+  document.getElementById('activity-note-tag').value = '';
+  document.getElementById('activity-agreement-file').value = '';
+  document.getElementById('mls-activity-modal').classList.add('open');
+  loadActivityNotes();
+  loadActivityAgreements();
+}
+
+function closeActivityModal(){
+  document.getElementById('mls-activity-modal').classList.remove('open');
+  activityMlsId = null;
+}
+
+function loadActivityNotes(){
+  const list = document.getElementById('activity-notes-list');
+  list.innerHTML = '<div class="empty-note" style="padding:12px">Loading…</div>';
+  fetch('api/mls_notes.php?mls_id='+activityMlsId, {credentials:'same-origin'})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ list.innerHTML = '<div class="empty-note" style="padding:12px">'+esc(d.error||'Failed to load')+'</div>'; return; }
+      if(!d.notes.length){ list.innerHTML = '<div class="empty-note" style="padding:12px">No notes yet.</div>'; return; }
+      list.innerHTML = d.notes.map(n=>`
+        <div style="border:1px solid #f0f0f0;border-radius:8px;padding:10px 12px">
+          <div style="font-size:13px;color:#333;white-space:pre-wrap">${esc(n.note)}</div>
+          <div style="margin-top:6px;font-size:11px;color:#999">
+            ${esc(n.created_by||'—')} · ${activityFmtDT(n.created_at)}
+            ${n.tagged_email?` · <span style="color:#5b8e0d;font-weight:700">tagged ${esc(n.tagged_email)}</span>`:''}
+          </div>
+        </div>`).join('');
+    }).catch(()=>{ list.innerHTML = '<div class="empty-note" style="padding:12px">Request failed.</div>'; });
+}
+
+function postActivityNote(){
+  const note = document.getElementById('activity-note-text').value.trim();
+  if(!note){ alert('Enter a note first.'); return; }
+  const tagged_email = document.getElementById('activity-note-tag').value;
+  const btn = document.getElementById('activity-note-post-btn');
+  btn.disabled = true; btn.textContent = 'Posting…';
+  fetch('api/mls_notes.php', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({mls_id: activityMlsId, note, tagged_email})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled = false; btn.textContent = 'Post Note';
+      if(d.ok){ document.getElementById('activity-note-text').value=''; document.getElementById('activity-note-tag').value=''; loadActivityNotes(); }
+      else alert(d.error || 'Failed to post note.');
+    }).catch(()=>{ btn.disabled=false; btn.textContent='Post Note'; alert('Request failed.'); });
+}
+
+function loadActivityAgreements(){
+  const list = document.getElementById('activity-agreements-list');
+  list.innerHTML = '<div class="empty-note" style="padding:12px">Loading…</div>';
+  fetch('api/mls_agreements.php?mls_id='+activityMlsId, {credentials:'same-origin'})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ list.innerHTML = '<div class="empty-note" style="padding:12px">'+esc(d.error||'Failed to load')+'</div>'; return; }
+      if(!d.files.length){ list.innerHTML = '<div class="empty-note" style="padding:12px">No agreements uploaded yet.</div>'; return; }
+      list.innerHTML = d.files.map(f=>`
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid #f0f0f0;border-radius:8px;padding:8px 12px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:#333;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</div>
+            <div style="font-size:11px;color:#999">${activityFmtBytes(f.size_bytes)} · ${esc(f.uploaded_by||'—')} · ${activityFmtDT(f.created_at)}</div>
+          </div>
+          <button class="btn-sm" onclick="downloadActivityAgreement('${esc(f.id)}')">Download</button>
+          <button class="btn-sm btn-danger" onclick="deleteActivityAgreement('${esc(f.id)}')">Delete</button>
+        </div>`).join('');
+    }).catch(()=>{ list.innerHTML = '<div class="empty-note" style="padding:12px">Request failed.</div>'; });
+}
+
+function uploadActivityAgreement(){
+  const input = document.getElementById('activity-agreement-file');
+  if(!input.files.length){ alert('Choose a file first.'); return; }
+  const fd = new FormData();
+  fd.append('mls_id', activityMlsId);
+  fd.append('file', input.files[0]);
+  const btn = document.getElementById('activity-agreement-upload-btn');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  fetch('api/mls_agreement_upload.php', {method:'POST', credentials:'same-origin', body: fd})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled = false; btn.textContent = 'Upload';
+      if(d.ok){ input.value=''; loadActivityAgreements(); }
+      else alert(d.error || 'Upload failed.');
+    }).catch(()=>{ btn.disabled=false; btn.textContent='Upload'; alert('Request failed.'); });
+}
+
+function downloadActivityAgreement(id){
+  fetch('api/mls_agreement_download.php?id='+encodeURIComponent(id), {credentials:'same-origin'})
+    .then(r=>r.json()).then(d=>{
+      if(d.url) window.open(d.url, '_blank');
+      else alert(d.error || 'Download failed.');
+    }).catch(()=>alert('Request failed.'));
+}
+
+function deleteActivityAgreement(id){
+  if(!confirm('Delete this agreement file? This cannot be undone.')) return;
+  fetch('api/mls_agreements.php', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'delete', id})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok) loadActivityAgreements();
+      else alert(d.error || 'Delete failed.');
+    }).catch(()=>alert('Request failed.'));
+}
+
 function deleteMls(){
   const id=parseInt(document.getElementById('f-id').value);
   if(!id)return;
@@ -516,6 +882,30 @@ function deleteMls(){
   fetch('api/mls_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
     .then(r=>r.json()).then(d=>{if(d.ok){closeModal();load();}else alert(d.error||'Delete failed.');});
 }
+
+/* Shared hover preview for .notes-btn — fixed-position so it's never clipped
+   by the table's scrolling wrapper (an ancestor with overflow-x:auto also
+   clips vertical overflow per the CSS overflow spec). */
+const notesTip=document.createElement('div');
+notesTip.id='notes-tip';
+document.body.appendChild(notesTip);
+document.addEventListener('mouseover',e=>{
+  const btn=e.target.closest && e.target.closest('.notes-btn');
+  if(!btn||!btn.dataset.note)return;
+  notesTip.textContent=btn.dataset.note;
+  notesTip.style.display='block';
+  const r=btn.getBoundingClientRect();
+  let top=r.top-notesTip.offsetHeight-8;
+  if(top<4) top=r.bottom+8;
+  let left=Math.min(r.left, window.innerWidth-notesTip.offsetWidth-8);
+  if(left<4) left=4;
+  notesTip.style.top=top+'px';
+  notesTip.style.left=left+'px';
+});
+document.addEventListener('mouseout',e=>{
+  const btn=e.target.closest && e.target.closest('.notes-btn');
+  if(btn) notesTip.style.display='none';
+});
 
 load();
 </script>
