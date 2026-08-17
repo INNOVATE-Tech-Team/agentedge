@@ -103,6 +103,7 @@ $googlePlacesKey = google_places_api_key();
 .lead-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
 .lead-row label{cursor:pointer;display:flex;align-items:center;gap:8px}
 .deal-send-bar{display:flex;align-items:center;gap:12px;margin-top:10px}
+.hd-leads-list{max-height:280px;overflow-y:auto;margin-top:10px;border:1px solid #eee;border-radius:6px;padding:4px 10px}
 .hd-share{margin-top:12px;padding-top:12px;border-top:1px solid #eee;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hd-share-box{width:100%;margin-top:10px}
 .hd-share-link{width:100%;font-family:monospace;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px}
@@ -811,12 +812,12 @@ function renderHdResults(candidates) {
       leadsHtml = `
         <div class="leads-box">
           <div class="section-label">Matching leads (${leads.length})</div>
-          ${rows}
           <div class="deal-send-bar">
             <button class="btn-secondary" onclick="hdSend(${idx})">Send to selected</button>
             <button class="btn-secondary" onclick="hdSaveDeal(${idx})">Save deal</button>
             <span class="send-status" id="hd-send-status-${idx}"></span>
           </div>
+          <div class="hd-leads-list">${rows}</div>
         </div>`;
     } else {
       leadsHtml = `<div class="leads-box"><span class="empty-note" style="padding:4px 0">No leads have viewed a similar property recently.</span></div>`;
@@ -990,12 +991,12 @@ function renderHdSaved() {
       </div>
       <div class="leads-box">
         <div class="section-label">Selected leads (${leads.length})</div>
-        ${rows}
         <div class="deal-send-bar">
           <button class="btn-secondary" onclick="hdSendSaved(${i})">Send to selected</button>
           <button class="btn-danger" onclick="hdDeleteSaved(${i})">Delete</button>
           <span class="send-status" id="hd-saved-status-${i}"></span>
         </div>
+        <div class="hd-leads-list">${rows}</div>
       </div>
     </div>`;
   }).join('');
