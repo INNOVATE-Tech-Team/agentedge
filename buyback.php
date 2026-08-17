@@ -103,6 +103,10 @@ $googlePlacesKey = google_places_api_key();
 .lead-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
 .lead-row label{cursor:pointer;display:flex;align-items:center;gap:8px}
 .deal-send-bar{display:flex;align-items:center;gap:12px;margin-top:10px}
+.hd-share{margin-top:12px;padding-top:12px;border-top:1px solid #eee;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hd-share-box{width:100%;margin-top:10px}
+.hd-share-link{width:100%;font-family:monospace;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px}
+.hd-share-textarea{width:100%;font-family:inherit;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical;margin-top:4px}
 .candidate-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #eee}
 .candidate-row:first-child{border-top:none}
 .comp-map{width:100%;height:320px;border-radius:10px;border:1px solid var(--border);margin-top:16px;background:#eee}
@@ -312,7 +316,6 @@ function bbAdjustRadius(delta) {
 // Callback fired by the Maps JS API <script> tag's ?callback= param once it's
 // loaded — reuses the same API key already configured for Google Business
 // Profile matching (lib/google_business.php), no new key needed.
-//
 // google.maps.places.Autocomplete silently returns zero predictions on this
 // key/project (confirmed live 2026-08-13 via the browser console: "As of
 // March 1st, 2025, google.maps.places.Autocomplete is not available to new
@@ -649,6 +652,21 @@ async function hdSearch() {
   status.textContent = ''; status.className = 'send-status';
   document.getElementById('hd-results').innerHTML = '';
 
+  // This searches an agent's full lead history (not a fast recent sample),
+  // paced to respect FUB's rate limit -- a large contact list can take up
+  // to 1-2 minutes. Without live feedback that read as frozen/broken in
+  // testing (confirmed 2026-08-10: one real search took 93s).
+  const startedAt = Date.now();
+  const tick = () => {
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    status.textContent = secs < 8
+      ? 'Searching your leads…'
+      : `Still searching your leads… (${secs}s — large contact lists can take up to 2 minutes)`;
+    status.className = 'send-status';
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+
   try {
     const r = await fetch('api/buyback_hotdeals_preview.php', {
       method: 'POST', credentials: 'same-origin',
@@ -656,6 +674,7 @@ async function hdSearch() {
       body: JSON.stringify(body),
     });
     const data = await r.json();
+    clearInterval(timer);
     btn.disabled = false; btn.textContent = 'Find Deals';
     if (!r.ok || data.ok === false) {
       status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
@@ -663,6 +682,7 @@ async function hdSearch() {
       return;
     }
     renderHdResults(data.candidates || []);
+    status.textContent = '';
     if (!data.fub_configured) status.textContent = 'Note: FUB lead matching is not configured.';
     if (!data.str_data_configured) status.textContent += (status.textContent ? ' ' : '') + 'Note: rental-income data is not configured — ranked by price vs. comps only.';
     // The preview response already carries this agent's lead-interest sync
@@ -670,6 +690,7 @@ async function hdSearch() {
     // it directly instead of a second round-trip to sync-status.php.
     renderHdSyncStatus({status: data.leads_sync_status, last_synced_at: data.leads_last_synced_at});
   } catch (e) {
+    clearInterval(timer);
     btn.disabled = false; btn.textContent = 'Find Deals';
     status.textContent = 'Network error — could not reach the server.';
     status.className = 'send-status err';
@@ -677,12 +698,10 @@ async function hdSearch() {
 }
 
 // ── Hot Deals lead-interest sync status ─────────────────────────────────────
-// Matching leads now comes from a per-agent cache (innovate.buyback_lead_
-// interest_cache) instead of a live FUB crawl on every search -- that live
-// crawl took 5+ minutes for a large book, which is why this exists: an
-// agent should be able to see whether their leads have ever been synced,
-// trigger a sync themselves, and watch it finish, rather than wondering why
-// a search shows no matches.
+// Matching leads reads from a per-agent cache (innovate.buyback_lead_
+// interest_cache) that's synced in the background rather than crawled live
+// on every search -- this surfaces whether that cache has ever been synced,
+// is currently syncing, or was last synced, with a manual refresh option.
 let hdSyncPollTimer = null;
 
 function hdRelativeTime(iso) {
@@ -815,6 +834,20 @@ function renderHdResults(candidates) {
         ${c.subdivision_name ? bbEscape(c.subdivision_name) + ' · ' : ''}${c.days_on_market != null ? c.days_on_market + ' days on market' : ''}
         ${c.rental_estimate ? ` · Est. annual rental revenue: ${hdMoney(c.rental_estimate.annual_revenue)}` : ''}
         ${c.disclosed_monthly_hoa ? ` · HOA: ${hdMoney(c.disclosed_monthly_hoa)}/mo${c.hoa_source === 'mls' ? ' (from MLS data)' : ' (mentioned in remarks — verify)'}` : ' · HOA not disclosed — verify before pitching'}
+      </div>
+      <div class="hd-share">
+        <button class="btn-secondary" onclick="hdShareText(${idx})" id="hd-share-btn-${idx}">Get Link &amp; Email Text</button>
+        <span class="send-status" id="hd-share-status-${idx}"></span>
+        <div class="hd-share-box" id="hd-share-box-${idx}" hidden>
+          <label class="section-label">Shareable link (credits you specifically)</label>
+          <div class="field-row" style="align-items:center;gap:8px;margin-bottom:8px">
+            <input type="text" readonly class="hd-share-link" onclick="this.select()">
+            <button class="btn-secondary" onclick="hdCopyShare(${idx}, 'link')">Copy Link</button>
+          </div>
+          <label class="section-label">Email text (edit freely — send from your own inbox)</label>
+          <textarea readonly rows="10" class="hd-share-textarea" onclick="this.select()"></textarea>
+          <button class="btn-secondary" style="margin-top:6px" onclick="hdCopyShare(${idx}, 'text')">Copy Email Text</button>
+        </div>
       </div>
       ${leadsHtml}
     </div>`;
@@ -1022,6 +1055,59 @@ async function hdDeleteSaved(i) {
   }
 }
 
+// A link + copy-pasteable email for prospects who aren't a tracked FUB
+// contact at all (e.g. someone met at an open house) -- sent by the agent
+// from their own inbox, entirely outside FUB and the automated campaign
+// send. The link credits that specific agent's own site page when they
+// have one set up, not the generic brokerage "find an agent" page.
+async function hdShareText(idx) {
+  const card = document.querySelectorAll('.deal-card')[idx];
+  const listingKey = card.dataset.listingKey;
+  const btn = document.getElementById('hd-share-btn-' + idx);
+  const status = document.getElementById('hd-share-status-' + idx);
+  const box = document.getElementById('hd-share-box-' + idx);
+
+  btn.disabled = true; btn.textContent = 'Loading…';
+  status.textContent = ''; status.className = 'send-status';
+
+  try {
+    const r = await fetch('api/buyback_hotdeals_share.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({listing_key: listingKey}),
+    });
+    const data = await r.json();
+    btn.disabled = false; btn.textContent = 'Get Link & Email Text';
+    if (!r.ok || data.ok === false) {
+      status.textContent = 'Error: ' + (data.error || data.detail || 'Unknown error');
+      status.className = 'send-status err';
+      return;
+    }
+    box.querySelector('.hd-share-link').value = data.link;
+    box.querySelector('.hd-share-textarea').value = `Subject: ${data.subject}\n\n${data.body_text}`;
+    box.hidden = false;
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Get Link & Email Text';
+    status.textContent = 'Network error — could not reach the server.';
+    status.className = 'send-status err';
+  }
+}
+
+function hdCopyShare(idx, which) {
+  const box = document.getElementById('hd-share-box-' + idx);
+  const el = box.querySelector(which === 'link' ? '.hd-share-link' : '.hd-share-textarea');
+  el.select();
+  navigator.clipboard.writeText(el.value).then(() => {
+    const status = document.getElementById('hd-share-status-' + idx);
+    status.textContent = 'Copied to clipboard.';
+    status.className = 'send-status ok';
+  }).catch(() => {
+    const status = document.getElementById('hd-share-status-' + idx);
+    status.textContent = 'Could not copy — select the text manually.';
+    status.className = 'send-status err';
+  });
+}
+
 async function loadHdHistory(force) {
   const el = document.getElementById('hd-history');
   if (!force && el.dataset.loaded === '1') return;
@@ -1087,8 +1173,7 @@ function bbToggleDraftCard(topEl) {
 // the same shape _comp_out() already produces server-side.
 // Comp-level detail (address/price/lat-lon) wasn't always saved into
 // context_snapshot -- older searches only have aggregate stats, so there's
-// nothing here to list or plot on a map. No reliable cutoff timestamp to
-// key off of, so just say so whenever the array is missing/empty.
+// nothing here to list or plot on a map.
 const bbSavedSnapshots = {};
 
 function renderSavedComps(d, agentType) {

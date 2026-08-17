@@ -11,6 +11,13 @@ $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok' => false, 'error' => 'Not signed in']); exit; }
 if (!can_use_buyback()) { echo json_encode(['ok' => false, 'error' => 'Forbidden']); exit; }
 
+// Release the session file lock before the long CRM call below (now up to
+// 180s for a large book) -- PHP's default session handler otherwise holds
+// an exclusive lock for the whole request, which would freeze any other
+// tab/request from this same agent until this one finishes. Nothing past
+// this point reads or writes $_SESSION.
+session_write_close();
+
 $body = json_decode(file_get_contents('php://input'), true) ?: [];
 
 $c     = cfg();
@@ -40,12 +47,12 @@ curl_setopt_array($ch, [
     CURLOPT_POST           => true,
     CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
     CURLOPT_POSTFIELDS     => $payload,
-    // The FUB lead-interest crawl this used to run inline is now cached
-    // (buyback_lead_interest_cache) and read instantly instead -- what's
-    // left is comps + up to 5 external STR rental-estimate lookups, which
-    // can vary. 90s gives real headroom without masking a genuinely stuck
-    // request forever.
-    CURLOPT_TIMEOUT        => 90,
+    // The CRM side now sweeps FUB events scoped to this agent's own leads,
+    // sequentially paced to respect FUB's 10-req/10s rate limit on that
+    // resource -- a large book (confirmed live: ~1,300 leads took 30s, one
+    // agent's book took 93s) can legitimately take well over the old 45s
+    // budget. 180s covers a very large book with margin.
+    CURLOPT_TIMEOUT        => 180,
 ]);
 $resp   = curl_exec($ch);
 $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
