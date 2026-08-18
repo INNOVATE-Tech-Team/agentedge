@@ -67,6 +67,13 @@ return [
     // api/onboard_push.php (Add to Team → onboarding queue) and
     // api/roster_export.php (retention_status overlay) uses this same value.
     'crm_token' => '',
+    // Signs the {email, exp} assertion sent alongside crm_token so the CRM
+    // can verify a buyback/profile-editing call is genuinely from the agent
+    // named in `email`, not just anyone holding crm_token (security fix
+    // 2026-08-18 -- see lib/crm_email_assertion.php). Must match
+    // AGENTEDGE_HMAC_SECRET in the CRM's environment. Generate with:
+    // openssl rand -hex 32
+    'crm_hmac_secret' => '',
 
     // Google OAuth — lets any @innovateonline.com agent sign in with one click.
     // Setup: console.cloud.google.com → APIs & Services → Credentials → Create OAuth client
