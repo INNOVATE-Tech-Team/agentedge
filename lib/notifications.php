@@ -1241,12 +1241,18 @@ function super_admin_emails(): array {
     return array_values(array_unique(array_filter(array_map('strtolower', array_map('trim', $emails)))));
 }
 
-// Ticket notifications, narrowed for now: instead of blasting every
-// super_admin, only Darren sees them (plus the ticket's own agent/CCs,
-// handled separately). Revert to super_admin_emails() here to go back to
-// notifying the whole admin roster.
-function ticket_notify_admin_emails(): array {
-    return ['darren@innovateonline.com'];
+// Staff routed to a ticket's department (admin_support_depts.php), or every
+// super_admin/staff when the department has no one routed — matches that
+// page's documented behavior ("Departments with no one routed notify all
+// admin/staff").
+function ticket_notify_admin_emails(string $deptSlug = ''): array {
+    if ($deptSlug !== '') {
+        $s = local_db()->prepare("SELECT email FROM support_department_staff WHERE dept_slug = ?");
+        $s->execute([$deptSlug]);
+        $emails = array_values(array_unique(array_filter(array_map('trim', $s->fetchAll(PDO::FETCH_COLUMN)))));
+        if ($emails) return $emails;
+    }
+    return local_db()->query("SELECT email FROM agent_roles WHERE role IN ('super_admin','staff')")->fetchAll(PDO::FETCH_COLUMN);
 }
 
 // CC'd staff emails for a ticket.
@@ -1318,9 +1324,9 @@ function build_ticket_thread_text(PDO $db, int $ticketId): string {
     return rtrim(implode("\n", $lines));
 }
 
-// A new ticket was created — notify all super admins.
+// A new ticket was created — notify the department's routed staff.
 function notify_ticket_created(int $ticketId, string $title, string $body, string $deptSlug, string $deptName, string $agentName, string $agentEmail): int {
-    $emails  = ticket_notify_admin_emails();
+    $emails  = ticket_notify_admin_emails($deptSlug);
     $subject = "New Support Ticket #{$ticketId}: {$title}";
     $msg     = implode("\n", [
         "A new support ticket was submitted in AgentEdge.",
@@ -1339,13 +1345,13 @@ function notify_ticket_created(int $ticketId, string $title, string $body, strin
 }
 
 // A reply was posted — notify the other side of the conversation (the agent
-// when staff replies, or all super admins when the agent replies) plus
-// anyone CC'd on the ticket. $fromEmail/$fromName are the actual replier
+// when staff replies, or the department's routed staff when the agent
+// replies) plus anyone CC'd on the ticket. $fromEmail/$fromName are the actual replier
 // (staff member or agent), not necessarily $agentEmail (the ticket owner).
 // Includes the full ticket thread so recipients don't have to log in to see
 // prior notes.
 function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bool $isStaffReply, string $deptSlug, string $agentEmail, string $fromEmail = '', string $fromName = ''): int {
-    $recipients = $isStaffReply ? [$agentEmail] : ticket_notify_admin_emails();
+    $recipients = $isStaffReply ? [$agentEmail] : ticket_notify_admin_emails($deptSlug);
     $recipients = array_merge($recipients, support_ticket_cc_emails($ticketId));
 
     $subject = "Re: Support Ticket #{$ticketId}: {$title}";
