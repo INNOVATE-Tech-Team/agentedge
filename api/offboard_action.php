@@ -164,7 +164,14 @@ foreach ($_POST as $k => $v) {
 
 // ── POST: add_to_queue ────────────────────────────────────────────────────────
 if ($action === 'add_to_queue') {
-    $email = trim($body['agent_email'] ?? '');
+    // Lowercased to match agent_intake.email's storage convention (see
+    // api/intake.php) -- agent_admin.email was previously stamped in
+    // whatever case Perfex/search_crm returned, which broke the
+    // case-sensitive SQLite join used everywhere else to check
+    // terminated_date (ticket: agent still showing a profile after being
+    // offboarded, because the join between agent_admin and agent_intake
+    // never matched).
+    $email = strtolower(trim($body['agent_email'] ?? ''));
     $name  = trim($body['agent_name']  ?? '');
     $mc    = trim($body['market_center'] ?? '');
 
@@ -183,7 +190,7 @@ if ($action === 'add_to_queue') {
         }
         $name = $row['agent_name'];
         $mc   = $row['market_center'];
-        if ($row['email']) $email = $row['email'];
+        if ($row['email']) $email = strtolower(trim($row['email']));
     }
 
     if ($email === '' || $name === '') {
@@ -448,7 +455,10 @@ if ($action === 'cancel_offboarding') {
     $q->execute([$queueId]);
     $email = $q->fetchColumn();
     if ($email) {
-        $pdo->prepare("UPDATE agent_admin SET terminated_date='' WHERE email=?")->execute([$email]);
+        // Case-insensitive: agent_admin.email may have been stamped in
+        // whatever case Perfex returned before this was normalized at write
+        // time (see add_to_queue).
+        $pdo->prepare("UPDATE agent_admin SET terminated_date='' WHERE LOWER(email)=LOWER(?)")->execute([$email]);
     }
 
     json_out(['ok'=>true]);

@@ -64,7 +64,7 @@ $intakeAgents = local_db()->query(
      FROM agent_intake i
      LEFT JOIN agent_extra e ON e.email = i.email
      LEFT JOIN agent_roles ar ON ar.email = i.email
-     LEFT JOIN agent_admin aa ON aa.email = i.email
+     LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email
      ORDER BY i.full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
 // Drop anyone currently offboarding or already offboarded — terminated_date

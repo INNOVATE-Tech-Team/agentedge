@@ -89,10 +89,10 @@ function load_agent_profile(string $email): ?array {
          FROM agent_intake i
          LEFT JOIN agent_extra e ON e.email = i.email
          LEFT JOIN agent_roles ar ON ar.email = i.email
-         LEFT JOIN agent_admin aa ON aa.email = i.email
+         LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email
          WHERE i.email = ?"
     );
-    $st->execute([$email]);
+    $st->execute([strtolower(trim($email))]);
     return $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
