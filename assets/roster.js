@@ -7,7 +7,9 @@ let sortDir = 1; // 1 asc, -1 desc
 // lowercased lists, loaded from api/referral_coverage.php. Used only by the
 // referral-location filter below.
 let COVERAGE = [];
-let selectedLanguages = new Set();
+// Guards against the language picker's init-time onChange firing a refresh()
+// before ALL has actually loaded (see initLanguageChecklist call below).
+let rosterLoaded = false;
 
 function toggleFilters() {
   const panel = document.getElementById('filters-panel');
@@ -18,37 +20,16 @@ function toggleFilters() {
 }
 
 function clearFilters() {
-  selectedLanguages.clear();
-  document.querySelectorAll('#lang-checks input[type=checkbox]').forEach(cb => cb.checked = false);
+  document.getElementById('roster-languages').value = '';
+  applyLanguageChecklist('roster-languages-checks', 'roster-languages');
   document.getElementById('referral-location').value = '';
   refresh();
 }
 
-// Every distinct language spoken by at least one agent, split out of the
-// comma-separated free-text `languages` field agents fill in on their profile.
-function buildLanguageOptions(rows) {
-  const set = new Set();
-  rows.forEach(a => {
-    (a.languages || '').split(',').forEach(l => {
-      l = l.trim();
-      if (l) set.add(l);
-    });
-  });
-  const wrap = document.getElementById('lang-checks');
-  if (!set.size) { wrap.innerHTML = '<span style="font-size:11px;color:#bbb;font-style:italic">No languages on file yet.</span>'; return; }
-  const langs = [...set].sort((a, b) => a.localeCompare(b));
-  wrap.innerHTML = langs.map(l => `
-    <label class="lang-check">
-      <input type="checkbox" value="${esc(l)}">
-      ${esc(l)}
-    </label>`).join('');
-  wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      if (cb.checked) selectedLanguages.add(cb.value); else selectedLanguages.delete(cb.value);
-      refresh();
-    });
-  });
-}
+// Same click-to-add chip picker used on the agent profile's Languages Spoken
+// field (assets/language_options.js) — selecting languages here re-filters
+// the roster live via the onChange callback.
+initLanguageChecklist('roster-languages-checks', 'roster-languages', () => { if (rosterLoaded) refresh(); });
 
 // Normalizes a coverage row's comma/semicolon/newline-separated list into a
 // lowercased, trimmed array for matching against a typed-in search term.
@@ -268,12 +249,15 @@ function refresh() {
   const locTerm = document.getElementById('referral-location').value;
   const mlsNameSet = mlsNamesCoveringLocation(locTerm);
 
+  const selectedLangs = document.getElementById('roster-languages').value
+    .split(',').map(l => l.trim().toLowerCase()).filter(Boolean);
+
   let rows = ALL;
   if (q) rows = rows.filter(a => `${a.name} ${a.marketCenter} ${a.email}`.toLowerCase().includes(q));
-  if (selectedLanguages.size) {
+  if (selectedLangs.length) {
     rows = rows.filter(a => {
-      const spoken = (a.languages || '').split(',').map(l => l.trim());
-      return [...selectedLanguages].some(l => spoken.includes(l));
+      const spoken = (a.languages || '').split(',').map(l => l.trim().toLowerCase());
+      return selectedLangs.some(l => spoken.includes(l));
     });
   }
   rows = rows.filter(a => agentMatchesReferralLocation(a, mlsNameSet));
@@ -304,7 +288,7 @@ Promise.all([
   .then(([rosterData, coverageData]) => {
     ALL = rosterData.agents || [];
     COVERAGE = coverageData.coverage || [];
-    buildLanguageOptions(ALL);
+    rosterLoaded = true;
     refresh();
   })
   .catch(() => { document.getElementById('roster-count').textContent = 'Could not load the roster.'; });

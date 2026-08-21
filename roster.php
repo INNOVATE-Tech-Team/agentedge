@@ -99,9 +99,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .filters-group{min-width:220px}
     .filters-group-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px}
     .filters-group-sub{font-size:11px;color:#999;font-weight:400;text-transform:none;letter-spacing:0;display:block;margin-top:2px}
-    #lang-checks{display:flex;flex-wrap:wrap;gap:6px 14px;max-width:420px}
-    .lang-check{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer}
-    .lang-check input{accent-color:#82C112}
+    #roster-languages-checks{width:260px}
     #referral-location{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:220px}
     #referral-location:focus{outline:2px solid #82C112;outline-offset:-1px}
     .filters-clear{background:none;border:none;color:#888;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;align-self:flex-start;margin-top:8px}
@@ -138,7 +136,8 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <div id="filters-panel" class="filters-panel">
           <div class="filters-group">
             <div class="filters-group-label">Languages</div>
-            <div id="lang-checks"><span style="font-size:11px;color:#bbb;font-style:italic">Loading…</span></div>
+            <input type="hidden" id="roster-languages">
+            <div id="roster-languages-checks"></div>
           </div>
           <div class="filters-group">
             <div class="filters-group-label">Referral Location
@@ -205,6 +204,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     </div>
   </div>
 
+  <script src="assets/language_options.js"></script>
   <script src="assets/roster.js"></script>
   <script>
     function openRoleModal(email, name, mc) {

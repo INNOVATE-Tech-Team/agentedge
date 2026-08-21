@@ -22,7 +22,7 @@ const LANGUAGE_OPTIONS = [
 
 function lpEsc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-function initLanguageChecklist(containerId, hiddenInputId) {
+function initLanguageChecklist(containerId, hiddenInputId, onChange) {
   const hidden = document.getElementById(hiddenInputId);
   const container = document.getElementById(containerId);
   if (!hidden || !container) return;
@@ -42,7 +42,10 @@ function initLanguageChecklist(containerId, hiddenInputId) {
   const dropdown  = container.querySelector('.lp-dropdown');
   container._lpSelected = [];
 
-  function sync() { hidden.value = container._lpSelected.join(', '); }
+  function sync() {
+    hidden.value = container._lpSelected.join(', ');
+    if (typeof onChange === 'function') onChange();
+  }
 
   function renderChips() {
     chipsWrap.innerHTML = container._lpSelected.map((lang, i) => `
