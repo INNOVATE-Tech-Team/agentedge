@@ -97,26 +97,43 @@ function renderLocationDropdown(query) {
   dropdown.classList.add('open');
 }
 
-// Returns the set of MLS names (lowercased) whose coverage includes the given
-// location term -- matched against county/city/township/zip, exact or
-// substring either direction so "Mullins" matches a "Mullins" city entry and
-// e.g. "Horry County" matches a plain "Horry" county entry.
-function mlsNamesCoveringLocation(term) {
+// Returns, for the given location term, a map of agentLabel (lowercased) ->
+// array of market-center restriction lists (one per matching coverage row
+// under that label) -- matched against county/city/township/zip/state/
+// community, exact or substring either direction so "Mullins" matches a
+// "Mullins" city entry and e.g. "Horry County" matches a plain "Horry" county
+// entry. Several rows can share one agentLabel (e.g. Bright PA/NJ/DE/VA all
+// "Bright MLS"), which is why this returns each match's own market-center
+// list rather than a flat set of names -- agentMatchesReferralLocation below
+// needs to know which specific row(s) matched to check the agent's own
+// market center against the right one, so a VA-only Bright agent doesn't
+// surface for a PA-only referral just because both say "Bright MLS".
+function coverageMatchesForLocation(term) {
   const q = term.toLowerCase().trim();
   if (!q) return null;
-  const matches = new Set();
+  const matches = new Map();
   COVERAGE.forEach(row => {
     const all = Object.keys(COVERAGE_FIELDS).flatMap(field => coverageList(row[field]));
     const hit = all.some(v => v === q || v.includes(q) || q.includes(v));
-    if (hit) matches.add(row.mlsName.toLowerCase().trim());
+    if (!hit) return;
+    const key = row.agentLabel.toLowerCase().trim();
+    if (!matches.has(key)) matches.set(key, []);
+    matches.get(key).push((row.marketCenters || []).map(mc => mc.toLowerCase().trim()));
   });
   return matches;
 }
 
-function agentMatchesReferralLocation(agent, mlsNameSet) {
-  if (mlsNameSet === null) return true; // no location typed -- filter inactive
+function agentMatchesReferralLocation(agent, coverageMatches) {
+  if (coverageMatches === null) return true; // no location typed -- filter inactive
   const boards = agent.mlsBoards || [];
-  return boards.some(mls => mlsNameSet.has(mls.toLowerCase().trim()));
+  const agentMc = (agent.marketCenter || '').toLowerCase().trim();
+  return boards.some(mls => {
+    const rows = coverageMatches.get(mls.toLowerCase().trim());
+    if (!rows) return false;
+    // A row with no market centers listed applies regardless of office;
+    // otherwise the agent's own market center has to be one of them.
+    return rows.some(mcList => mcList.length === 0 || mcList.includes(agentMc));
+  });
 }
 
 const COLLAPSE_KEY = 'roster_collapsed_mcs';
@@ -306,7 +323,7 @@ function sortRows(rows) {
 function refresh() {
   const q = document.getElementById('roster-search').value.trim().toLowerCase();
   const locTerm = document.getElementById('referral-location').value;
-  const mlsNameSet = mlsNamesCoveringLocation(locTerm);
+  const coverageMatches = coverageMatchesForLocation(locTerm);
 
   const selectedLangs = document.getElementById('roster-languages').value
     .split(',').map(l => l.trim().toLowerCase()).filter(Boolean);
@@ -319,7 +336,7 @@ function refresh() {
       return selectedLangs.some(l => spoken.includes(l));
     });
   }
-  rows = rows.filter(a => agentMatchesReferralLocation(a, mlsNameSet));
+  rows = rows.filter(a => agentMatchesReferralLocation(a, coverageMatches));
 
   rows = sortRows(rows);
   render(rows);

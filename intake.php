@@ -12,7 +12,7 @@ $intakeMarketCenters = local_db()
     ->fetchAll(PDO::FETCH_ASSOC);
 
 $mlsOptions = local_db()
-    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->query("SELECT DISTINCT agent_label FROM mls_referral_coverage WHERE TRIM(agent_label) != '' ORDER BY agent_label")
     ->fetchAll(PDO::FETCH_COLUMN);
 ?>
 <!doctype html>

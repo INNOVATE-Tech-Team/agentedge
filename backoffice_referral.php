@@ -10,6 +10,18 @@ if (empty($perms['isSuperAdmin'])) {
 }
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
+
+// Market center options -- same "ST - Name" label used everywhere else this
+// app shows a market center (roster.php's role modal, agent.marketCenter in
+// api/roster.php), so a coverage row's market_centers list can be compared
+// against an agent's own market center as plain strings, no slug lookup.
+$mcOpts = [];
+foreach (local_db()->query(
+    "SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name"
+)->fetchAll(PDO::FETCH_ASSOC) as $mr) {
+    $label = trim($mr['state_code']) !== '' ? $mr['state_code'] . ' - ' . $mr['name'] : $mr['name'];
+    if ($label !== '') $mcOpts[] = $label;
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -34,7 +46,8 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .ref-table th{text-align:left;padding:8px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;border-bottom:2px solid #f0f0f0}
     .ref-table td{padding:10px 12px;border-bottom:1px solid #f5f5f5;vertical-align:top}
     .ref-table tr:hover td{background:#fafafa}
-    .ref-count{display:inline-block;background:#eef5e8;color:#5b8e0d;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px;margin-right:4px}
+    .ref-count{display:inline-block;background:#eef5e8;color:#5b8e0d;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px}
+    .ref-pills{display:flex;flex-wrap:wrap;gap:6px}
     .ref-empty-cell{color:#bbb;font-style:italic}
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
 
@@ -54,6 +67,12 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .field input,.field textarea{padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit}
     .field input:focus,.field textarea:focus{outline:2px solid #82C112;outline-offset:-1px}
     .field textarea{resize:vertical;min-height:56px}
+
+    .mc-checks{display:flex;flex-wrap:wrap;gap:8px 14px;max-height:140px;overflow-y:auto;padding:8px 2px}
+    .mc-check{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer}
+    .mc-check input{accent-color:#82C112}
+    .ref-label-note{display:block;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:#5b8e0d;margin-top:2px}
+    .ref-mc-note{display:block;font-size:11px;color:#999;margin-top:4px}
   </style>
 </head>
 <body>
@@ -70,10 +89,12 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     <div class="card" style="padding:20px 24px">
       <p class="ref-intro">
         Each row is an MLS or board association INNOVATE belongs to. List the counties,
-        cities, townships, and zip codes it covers, and agents whose MLS Board matches
-        that association will surface when someone searches that location in the Agent
-        Roster's referral filter — e.g. add "Mullins" as a city under CCAR and Pee Dee,
-        and anyone with either as their MLS Board shows up for a "Mullins" search.
+        cities &amp; boroughs, townships, zip codes, states, and communities it covers, and
+        agents whose MLS Board matches that association will surface when someone searches
+        that location in the Agent Roster's referral filter — e.g. add
+        "Mullins" as a city under CCAR and Pee Dee, and anyone with either as their MLS
+        Board shows up for a "Mullins" search. Click a row's Edit button to see and change
+        its full lists.
       </p>
       <div class="toolbar" style="margin-bottom:14px">
         <button class="btn-primary" onclick="openModal()">+ Add MLS / Association</button>
@@ -83,14 +104,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <thead>
             <tr>
               <th style="width:200px">MLS / Association</th>
-              <th>Counties</th>
-              <th>Cities</th>
-              <th>Townships</th>
-              <th>Zip Codes</th>
+              <th>Coverage Areas</th>
               <th style="width:70px"></th>
             </tr>
           </thead>
-          <tbody id="ref-tbody"><tr><td colspan="6" class="empty-note">Loading…</td></tr></tbody>
+          <tbody id="ref-tbody"><tr><td colspan="3" class="empty-note">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -109,14 +127,38 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
       <input type="hidden" id="f-id">
       <div class="field">
         <label>MLS / Association Name</label>
-        <input type="text" id="f-name" placeholder="e.g. CCAR, Pee Dee Realtor Association">
+        <input type="text" id="f-name" placeholder="e.g. CCAR, Bright PA">
+      </div>
+      <div class="field">
+        <label>Shows to Agents As <span class="hint">— optional, defaults to the name above</span></label>
+        <input type="text" id="f-agent-label" placeholder="e.g. Bright MLS">
+        <span class="hint" style="margin-top:2px">
+          Set this the same on several rows to collapse them into one option in the agent's
+          own MLS Board picker -- e.g. Bright PA/NJ/DE/VA all showing to agents as just
+          "Bright MLS", while staying separate here for coverage areas and market centers.
+        </span>
+      </div>
+      <div class="field">
+        <label>Market Centers <span class="hint">— optional, leave blank to apply to every office</span></label>
+        <div class="mc-checks" id="f-mc-checks">
+          <?php foreach ($mcOpts as $mc): ?>
+            <label class="mc-check">
+              <input type="checkbox" value="<?= h($mc) ?>"> <?= h($mc) ?>
+            </label>
+          <?php endforeach; ?>
+        </div>
+        <span class="hint">
+          Check specific offices to restrict this row to agents there -- e.g. only the PA
+          offices count toward "Bright PA", so a Fredericksburg VA agent won't surface for a
+          PA referral just because both are "Bright MLS".
+        </span>
       </div>
       <div class="field">
         <label>Counties <span class="hint">— comma-separated</span></label>
         <textarea id="f-counties" placeholder="e.g. Horry, Georgetown"></textarea>
       </div>
       <div class="field">
-        <label>Cities <span class="hint">— comma-separated</span></label>
+        <label>Cities &amp; Boroughs <span class="hint">— comma-separated</span></label>
         <textarea id="f-cities" placeholder="e.g. Myrtle Beach, Conway, Mullins"></textarea>
       </div>
       <div class="field">
@@ -126,6 +168,14 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
       <div class="field">
         <label>Zip Codes <span class="hint">— comma-separated</span></label>
         <textarea id="f-zips" placeholder="e.g. 29526, 29527, 29572"></textarea>
+      </div>
+      <div class="field">
+        <label>States <span class="hint">— comma-separated</span></label>
+        <textarea id="f-states" placeholder="e.g. South Carolina, North Carolina"></textarea>
+      </div>
+      <div class="field">
+        <label>Communities <span class="hint">— comma-separated</span></label>
+        <textarea id="f-communities" placeholder="e.g. Tidewater, Barefoot Resort"></textarea>
       </div>
       <div class="field">
         <label>Notes <span class="hint">— optional</span></label>
@@ -145,24 +195,50 @@ let ALL_REF = [];
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-function listCell(csv) {
-  const v = (csv || '').trim();
-  return v ? esc(v) : '<span class="ref-empty-cell">—</span>';
+// Category key -> pill label, in the order pills are shown.
+const REF_CATS = [
+  ['counties', 'Counties'],
+  ['cities', 'Cities & Boroughs'],
+  ['townships', 'Townships'],
+  ['zips', 'Zip Codes'],
+  ['states', 'States'],
+  ['communities', 'Communities'],
+];
+
+// How many comma/semicolon/newline-separated entries a field holds.
+function listCount(csv) {
+  return (csv || '').split(/[,;\n\r]+/).map(s => s.trim()).filter(Boolean).length;
+}
+
+// Compact "3 Counties" pills for the list view -- full editable lists live
+// in the Edit modal so this row doesn't need nine wide columns to scan.
+function coveragePills(r) {
+  const pills = REF_CATS.map(([key, label]) => {
+    const n = listCount(r[key]);
+    return n ? `<span class="ref-count">${n} ${esc(label)}</span>` : '';
+  }).filter(Boolean).join('');
+  return pills || '<span class="ref-empty-cell">No coverage areas set</span>';
+}
+
+function mcCount(csv) {
+  const n = listCount(csv);
+  return n ? `${n} office${n === 1 ? '' : 's'}` : 'All offices';
 }
 
 function render(rows) {
   const tbody = document.getElementById('ref-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No MLS associations yet. Add one above.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="empty-note">No MLS associations yet. Add one above.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td><strong>${esc(r.mls_name)}</strong></td>
-      <td>${listCell(r.counties)}</td>
-      <td>${listCell(r.cities)}</td>
-      <td>${listCell(r.townships)}</td>
-      <td>${listCell(r.zips)}</td>
+      <td>
+        <strong>${esc(r.mls_name)}</strong>
+        ${r.agent_label && r.agent_label !== r.mls_name ? `<span class="ref-label-note">Shows to agents as: ${esc(r.agent_label)}</span>` : ''}
+        <span class="ref-mc-note">${esc(mcCount(r.market_centers))}</span>
+      </td>
+      <td><div class="ref-pills">${coveragePills(r)}</div></td>
       <td><button class="btn-sm" onclick="editRef(${r.id})">Edit</button></td>
     </tr>`).join('');
 }
@@ -171,13 +247,25 @@ function fetchList() {
   return fetch('api/backoffice_referral.php', { credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => { ALL_REF = d.items || []; render(ALL_REF); })
-    .catch(() => { document.getElementById('ref-tbody').innerHTML = '<tr><td colspan="6" class="empty-note">Could not load the list.</td></tr>'; });
+    .catch(() => { document.getElementById('ref-tbody').innerHTML = '<tr><td colspan="3" class="empty-note">Could not load the list.</td></tr>'; });
+}
+
+function setMcChecks(csv) {
+  const selected = (csv || '').split(/[,;\n\r]+/).map(s => s.trim()).filter(Boolean);
+  document.querySelectorAll('#f-mc-checks input[type=checkbox]').forEach(cb => {
+    cb.checked = selected.includes(cb.value);
+  });
+}
+
+function collectMcChecks() {
+  return [...document.querySelectorAll('#f-mc-checks input[type=checkbox]:checked')].map(cb => cb.value).join(', ');
 }
 
 function openModal() {
   document.getElementById('modal-title').textContent = 'Add MLS / Association';
   document.getElementById('f-id').value = '';
-  ['f-name','f-counties','f-cities','f-townships','f-zips','f-notes'].forEach(id => document.getElementById(id).value = '');
+  ['f-name','f-agent-label','f-counties','f-cities','f-townships','f-zips','f-states','f-communities','f-notes'].forEach(id => document.getElementById(id).value = '');
+  setMcChecks('');
   document.getElementById('modal-delete-btn').style.display = 'none';
   document.getElementById('ref-modal').classList.add('open');
 }
@@ -188,11 +276,15 @@ function editRef(id) {
   document.getElementById('modal-title').textContent = 'Edit MLS / Association';
   document.getElementById('f-id').value = r.id;
   document.getElementById('f-name').value = r.mls_name || '';
+  document.getElementById('f-agent-label').value = (r.agent_label && r.agent_label !== r.mls_name) ? r.agent_label : '';
   document.getElementById('f-counties').value = r.counties || '';
   document.getElementById('f-cities').value = r.cities || '';
   document.getElementById('f-townships').value = r.townships || '';
   document.getElementById('f-zips').value = r.zips || '';
+  document.getElementById('f-states').value = r.states || '';
+  document.getElementById('f-communities').value = r.communities || '';
   document.getElementById('f-notes').value = r.notes || '';
+  setMcChecks(r.market_centers);
   document.getElementById('modal-delete-btn').style.display = 'inline-block';
   document.getElementById('ref-modal').classList.add('open');
 }
@@ -208,10 +300,14 @@ function saveRef() {
   const payload = {
     action: id ? 'update' : 'add',
     mls_name: name,
+    agent_label: document.getElementById('f-agent-label').value.trim(),
     counties: document.getElementById('f-counties').value.trim(),
     cities: document.getElementById('f-cities').value.trim(),
     townships: document.getElementById('f-townships').value.trim(),
     zips: document.getElementById('f-zips').value.trim(),
+    states: document.getElementById('f-states').value.trim(),
+    communities: document.getElementById('f-communities').value.trim(),
+    market_centers: collectMcChecks(),
     notes: document.getElementById('f-notes').value.trim(),
   };
   if (id) payload.id = Number(id);

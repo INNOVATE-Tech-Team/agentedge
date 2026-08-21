@@ -12,7 +12,7 @@ $perms = current_perms();
 if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 
 $mlsOptions = local_db()
-    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->query("SELECT DISTINCT agent_label FROM mls_referral_coverage WHERE TRIM(agent_label) != '' ORDER BY agent_label")
     ->fetchAll(PDO::FETCH_COLUMN);
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }

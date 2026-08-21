@@ -2994,11 +2994,29 @@ function local_db(): PDO {
         townships   TEXT    NOT NULL DEFAULT '',
         zips        TEXT    NOT NULL DEFAULT '',
         states      TEXT    NOT NULL DEFAULT '',
+        communities TEXT    NOT NULL DEFAULT '',
         notes       TEXT    NOT NULL DEFAULT '',
         created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN states TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN communities TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage DROP COLUMN unincorporated_areas"); } catch (\Exception $e) {}
+    // agent_label lets several rows collapse to one option in the agent-facing
+    // MLS Board picker (e.g. "Bright PA"/"Bright NJ"/"Bright DE"/"Bright VA" all
+    // show as a single "Bright MLS" to agents) while staying distinct rows here
+    // for coverage-area and market-center purposes -- otherwise a VA-only Bright
+    // agent would show up for a PA referral just because both say "Bright".
+    // market_centers optionally restricts a row to specific offices (e.g. only
+    // the PA-market-center agents count toward "Bright PA") -- blank means the
+    // row applies regardless of market center, the default for every
+    // non-split association.
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN agent_label TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN market_centers TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Backfill: any row without its own agent_label (every pre-existing row,
+    // and any future row saved without explicitly setting one) shows under
+    // its own mls_name in the agent picker -- the 1-row-per-association norm.
+    $pdo->exec("UPDATE mls_referral_coverage SET agent_label = mls_name WHERE TRIM(agent_label) = ''");
     // Seed with the MLS/board names we already track as members of (from the
     // MLS Memberships list) so admins start from a populated list of real
     // association names instead of an empty table -- they just need to fill

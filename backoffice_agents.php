@@ -12,7 +12,7 @@ $isLeader = $isAdmin || is_mc_leader() || is_bic();
 if (!$isLeader) { header('Location: index.php'); exit; }
 
 $mlsOptions = local_db()
-    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->query("SELECT DISTINCT agent_label FROM mls_referral_coverage WHERE TRIM(agent_label) != '' ORDER BY agent_label")
     ->fetchAll(PDO::FETCH_COLUMN);
 // mc_leader/bic get a view scoped to the Market Center(s) they lead, with the
 // Tax ID reveal / Staff-Managed section / Edit Profile actions hidden — every
