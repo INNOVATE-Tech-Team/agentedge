@@ -54,6 +54,10 @@ $mlsOptions = local_db()
     .btn-remove-license:hover { border-color: #e53935; color: #e53935; }
     .btn-add-license { border: 1px dashed #82C112; background: #f0f5e8; color: #5b8e0d; border-radius: 7px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
     .btn-add-license:hover { background: #e4f0d8; }
+
+    .mls-row { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 0 10px; align-items: end; margin-bottom: 10px; }
+    @media (max-width: 520px) { .mls-row { grid-template-columns: 1fr; } }
+    .mls-row .field { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -115,16 +119,10 @@ $mlsOptions = local_db()
             <div class="form-grid">
               <div class="section-h">MLS Information</div>
 
-              <div class="field"><label>MLS Board Name</label>
-                <select id="f-mls_board" required>
-                  <option value="" disabled selected>Select your MLS board…</option>
-                  <?php foreach ($mlsOptions as $mo): ?>
-                    <option value="<?= htmlspecialchars($mo, ENT_QUOTES) ?>"><?= htmlspecialchars($mo, ENT_QUOTES) ?></option>
-                  <?php endforeach; ?>
-                  <option value="Other">Other (not listed)</option>
-                </select>
+              <div class="field full">
+                <div id="mls-memberships"></div>
+                <button type="button" class="btn-add-license" id="btn-add-mls">+ Add Another MLS / Association</button>
               </div>
-              <div class="field"><label>MLS ID Number</label><input id="f-mls_id" type="text" required></div>
             </div>
 
             <div class="form-grid">
@@ -270,9 +268,10 @@ $mlsOptions = local_db()
 
   <script src="assets/language_options.js"></script>
   <script>
+  const MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
   (function () {
-    const REQUIRED_IDS = ['full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
-    const TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
+    const REQUIRED_IDS = ['full_name','phone','license_number','nar_number','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
+    const TOTAL = REQUIRED_IDS.length + 2; // +1 office checklist, +1 MLS memberships
 
     initLanguageChecklist('f-languages-checks', 'f-languages');
 
@@ -282,6 +281,10 @@ $mlsOptions = local_db()
       return document.querySelectorAll('#office-checklist input:checked').length > 0;
     }
 
+    function mlsChecked() {
+      return [...document.querySelectorAll('#mls-memberships .mls-assoc')].some(function(sel) { return sel.value.trim() !== ''; });
+    }
+
     function calcProgress() {
       let done = 0;
       REQUIRED_IDS.forEach(function(id) {
@@ -289,6 +292,7 @@ $mlsOptions = local_db()
         if (node && node.value && node.value.trim() !== '') done++;
       });
       if (officeChecked()) done++;
+      if (mlsChecked()) done++;
       return done;
     }
 
@@ -301,7 +305,7 @@ $mlsOptions = local_db()
 
     function setFields(intake) {
       if (!intake) return;
-      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','mls_board','mls_id','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','instagram','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
+      const map = ['full_name','phone','birthday','license_number','license_state','license_exp','nar_number','spouse_name','emergency_name','emergency_phone','bio','tshirt_size','first_responder','is_teacher','phone_last4','referring_agent','languages','personal_email','commissions_email','address_line1','address_line2','city','state','zip','country','drivers_license','gender','website','additional_websites','facebook','linkedin','skype','instagram','specialty','career_start','prior_occupation','prior_affiliation','corporation_start','corporation_end'];
       map.forEach(function(key) {
         const node = el('f-' + key);
         if (node && intake[key] !== undefined && intake[key] !== null) {
@@ -382,6 +386,53 @@ $mlsOptions = local_db()
     }
 
     el('btn-add-license').addEventListener('click', function() { addLicenseRow(); });
+
+    function escHtml(s) { return String(s).replace(/[&<>"]/g, function(c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+    function renderMlsMemberships(list) {
+      const container = el('mls-memberships');
+      container.innerHTML = '';
+      const rows = (list && list.length) ? list : [{}]; // always show at least one row to fill in
+      rows.forEach(function(mem) { addMlsRow(mem); });
+    }
+
+    function addMlsRow(mem) {
+      mem = mem || {};
+      const row = document.createElement('div');
+      row.className = 'mls-row';
+      const opts = MLS_OPTIONS.map(function(o) { return '<option value="' + escHtml(o) + '">' + escHtml(o) + '</option>'; }).join('');
+      row.innerHTML =
+        '<div class="field"><label>MLS / Association</label><select class="mls-assoc">' +
+          '<option value="">Select…</option>' + opts + '<option value="Other">Other (not listed)</option>' +
+        '</select></div>' +
+        '<div class="field"><label>MLS ID Number</label><input type="text" class="mls-number"></div>' +
+        '<button type="button" class="btn-remove-license">Remove</button>';
+      const sel = row.querySelector('.mls-assoc');
+      const val = mem.mls_association || '';
+      if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+        const opt = document.createElement('option');
+        opt.value = val; opt.textContent = val + ' (on file)';
+        sel.insertBefore(opt, sel.firstChild);
+      }
+      sel.value = val;
+      row.querySelector('.mls-number').value = mem.mls_number || '';
+      sel.addEventListener('change', updateProgress);
+      row.querySelector('.btn-remove-license').addEventListener('click', function() { row.remove(); updateProgress(); });
+      el('mls-memberships').appendChild(row);
+    }
+
+    function collectMlsMemberships() {
+      const out = [];
+      document.querySelectorAll('#mls-memberships .mls-row').forEach(function(row) {
+        const assoc  = row.querySelector('.mls-assoc').value.trim();
+        const number = row.querySelector('.mls-number').value.trim();
+        if (assoc || number) out.push({ mls_association: assoc, mls_number: number });
+      });
+      return out;
+    }
+
+    el('btn-add-mls').addEventListener('click', function() { addMlsRow(); updateProgress(); });
+    renderMlsMemberships([]);
 
     document.querySelectorAll('#office-checklist input').forEach(function(node) {
       node.addEventListener('change', function() {
@@ -503,8 +554,7 @@ $mlsOptions = local_db()
         license_state:   el('f-license_state').value,
         license_exp:     el('f-license_exp').value,
         nar_number:      el('f-nar_number').value,
-        mls_board:       el('f-mls_board').value,
-        mls_id:          el('f-mls_id').value,
+        mls_memberships: collectMlsMemberships(),
         office_location: Array.from(document.querySelectorAll('#office-checklist input:checked')).map(function(n) { return n.value; }).join(', '),
         additional_licenses: collectAdditionalLicenses(),
         birthday:        el('f-birthday').value,
@@ -583,6 +633,8 @@ $mlsOptions = local_db()
         setFields(data.intake);
         renderHeadshots(data.headshots);
         renderAdditionalLicenses(data.additional_licenses);
+        renderMlsMemberships(data.mls_memberships);
+        updateProgress();
         if (data.intake && data.intake.submitted_at) {
           showSubmittedBadge(data.intake.submitted_at);
         } else {

@@ -763,6 +763,30 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_intake_licenses_email ON agent_intake_licenses(agent_email)");
 
+    // ── MLS Memberships (an agent can belong to more than one MLS/board) ───────
+    // Same repeatable-row shape as agent_intake_licenses above -- rewritten in
+    // full (delete+reinsert) on every intake save rather than diffed, since
+    // there's no stable per-row identity coming from the form.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_mls_memberships (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email     TEXT NOT NULL,
+        mls_association TEXT NOT NULL DEFAULT '',
+        mls_number      TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_memberships_email ON agent_mls_memberships(agent_email)");
+    // One-time migration: carry each agent's existing single mls_board/mls_id
+    // (the old single-value fields) into this table as their first row, so
+    // switching to multi-membership doesn't lose anyone's existing data.
+    if ($pdo->query("SELECT COUNT(*) FROM agent_mls_memberships")->fetchColumn() == 0) {
+        $ins = $pdo->prepare(
+            "INSERT INTO agent_mls_memberships (agent_email, mls_association, mls_number) VALUES (?,?,?)"
+        );
+        foreach ($pdo->query("SELECT email, mls_board, mls_id FROM agent_intake WHERE TRIM(mls_board) != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $ins->execute([$r['email'], $r['mls_board'], $r['mls_id']]);
+        }
+    }
+
     // Public "complete your profile" links (emailed reminders + backoffice
     // send-link action). A new random token is minted every time a link is
     // sent — old tokens for the same agent are never invalidated, so a
@@ -2969,10 +2993,12 @@ function local_db(): PDO {
         cities      TEXT    NOT NULL DEFAULT '',
         townships   TEXT    NOT NULL DEFAULT '',
         zips        TEXT    NOT NULL DEFAULT '',
+        states      TEXT    NOT NULL DEFAULT '',
         notes       TEXT    NOT NULL DEFAULT '',
         created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
         updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN states TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     // Seed with the MLS/board names we already track as members of (from the
     // MLS Memberships list) so admins start from a populated list of real
     // association names instead of an empty table -- they just need to fill

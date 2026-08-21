@@ -128,13 +128,25 @@ try {
     }
 } catch (\Exception $e) {}
 
-// Languages + MLS Board overlay (agent_intake), keyed by lowercased email —
-// feeds the roster's language and referral-location filters.
+// Languages overlay (agent_intake), keyed by lowercased email -- feeds the
+// roster's language filter.
 $intakeByEmail = [];
 try {
-    foreach (local_db()->query("SELECT email, languages, mls_board FROM agent_intake")->fetchAll(PDO::FETCH_ASSOC) as $in) {
+    foreach (local_db()->query("SELECT email, languages FROM agent_intake")->fetchAll(PDO::FETCH_ASSOC) as $in) {
         $key = strtolower(trim($in['email']));
         if ($key !== '') $intakeByEmail[$key] = $in;
+    }
+} catch (\Exception $e) {}
+
+// MLS memberships overlay (agent_mls_memberships), keyed by lowercased email
+// -- an agent can hold more than one, so this is an array per agent. Feeds
+// the roster's referral-location filter (matches if ANY membership covers
+// the searched location).
+$mlsByEmail = [];
+try {
+    foreach (local_db()->query("SELECT agent_email, mls_association FROM agent_mls_memberships WHERE TRIM(mls_association) != ''")->fetchAll(PDO::FETCH_ASSOC) as $m) {
+        $key = strtolower(trim($m['agent_email']));
+        if ($key !== '') $mlsByEmail[$key][] = $m['mls_association'];
     }
 } catch (\Exception $e) {}
 
@@ -184,7 +196,7 @@ try {
             'phone'        => $phone,
             'social'       => $social,
             'languages'    => trim($intake['languages'] ?? ''),
-            'mlsBoard'     => trim($intake['mls_board'] ?? ''),
+            'mlsBoards'    => $emailKey !== '' ? ($mlsByEmail[$emailKey] ?? []) : [],
             'localOnly'    => $email === '' && $phone === '',
         ];
     }

@@ -101,6 +101,13 @@ foreach (local_db()->query(
     $additionalLicensesByEmail[strtolower($lic['agent_email'])][] = $lic;
 }
 
+$mlsMembershipsByEmail = [];
+foreach (local_db()->query(
+    "SELECT agent_email, mls_association, mls_number FROM agent_mls_memberships ORDER BY agent_email, id"
+)->fetchAll(PDO::FETCH_ASSOC) as $mem) {
+    $mlsMembershipsByEmail[strtolower($mem['agent_email'])][] = $mem;
+}
+
 $pendingAgents = local_db()->query(
     "SELECT q.agent_email as email, q.agent_name as full_name, q.market_center as office_location,
             q.agent_phone as phone, q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
@@ -281,6 +288,13 @@ $missingCount = count($missingAgents);
 .em-full{grid-column:1/-1}
 .em-check label{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;font-weight:600;color:var(--ink)}
 .em-check input{width:auto!important}
+.license-row,.mls-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:0 10px;align-items:end;margin-bottom:8px}
+.mls-row{grid-template-columns:1.4fr 1fr auto}
+.license-row .em-field,.mls-row .em-field{margin-bottom:0}
+.btn-remove-license{border:1px solid var(--border);background:#fff;color:var(--faint);border-radius:6px;padding:7px 10px;font-size:12px;cursor:pointer;height:fit-content}
+.btn-remove-license:hover{border-color:#e53935;color:#e53935}
+.btn-add-license{border:1px dashed #82C112;background:#f0f5e8;color:#5b8e0d;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;margin-top:4px}
+.btn-add-license:hover{background:#e4f0d8}
 .ag-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .table-wrap{overflow-x:auto}
 .no-results{padding:32px;text-align:center;color:var(--faint);font-size:13px}
@@ -459,8 +473,19 @@ $missingCount = count($missingAgents);
                 <?php endif; ?>
 
                 <div class="dg-section">MLS</div>
-                <div class="dg-field"><span class="dg-label">MLS Board</span><?= dv($a['mls_board']) ?></div>
-                <div class="dg-field"><span class="dg-label">MLS ID</span><?= dv($a['mls_id']) ?></div>
+                <?php $mlsMemberships = $mlsMembershipsByEmail[$emailLower] ?? []; ?>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">MLS / Association Memberships</span>
+                  <?php if ($mlsMemberships): ?>
+                    <span class="dg-value">
+                      <?php foreach ($mlsMemberships as $mem): ?>
+                        <?= h(trim($mem['mls_association'] . ($mem['mls_number'] !== '' ? ' — #' . $mem['mls_number'] : ''))) ?><br>
+                      <?php endforeach; ?>
+                    </span>
+                  <?php else: ?>
+                    <?= dv('') ?>
+                  <?php endif; ?>
+                </div>
 
                 <div class="dg-section">Personal</div>
                 <div class="dg-field"><span class="dg-label">T-Shirt Size</span><?= dv($a['tshirt_size']) ?></div>
@@ -740,16 +765,11 @@ $missingCount = count($missingAgents);
         </div>
 
         <div class="em-section">MLS Information</div>
-        <div class="em-field"><label>MLS Board</label>
-          <select id="em-mls_board">
-            <option value=""></option>
-            <?php foreach ($mlsOptions as $mo): ?>
-              <option value="<?= h($mo) ?>"><?= h($mo) ?></option>
-            <?php endforeach; ?>
-            <option value="Other">Other (not listed)</option>
-          </select>
+        <div class="em-field em-full">
+          <label>MLS / Association Memberships</label>
+          <div id="em-mls-memberships"></div>
+          <button type="button" class="btn-add-license" id="em-btn-add-mls">+ Add Another MLS / Association</button>
         </div>
-        <div class="em-field"><label>MLS ID</label><input id="em-mls_id"></div>
 
         <div class="em-section">INNOVATE Office</div>
         <div class="em-field em-full"><label>Office Location</label><input id="em-office_location"></div>
@@ -845,6 +865,7 @@ $missingCount = count($missingAgents);
 <script>
 (function () {
   initLanguageChecklist('em-languages-checks', 'em-languages');
+  var MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
   var searchEl = document.getElementById('agSearch');
   var tabs = document.querySelectorAll('.ag-tab');
   var activeTab = 'all';
@@ -1045,7 +1066,7 @@ $missingCount = count($missingAgents);
   var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone_last4',
     'address_line1','address_line2','city','state','zip','country',
     'license_number','license_state','license_exp','nar_number',
-    'mls_board','mls_id','office_location',
+    'office_location',
     'specialty','career_start','prior_occupation','prior_affiliation',
     'corporation_start','corporation_end',
     'birthday','spouse_name','gender','drivers_license','tshirt_size',
@@ -1104,6 +1125,51 @@ $missingCount = count($missingAgents);
 
   var emBtnAddLicense = document.getElementById('em-btn-add-license');
   if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
+
+  function emEscHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+  function emAddMlsRow(mem) {
+    mem = mem || {};
+    var row = document.createElement('div');
+    row.className = 'mls-row';
+    var opts = MLS_OPTIONS.map(function (o) { return '<option value="' + emEscHtml(o) + '">' + emEscHtml(o) + '</option>'; }).join('');
+    row.innerHTML =
+      '<div class="em-field"><label>MLS / Association</label><select class="em-mls-assoc">' +
+        '<option value="">Select…</option>' + opts + '<option value="Other">Other (not listed)</option>' +
+      '</select></div>' +
+      '<div class="em-field"><label>MLS ID Number</label><input type="text" class="em-mls-number"></div>' +
+      '<button type="button" class="btn-remove-license">Remove</button>';
+    var sel = row.querySelector('.em-mls-assoc');
+    var val = mem.mls_association || '';
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var opt = document.createElement('option');
+      opt.value = val; opt.textContent = val + ' (on file)';
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    sel.value = val;
+    row.querySelector('.em-mls-number').value = mem.mls_number || '';
+    row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+    document.getElementById('em-mls-memberships').appendChild(row);
+  }
+
+  function emRenderMlsMemberships(list) {
+    var container = document.getElementById('em-mls-memberships');
+    container.innerHTML = '';
+    (list && list.length ? list : [{}]).forEach(function (mem) { emAddMlsRow(mem); });
+  }
+
+  function emCollectMlsMemberships() {
+    var out = [];
+    document.querySelectorAll('#em-mls-memberships .mls-row').forEach(function (row) {
+      var assoc = row.querySelector('.em-mls-assoc').value.trim();
+      var number = row.querySelector('.em-mls-number').value.trim();
+      if (assoc || number) out.push({ mls_association: assoc, mls_number: number });
+    });
+    return out;
+  }
+
+  var emBtnAddMls = document.getElementById('em-btn-add-mls');
+  if (emBtnAddMls) emBtnAddMls.addEventListener('click', function () { emAddMlsRow(); });
 
   // Roster agents with no agent_intake row yet often have no email on file
   // either (older/manually-added rows). Rather than asking the admin to
@@ -1274,6 +1340,7 @@ $missingCount = count($missingAgents);
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
       document.getElementById('em-corporate-tax-hint').textContent = intake.corporate_tax_id_last4 ? '(on file, ending in ' + intake.corporate_tax_id_last4 + ')' : '(none on file)';
       emRenderAdditionalLicenses(results[0].additional_licenses);
+      emRenderMlsMemberships(results[0].mls_memberships);
       document.getElementById('em-save-msg').textContent = '';
       emLoaded = true;
       document.getElementById('em-save-btn').disabled = false;
@@ -1307,6 +1374,7 @@ $missingCount = count($missingAgents);
     payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
     payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
     payload.additional_licenses = emCollectAdditionalLicenses();
+    payload.mls_memberships = emCollectMlsMemberships();
 
     var extraPayload = {
       email: emCurrentEmail,

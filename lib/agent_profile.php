@@ -82,23 +82,31 @@ function load_agent_profile(string $email): ?array {
                 i.corporation_start, i.corporation_end,
                 i.personal_tax_id_enc, i.corporate_tax_id_enc,
                 i.submitted, i.submitted_at, i.updated_at,
-                e.hire_date, e.license_renewal, e.alt_email,
+                e.hire_date, e.license_renewal, e.alt_email, e.dotloop_alt_email,
                 ar.role,
                 aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by,
                 aa.recruit_source_email
          FROM agent_intake i
          LEFT JOIN agent_extra e ON e.email = i.email
          LEFT JOIN agent_roles ar ON ar.email = i.email
-         LEFT JOIN agent_admin aa ON aa.email = i.email
+         LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email
          WHERE i.email = ?"
     );
-    $st->execute([$email]);
+    $st->execute([strtolower(trim($email))]);
     return $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
 function load_agent_additional_licenses(string $email): array {
     $st = local_db()->prepare(
         "SELECT license_number, license_state, license_exp FROM agent_intake_licenses WHERE agent_email=? ORDER BY id"
+    );
+    $st->execute([$email]);
+    return $st->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function load_agent_mls_memberships(string $email): array {
+    $st = local_db()->prepare(
+        "SELECT mls_association, mls_number FROM agent_mls_memberships WHERE agent_email=? ORDER BY id"
     );
     $st->execute([$email]);
     return $st->fetchAll(PDO::FETCH_ASSOC);

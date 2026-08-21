@@ -7,6 +7,10 @@ $intakeMarketCenters = local_db()
     ->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
     ->fetchAll(PDO::FETCH_ASSOC);
 
+$mlsOptions = local_db()
+    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->fetchAll(PDO::FETCH_COLUMN);
+
 // A tokenized link (sent via the automated/manual "send intake" email) locks
 // the email + name to the onboarding-queue row it was generated for — a
 // bare, untokenized visit to this URL keeps the old self-declared-email
@@ -97,6 +101,10 @@ if ($qid > 0) {
     .btn-remove-license:hover { border-color: #e53935; color: #e53935; }
     .btn-add-license { border: 1px dashed #82C112; background: #f0f5e8; color: #5b8e0d; border-radius: 7px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
     .btn-add-license:hover { background: #e4f0d8; }
+
+    .mls-row { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 0 10px; align-items: end; margin-bottom: 10px; }
+    @media (max-width: 520px) { .mls-row { grid-template-columns: 1fr; } }
+    .mls-row .field { margin-bottom: 0; }
 
     /* Submit */
     .form-actions { margin-top: 24px; }
@@ -210,18 +218,9 @@ if ($qid > 0) {
       <!-- MLS Information -->
       <div class="form-section-h">MLS Information</div>
       <div class="form-grid">
-        <div class="field">
-          <label>MLS Board</label>
-          <select id="f-mls_board" name="mls_board" required>
-            <option value="">— Select —</option>
-            <option value="CCAR">CCAR</option>
-            <option value="Columbia MLS">Columbia MLS</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>MLS ID #</label>
-          <input type="text" id="f-mls_id" name="mls_id" placeholder="Your MLS member ID">
+        <div class="field full">
+          <div id="mls-memberships"></div>
+          <button type="button" class="btn-add-license" id="btn-add-mls">+ Add Another MLS / Association</button>
         </div>
       </div>
 
@@ -466,13 +465,18 @@ if ($qid > 0) {
 (function () {
   if (!document.getElementById('intake-form')) return; // invalid-link state — no form rendered
 
-  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
-  var TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
+  var MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
+  var REQUIRED_IDS = ['email','full_name','phone','license_number','nar_number','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
+  var TOTAL = REQUIRED_IDS.length + 2; // +1 office checklist, +1 MLS memberships
 
   function el(id) { return document.getElementById(id); }
 
   function officeChecked() {
     return document.querySelectorAll('#office-checklist input:checked').length > 0;
+  }
+
+  function mlsChecked() {
+    return [].slice.call(document.querySelectorAll('#mls-memberships .mls-assoc')).some(function(sel) { return sel.value.trim() !== ''; });
   }
 
   function calcProgress() {
@@ -482,6 +486,7 @@ if ($qid > 0) {
       if (node && node.value && node.value.trim() !== '') done++;
     });
     if (officeChecked()) done++;
+    if (mlsChecked()) done++;
     return done;
   }
 
@@ -548,6 +553,36 @@ if ($qid > 0) {
     return out;
   }
 
+  // MLS / association memberships — repeatable rows, same pattern as licenses.
+  function escHtml(s) { return String(s).replace(/[&<>"]/g, function(c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+  function addMlsRow() {
+    var row = document.createElement('div');
+    row.className = 'mls-row';
+    var opts = MLS_OPTIONS.map(function(o) { return '<option value="' + escHtml(o) + '">' + escHtml(o) + '</option>'; }).join('');
+    row.innerHTML =
+      '<div class="field"><label>MLS / Association</label><select class="mls-assoc">' +
+        '<option value="">Select…</option>' + opts + '<option value="Other">Other (not listed)</option>' +
+      '</select></div>' +
+      '<div class="field"><label>MLS ID Number</label><input type="text" class="mls-number"></div>' +
+      '<button type="button" class="btn-remove-license">Remove</button>';
+    row.querySelector('.mls-assoc').addEventListener('change', updateProgress);
+    row.querySelector('.btn-remove-license').addEventListener('click', function() { row.remove(); updateProgress(); });
+    el('mls-memberships').appendChild(row);
+  }
+  el('btn-add-mls').addEventListener('click', function() { addMlsRow(); updateProgress(); });
+  addMlsRow(); // start with one empty row to fill in
+
+  function collectMlsMemberships() {
+    var out = [];
+    document.querySelectorAll('#mls-memberships .mls-row').forEach(function(row) {
+      var assoc  = row.querySelector('.mls-assoc').value.trim();
+      var number = row.querySelector('.mls-number').value.trim();
+      if (assoc || number) out.push({ mls_association: assoc, mls_number: number });
+    });
+    return out;
+  }
+
   // Office checklist — clear invalid styling once at least one box is checked
   document.querySelectorAll('#office-checklist input').forEach(function(node) {
     node.addEventListener('change', function() {
@@ -606,8 +641,7 @@ if ($qid > 0) {
       license_state:   el('f-license_state').value.trim(),
       license_exp:     el('f-license_exp').value.trim(),
       nar_number:      el('f-nar_number').value.trim(),
-      mls_board:       el('f-mls_board').value.trim(),
-      mls_id:          el('f-mls_id').value.trim(),
+      mls_memberships: collectMlsMemberships(),
       office_location: Array.from(document.querySelectorAll('#office-checklist input:checked')).map(function(n) { return n.value; }).join(', '),
       additional_licenses: collectAdditionalLicenses(),
       birthday:        el('f-birthday').value.trim(),

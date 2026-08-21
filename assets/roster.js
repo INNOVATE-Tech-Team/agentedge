@@ -46,7 +46,7 @@ function mlsNamesCoveringLocation(term) {
   if (!q) return null;
   const matches = new Set();
   COVERAGE.forEach(row => {
-    const all = [...coverageList(row.counties), ...coverageList(row.cities), ...coverageList(row.townships), ...coverageList(row.zips)];
+    const all = [...coverageList(row.counties), ...coverageList(row.cities), ...coverageList(row.townships), ...coverageList(row.zips), ...coverageList(row.states)];
     const hit = all.some(v => v === q || v.includes(q) || q.includes(v));
     if (hit) matches.add(row.mlsName.toLowerCase().trim());
   });
@@ -55,9 +55,8 @@ function mlsNamesCoveringLocation(term) {
 
 function agentMatchesReferralLocation(agent, mlsNameSet) {
   if (mlsNameSet === null) return true; // no location typed -- filter inactive
-  const mls = (agent.mlsBoard || '').toLowerCase().trim();
-  if (!mls) return false;
-  return mlsNameSet.has(mls);
+  const boards = agent.mlsBoards || [];
+  return boards.some(mls => mlsNameSet.has(mls.toLowerCase().trim()));
 }
 
 const COLLAPSE_KEY = 'roster_collapsed_mcs';

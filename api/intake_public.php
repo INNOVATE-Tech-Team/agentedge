@@ -48,6 +48,17 @@ try {
         $email = strtolower(trim($queueEmail));
     }
 
+    // An agent can hold multiple MLS memberships (see agent_mls_memberships
+    // below), but agent_intake.mls_board/mls_id remain single-value columns
+    // other code still reads directly. Mirror the first membership into them
+    // here, before the required-field check and the UPSERT below, both of
+    // which read $body['mls_board']/['mls_id'] directly.
+    if (is_array($body['mls_memberships'] ?? null)) {
+        $firstMembership = $body['mls_memberships'][0] ?? [];
+        $body['mls_board'] = trim($firstMembership['mls_association'] ?? '');
+        $body['mls_id']    = trim($firstMembership['mls_number'] ?? '');
+    }
+
     // ── Required fields check ─────────────────────────────────────────────────
     $required = [
         'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
@@ -131,6 +142,19 @@ try {
         $exp   = trim($lic['license_exp'] ?? '');
         if ($num === '' && $state === '' && $exp === '') continue;
         $insLicense->execute([$email, $num, $state, $exp]);
+    }
+
+    // ── MLS memberships (rewritten in full on every submit) ──────────────────
+    local_db()->prepare("DELETE FROM agent_mls_memberships WHERE agent_email=?")->execute([$email]);
+    $mlsMemberships = is_array($body['mls_memberships'] ?? null) ? $body['mls_memberships'] : [];
+    $insMembership = local_db()->prepare(
+        "INSERT INTO agent_mls_memberships (agent_email, mls_association, mls_number) VALUES (?,?,?)"
+    );
+    foreach ($mlsMemberships as $mem) {
+        $assoc  = trim($mem['mls_association'] ?? '');
+        $number = trim($mem['mls_number'] ?? '');
+        if ($assoc === '' && $number === '') continue;
+        $insMembership->execute([$email, $assoc, $number]);
     }
 
     // ── Add to onboard_queue (also seeds onboard_steps + notifications) ──────
