@@ -10,6 +10,10 @@ $myName  = htmlspecialchars($agent['name']  ?? '', ENT_QUOTES);
 $intakeMarketCenters = local_db()
     ->query("SELECT name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
     ->fetchAll(PDO::FETCH_ASSOC);
+
+$mlsOptions = local_db()
+    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->fetchAll(PDO::FETCH_COLUMN);
 ?>
 <!doctype html>
 <html lang="en">
@@ -111,7 +115,15 @@ $intakeMarketCenters = local_db()
             <div class="form-grid">
               <div class="section-h">MLS Information</div>
 
-              <div class="field"><label>MLS Board Name</label><input id="f-mls_board" type="text" required></div>
+              <div class="field"><label>MLS Board Name</label>
+                <select id="f-mls_board" required>
+                  <option value="" disabled selected>Select your MLS board…</option>
+                  <?php foreach ($mlsOptions as $mo): ?>
+                    <option value="<?= htmlspecialchars($mo, ENT_QUOTES) ?>"><?= htmlspecialchars($mo, ENT_QUOTES) ?></option>
+                  <?php endforeach; ?>
+                  <option value="Other">Other (not listed)</option>
+                </select>
+              </div>
               <div class="field"><label>MLS ID Number</label><input id="f-mls_id" type="text" required></div>
             </div>
 
@@ -200,7 +212,11 @@ $intakeMarketCenters = local_db()
                   <option value="former">Yes – Former teacher</option>
                 </select>
               </div>
-              <div class="field"><label>What languages do you speak?</label><input id="f-languages" type="text" placeholder="e.g. English, Spanish" required></div>
+              <div class="field full">
+                <label>What languages do you speak?</label>
+                <input type="hidden" id="f-languages">
+                <div id="f-languages-checks"></div>
+              </div>
             </div>
 
             <div class="form-grid">
@@ -252,10 +268,13 @@ $intakeMarketCenters = local_db()
     </div>
   </div>
 
+  <script src="assets/language_options.js"></script>
   <script>
   (function () {
     const REQUIRED_IDS = ['full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
     const TOTAL = REQUIRED_IDS.length + 1; // +1 for the office checklist
+
+    initLanguageChecklist('f-languages-checks', 'f-languages');
 
     function el(id) { return document.getElementById(id); }
 
@@ -286,9 +305,20 @@ $intakeMarketCenters = local_db()
       map.forEach(function(key) {
         const node = el('f-' + key);
         if (node && intake[key] !== undefined && intake[key] !== null) {
-          node.value = intake[key];
+          const val = intake[key];
+          // A <select> (e.g. MLS Board) may not have an <option> for a legacy
+          // free-text value saved before the field became a dropdown -- add
+          // one on the fly so the agent's existing answer stays visible
+          // instead of silently reverting to blank.
+          if (node.tagName === 'SELECT' && val && !Array.prototype.some.call(node.options, function (o) { return o.value === val; })) {
+            const opt = document.createElement('option');
+            opt.value = val; opt.textContent = val + ' (on file)';
+            node.insertBefore(opt, node.firstChild);
+          }
+          node.value = val;
         }
       });
+      applyLanguageChecklist('f-languages-checks', 'f-languages');
 
       // Checkboxes: only override the HTML default (checked) once we actually
       // have a saved value — a brand-new agent has no row yet, so the default stands.

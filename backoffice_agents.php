@@ -10,6 +10,10 @@ $perms = current_perms();
 $isAdmin  = !empty($perms['isAdmin']);
 $isLeader = $isAdmin || is_mc_leader() || is_bic();
 if (!$isLeader) { header('Location: index.php'); exit; }
+
+$mlsOptions = local_db()
+    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->fetchAll(PDO::FETCH_COLUMN);
 // mc_leader/bic get a view scoped to the Market Center(s) they lead, with the
 // Tax ID reveal / Staff-Managed section / Edit Profile actions hidden — every
 // edit control below stays admin-only.
@@ -64,7 +68,7 @@ $intakeAgents = local_db()->query(
      FROM agent_intake i
      LEFT JOIN agent_extra e ON e.email = i.email
      LEFT JOIN agent_roles ar ON ar.email = i.email
-     LEFT JOIN agent_admin aa ON aa.email = i.email
+     LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email
      ORDER BY i.full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
 // Drop anyone currently offboarding or already offboarded — terminated_date
@@ -185,7 +189,18 @@ foreach (local_db()->query(
 
 function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): string {
     if ($headshotKey) {
-        return '<img class="' . $sizeClass . '-img" src="api/intake.php?action=headshot&key=' . urlencode($headshotKey) . '" alt="">';
+        // loading=lazy so the browser only requests headshots for rows
+        // actually scrolled into view. Without it, every row on this
+        // unpaginated roster (hundreds of agents) fired its headshot
+        // request immediately on page load — floods the browser's
+        // per-host connection cap and starves out any other in-flight
+        // request (e.g. the Edit Profile modal's own fetches) behind a
+        // queue of full-resolution images.
+        // thumb=1 — both call sites (24px row avatar, 52px detail avatar)
+        // display small; no reason to ship a multi-MB original for either.
+        // Falls back to the original server-side if a thumbnail can't be
+        // generated, so this is safe even if that ever fails.
+        return '<img class="' . $sizeClass . '-img" src="api/intake.php?action=headshot&key=' . urlencode($headshotKey) . '&thumb=1" alt="" loading="lazy" decoding="async">';
     }
     $initials = '';
     foreach (preg_split('/\s+/', trim($name ?: '?')) as $part) { if ($part !== '') $initials .= mb_strtoupper(mb_substr($part, 0, 1)); }
@@ -511,7 +526,7 @@ $missingCount = count($missingAgents);
                   <?php endif; ?>
                 </div>
 
-                <div class="dg-section">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
+                <div class="dg-section" style="color:#a06000;font-weight:800">Notes <span style="font-weight:600;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
                 <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
                   <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
                   <div style="display:flex;gap:8px;margin-top:8px">
@@ -695,6 +710,7 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
         <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
         <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from the roster email"></div>
+        <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has them under a different email"></div>
         <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
         <div class="em-section">Team Status (from Darwin)</div>
@@ -724,7 +740,15 @@ $missingCount = count($missingAgents);
         </div>
 
         <div class="em-section">MLS Information</div>
-        <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
+        <div class="em-field"><label>MLS Board</label>
+          <select id="em-mls_board">
+            <option value=""></option>
+            <?php foreach ($mlsOptions as $mo): ?>
+              <option value="<?= h($mo) ?>"><?= h($mo) ?></option>
+            <?php endforeach; ?>
+            <option value="Other">Other (not listed)</option>
+          </select>
+        </div>
         <div class="em-field"><label>MLS ID</label><input id="em-mls_id"></div>
 
         <div class="em-section">INNOVATE Office</div>
@@ -781,7 +805,11 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Military</label><input id="em-is_military" placeholder="veteran / active / blank"></div>
         <div class="em-field"><label>First Responder</label><input id="em-first_responder" placeholder="e.g. paramedic, or blank"></div>
         <div class="em-field"><label>Teacher</label><input id="em-is_teacher" placeholder="no / current / former"></div>
-        <div class="em-field"><label>Languages</label><input id="em-languages"></div>
+        <div class="em-field em-full">
+          <label>Languages</label>
+          <input type="hidden" id="em-languages">
+          <div id="em-languages-checks"></div>
+        </div>
 
         <div class="em-section">Emergency Contact</div>
         <div class="em-field"><label>Emergency Contact Name</label><input id="em-emergency_name"></div>
@@ -813,8 +841,10 @@ $missingCount = count($missingAgents);
   </div>
 </div>
 
+<script src="assets/language_options.js"></script>
 <script>
 (function () {
+  initLanguageChecklist('em-languages-checks', 'em-languages');
   var searchEl = document.getElementById('agSearch');
   var tabs = document.querySelectorAll('.ag-tab');
   var activeTab = 'all';
@@ -1217,8 +1247,20 @@ $missingCount = count($missingAgents);
 
       EM_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);
-        if (node) node.value = intake[key] || (prefill && prefill[key]) || '';
+        if (!node) return;
+        var val = intake[key] || (prefill && prefill[key]) || '';
+        // A <select> (e.g. MLS Board) may not have an <option> for a legacy
+        // free-text value entered before the field became a dropdown -- add
+        // one on the fly so the agent's existing answer stays visible instead
+        // of silently reverting to blank.
+        if (node.tagName === 'SELECT' && val && !Array.prototype.some.call(node.options, function (o) { return o.value === val; })) {
+          var opt = document.createElement('option');
+          opt.value = val; opt.textContent = val + ' (on file)';
+          node.insertBefore(opt, node.firstChild);
+        }
+        node.value = val;
       });
+      applyLanguageChecklist('em-languages-checks', 'em-languages');
       EM_CHECK_FIELDS.forEach(function (key) {
         var node = document.getElementById('em-' + key);
         if (node) node.checked = intake[key] === undefined ? true : Number(intake[key]) === 1;
@@ -1226,6 +1268,7 @@ $missingCount = count($missingAgents);
       document.getElementById('em-hire_date').value = extra.hire_date || '';
       document.getElementById('em-license_renewal').value = extra.license_renewal || '';
       document.getElementById('em-alt_email').value = extra.alt_email || '';
+      document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
       document.getElementById('em-personal_tax_id').value = '';
       document.getElementById('em-corporate_tax_id').value = '';
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1270,7 +1313,8 @@ $missingCount = count($missingAgents);
       birthday: emExtraBirthday,
       hire_date: document.getElementById('em-hire_date').value,
       license_renewal: document.getElementById('em-license_renewal').value,
-      alt_email: document.getElementById('em-alt_email').value
+      alt_email: document.getElementById('em-alt_email').value,
+      dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
     };
 
     Promise.all([

@@ -128,6 +128,16 @@ try {
     }
 } catch (\Exception $e) {}
 
+// Languages + MLS Board overlay (agent_intake), keyed by lowercased email —
+// feeds the roster's language and referral-location filters.
+$intakeByEmail = [];
+try {
+    foreach (local_db()->query("SELECT email, languages, mls_board FROM agent_intake")->fetchAll(PDO::FETCH_ASSOC) as $in) {
+        $key = strtolower(trim($in['email']));
+        if ($key !== '') $intakeByEmail[$key] = $in;
+    }
+} catch (\Exception $e) {}
+
 // Looks up $byName first by exact name, then by first+last fallback.
 function lookup_by_name(array $byName, array $byFirstLast, string $nameLower): ?array {
     if (isset($byName[$nameLower])) return $byName[$nameLower];
@@ -163,6 +173,7 @@ try {
 
         $emailKey = strtolower(trim($email));
         $social   = $emailKey !== '' ? ($socialByEmail[$emailKey] ?? new stdClass()) : new stdClass();
+        $intake   = $emailKey !== '' ? ($intakeByEmail[$emailKey] ?? null) : null;
 
         $agents[] = [
             'id'           => $staff['staffid'] ?? $crm['id'] ?? null,
@@ -172,6 +183,8 @@ try {
             'email'        => $email,
             'phone'        => $phone,
             'social'       => $social,
+            'languages'    => trim($intake['languages'] ?? ''),
+            'mlsBoard'     => trim($intake['mls_board'] ?? ''),
             'localOnly'    => $email === '' && $phone === '',
         ];
     }

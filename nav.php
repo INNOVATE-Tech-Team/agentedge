@@ -45,6 +45,10 @@ function nav_items(): array {
         'industry_events'  => ['key' => 'industry_events',  'label' => 'Industry Events',     'href' => 'industry_events.php'],
         'university'       => ['key' => 'university',       'label' => 'INNOVATE University', 'href' => 'university.php'],
         'leaderboard'      => ['key' => 'leaderboard',      'label' => 'LAUNCH Leaderboard',  'href' => 'leaderboard.php'],
+        // Agent-facing Launch dashboard (cohort/session/progress/plan) —
+        // temporarily super_admin-only while its design is reviewed; drop
+        // 'superOnly' once approved to widen it to launch_agent/all agents.
+        'launch'           => ['key' => 'launch',           'label' => 'Launch',              'href' => 'launch.php', 'superOnly' => true],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -73,11 +77,6 @@ function nav_items(): array {
 function agent_assets_items(): array {
     return [
         ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
-        // Referral Network: existed and worked (5 real commits, Facebook
-        // cross-posting and all) but had no menu entry anywhere -- same
-        // missing-nav-entry bug as Listing Intel below, just never caught
-        // for this one. Only reachable by typing the URL directly until now.
-        ['key' => 'referral_network',   'label' => 'Referral Network',        'href' => 'referral_network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         // Buy Back Your Time: every producing agent's own book of business,
         // not a backoffice/admin tool -- lives here, not in
@@ -120,6 +119,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
+        ['key'=>'conference_rooms',          'label'=>'Conference Rooms',    'href'=>'admin_conference_rooms.php',    'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
         ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
@@ -157,6 +157,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
+        ['key'=>'bo_referral',               'label'=>'Referral',            'href'=>'backoffice_referral.php',       'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'teams',                     'label'=>'Teams',               'href'=>'teams.php',                     'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_links',               'label'=>'Link Settings',       'href'=>'admin_links.php',               'dept'=>'Technology', 'superOnly'=>true],
@@ -216,7 +217,7 @@ function render_sidebar(string $current, array $agent): void {
            . '<button class="masq-back" onclick="stopMasquerade()">Back to Admin</button></div>';
     }
 
-    echo '<aside class="sidebar"><a class="sb-brand" href="index.php" style="display:block;text-decoration:none;color:inherit"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></a><nav class="sb-nav">';
+    echo '<aside class="sidebar"><div class="sb-top"><a class="sb-brand" href="index.php" style="text-decoration:none;color:inherit"><span class="brand">INNOVATE</span> <span class="brand-edge">AgentEdge</span></a><button class="sb-toggle" onclick="toggleSidebar()" aria-label="Open navigation">&#9776;</button></div><nav class="sb-nav">';
     $superAdmin = !empty($perms['isSuperAdmin']);
     // Build personalized label once for use in the loop.
     $nameParts = preg_split('/\s+/', trim($agent['name'] ?? ''));
@@ -404,9 +405,10 @@ function render_sidebar(string $current, array $agent): void {
     echo '<a class="sb-signout" href="logout.php">Sign out</a></div></aside>';
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
     echo '<script>window.AE_CSRF = ' . json_encode($_SESSION['csrf']) . ';</script>';
-    echo '<script src="assets/mc-links.js"></script>';
-    echo '<script src="assets/global.js"></script>';
-    echo '<script src="assets/howto_search.js"></script>';
+    foreach (['assets/mc-links.js', 'assets/global.js', 'assets/howto_search.js'] as $__asset) {
+        $__v = @filemtime(__DIR__ . '/' . $__asset) ?: time();
+        echo '<script src="' . htmlspecialchars($__asset, ENT_QUOTES) . '?v=' . $__v . '"></script>';
+    }
     if (function_exists('is_masquerading') && is_masquerading()) {
         echo '<script>document.body.classList.add("masquerading")</script>';
     }

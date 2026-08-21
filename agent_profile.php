@@ -11,6 +11,10 @@ $agent = require_login();
 $perms = current_perms();
 if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 
+$mlsOptions = local_db()
+    ->query("SELECT mls_name FROM mls_referral_coverage ORDER BY mls_name")
+    ->fetchAll(PDO::FETCH_COLUMN);
+
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 function dv($val): string {
     if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
@@ -248,6 +252,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Alternate Email (DotLoop match)</span><?= dv($a['dotloop_alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
@@ -585,6 +590,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
+            <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has you under a different email"></div>
             <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
             <div class="em-section">Address</div>
@@ -609,7 +615,15 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             </div>
 
             <div class="em-section">MLS Information</div>
-            <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
+            <div class="em-field"><label>MLS Board</label>
+              <select id="em-mls_board">
+                <option value=""></option>
+                <?php foreach ($mlsOptions as $mo): ?>
+                  <option value="<?= h($mo) ?>"><?= h($mo) ?></option>
+                <?php endforeach; ?>
+                <option value="Other">Other (not listed)</option>
+              </select>
+            </div>
             <div class="em-field"><label>MLS ID</label><input id="em-mls_id"></div>
 
             <div class="em-section">INNOVATE Office</div>
@@ -666,7 +680,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Military</label><input id="em-is_military" placeholder="veteran / active / blank"></div>
             <div class="em-field"><label>First Responder</label><input id="em-first_responder" placeholder="e.g. paramedic, or blank"></div>
             <div class="em-field"><label>Teacher</label><input id="em-is_teacher" placeholder="no / current / former"></div>
-            <div class="em-field"><label>Languages</label><input id="em-languages"></div>
+            <div class="em-field em-full">
+              <label>Languages</label>
+              <input type="hidden" id="em-languages">
+              <div id="em-languages-checks"></div>
+            </div>
 
             <div class="em-section">Emergency Contact</div>
             <div class="em-field"><label>Emergency Contact Name</label><input id="em-emergency_name"></div>
@@ -699,7 +717,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
+<script src="assets/language_options.js"></script>
 <script>
+initLanguageChecklist('em-languages-checks', 'em-languages');
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
 let networkLoaded = false;
@@ -1040,8 +1060,20 @@ window.openEditModal = function () {
 
     EM_FIELDS.forEach(function (key) {
       var node = document.getElementById('em-' + key);
-      if (node) node.value = intake[key] || '';
+      if (!node) return;
+      var val = intake[key] || '';
+      // A <select> (e.g. MLS Board) may not have an <option> for a legacy
+      // free-text value entered before the field became a dropdown -- add
+      // one on the fly so the agent's existing answer stays visible instead
+      // of silently reverting to blank.
+      if (node.tagName === 'SELECT' && val && !Array.prototype.some.call(node.options, function (o) { return o.value === val; })) {
+        var opt = document.createElement('option');
+        opt.value = val; opt.textContent = val + ' (on file)';
+        node.insertBefore(opt, node.firstChild);
+      }
+      node.value = val;
     });
+    applyLanguageChecklist('em-languages-checks', 'em-languages');
     EM_CHECK_FIELDS.forEach(function (key) {
       var node = document.getElementById('em-' + key);
       if (node) node.checked = intake[key] === undefined ? true : Number(intake[key]) === 1;
@@ -1050,6 +1082,7 @@ window.openEditModal = function () {
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
     document.getElementById('em-alt_email').value = extra.alt_email || '';
+    document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1091,7 +1124,8 @@ window.saveEditModal = function () {
     birthday: emExtraBirthday,
     hire_date: document.getElementById('em-hire_date').value,
     license_renewal: document.getElementById('em-license_renewal').value,
-    alt_email: document.getElementById('em-alt_email').value
+    alt_email: document.getElementById('em-alt_email').value,
+    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
   };
 
   Promise.all([

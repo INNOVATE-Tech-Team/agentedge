@@ -3,6 +3,82 @@ let ALL = [];
 let sortKey = 'name';
 let sortDir = 1; // 1 asc, -1 desc
 
+// Referral coverage — MLS association name -> {counties,cities,townships,zips}
+// lowercased lists, loaded from api/referral_coverage.php. Used only by the
+// referral-location filter below.
+let COVERAGE = [];
+let selectedLanguages = new Set();
+
+function toggleFilters() {
+  const panel = document.getElementById('filters-panel');
+  const btn = document.getElementById('filters-toggle');
+  const open = !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  btn.classList.toggle('active', open);
+}
+
+function clearFilters() {
+  selectedLanguages.clear();
+  document.querySelectorAll('#lang-checks input[type=checkbox]').forEach(cb => cb.checked = false);
+  document.getElementById('referral-location').value = '';
+  refresh();
+}
+
+// Every distinct language spoken by at least one agent, split out of the
+// comma-separated free-text `languages` field agents fill in on their profile.
+function buildLanguageOptions(rows) {
+  const set = new Set();
+  rows.forEach(a => {
+    (a.languages || '').split(',').forEach(l => {
+      l = l.trim();
+      if (l) set.add(l);
+    });
+  });
+  const wrap = document.getElementById('lang-checks');
+  if (!set.size) { wrap.innerHTML = '<span style="font-size:11px;color:#bbb;font-style:italic">No languages on file yet.</span>'; return; }
+  const langs = [...set].sort((a, b) => a.localeCompare(b));
+  wrap.innerHTML = langs.map(l => `
+    <label class="lang-check">
+      <input type="checkbox" value="${esc(l)}">
+      ${esc(l)}
+    </label>`).join('');
+  wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedLanguages.add(cb.value); else selectedLanguages.delete(cb.value);
+      refresh();
+    });
+  });
+}
+
+// Normalizes a coverage row's comma/semicolon/newline-separated list into a
+// lowercased, trimmed array for matching against a typed-in search term.
+function coverageList(v) {
+  return (v || []).map(s => s.toLowerCase().trim()).filter(Boolean);
+}
+
+// Returns the set of MLS names (lowercased) whose coverage includes the given
+// location term -- matched against county/city/township/zip, exact or
+// substring either direction so "Mullins" matches a "Mullins" city entry and
+// e.g. "Horry County" matches a plain "Horry" county entry.
+function mlsNamesCoveringLocation(term) {
+  const q = term.toLowerCase().trim();
+  if (!q) return null;
+  const matches = new Set();
+  COVERAGE.forEach(row => {
+    const all = [...coverageList(row.counties), ...coverageList(row.cities), ...coverageList(row.townships), ...coverageList(row.zips)];
+    const hit = all.some(v => v === q || v.includes(q) || q.includes(v));
+    if (hit) matches.add(row.mlsName.toLowerCase().trim());
+  });
+  return matches;
+}
+
+function agentMatchesReferralLocation(agent, mlsNameSet) {
+  if (mlsNameSet === null) return true; // no location typed -- filter inactive
+  const mls = (agent.mlsBoard || '').toLowerCase().trim();
+  if (!mls) return false;
+  return mlsNameSet.has(mls);
+}
+
 const COLLAPSE_KEY = 'roster_collapsed_mcs';
 
 function getCollapsed() {
@@ -189,8 +265,19 @@ function sortRows(rows) {
 
 function refresh() {
   const q = document.getElementById('roster-search').value.trim().toLowerCase();
+  const locTerm = document.getElementById('referral-location').value;
+  const mlsNameSet = mlsNamesCoveringLocation(locTerm);
+
   let rows = ALL;
   if (q) rows = rows.filter(a => `${a.name} ${a.marketCenter} ${a.email}`.toLowerCase().includes(q));
+  if (selectedLanguages.size) {
+    rows = rows.filter(a => {
+      const spoken = (a.languages || '').split(',').map(l => l.trim());
+      return [...selectedLanguages].some(l => spoken.includes(l));
+    });
+  }
+  rows = rows.filter(a => agentMatchesReferralLocation(a, mlsNameSet));
+
   rows = sortRows(rows);
   render(rows);
   document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {
@@ -200,6 +287,7 @@ function refresh() {
 }
 
 document.getElementById('roster-search').addEventListener('input', refresh);
+document.getElementById('referral-location').addEventListener('input', refresh);
 
 document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {
   th.addEventListener('click', () => {
@@ -209,9 +297,16 @@ document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {
   });
 });
 
-fetch('api/roster.php', { credentials: 'same-origin' })
-  .then(r => r.ok ? r.json() : Promise.reject(r.status))
-  .then(d => { ALL = d.agents || []; refresh(); })
+Promise.all([
+  fetch('api/roster.php', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+  fetch('api/referral_coverage.php', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : Promise.reject(r.status)).catch(() => ({ coverage: [] })),
+])
+  .then(([rosterData, coverageData]) => {
+    ALL = rosterData.agents || [];
+    COVERAGE = coverageData.coverage || [];
+    buildLanguageOptions(ALL);
+    refresh();
+  })
   .catch(() => { document.getElementById('roster-count').textContent = 'Could not load the roster.'; });
 
 // ---- Stats modal -----------------------------------------------------------

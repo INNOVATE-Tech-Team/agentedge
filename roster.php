@@ -89,6 +89,23 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .rm-save{padding:9px 20px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:4px;cursor:pointer}
     .rm-cancel{padding:9px 14px;border:1px solid #ccc;background:white;color:#555;font-size:13px;border-radius:4px;cursor:pointer}
     .rm-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;line-height:1;color:#888}
+
+    /* Roster filters */
+    .filters-toggle{padding:8px 14px;border:1px solid #ccc;background:#fff;color:#555;font-size:12px;font-weight:700;border-radius:6px;cursor:pointer;white-space:nowrap}
+    .filters-toggle:hover{border-color:#82C112;color:#5b8e0d}
+    .filters-toggle.active{border-color:#82C112;background:#eef5e8;color:#5b8e0d}
+    .filters-panel{display:none;gap:24px;flex-wrap:wrap;margin:10px 0 16px;padding:14px 16px;background:#fafbfa;border:1px solid #e5e9e0;border-radius:8px}
+    .filters-panel.open{display:flex}
+    .filters-group{min-width:220px}
+    .filters-group-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px}
+    .filters-group-sub{font-size:11px;color:#999;font-weight:400;text-transform:none;letter-spacing:0;display:block;margin-top:2px}
+    #lang-checks{display:flex;flex-wrap:wrap;gap:6px 14px;max-width:420px}
+    .lang-check{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer}
+    .lang-check input{accent-color:#82C112}
+    #referral-location{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:220px}
+    #referral-location:focus{outline:2px solid #82C112;outline-offset:-1px}
+    .filters-clear{background:none;border:none;color:#888;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;align-self:flex-start;margin-top:8px}
+    .filters-clear:hover{color:#c00}
   </style>
   <script>
     const IS_ADMIN       = <?= json_encode(is_leader()) ?>;
@@ -111,14 +128,29 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <div class="content-title">Agent Roster</div>
         <div style="display:flex;align-items:center;gap:10px">
           <input id="roster-search" class="search" type="search" placeholder="Search by name, email, location…">
+          <button type="button" id="filters-toggle" class="filters-toggle" onclick="toggleFilters()">Filters</button>
           <?php if (is_admin()): ?>
           <a href="admin_import.php" style="flex-shrink:0;padding:8px 14px;background:#82C112;color:#000;font-size:12px;font-weight:800;border-radius:6px;text-decoration:none;white-space:nowrap">+ Import CSV</a>
           <?php endif; ?>
         </div>
       </header>
       <main class="wrap">
+        <div id="filters-panel" class="filters-panel">
+          <div class="filters-group">
+            <div class="filters-group-label">Languages</div>
+            <div id="lang-checks"><span style="font-size:11px;color:#bbb;font-style:italic">Loading…</span></div>
+          </div>
+          <div class="filters-group">
+            <div class="filters-group-label">Referral Location
+              <span class="filters-group-sub">City, county, township, or zip — matches agents whose MLS covers it</span>
+            </div>
+            <input type="text" id="referral-location" placeholder="e.g. Mullins">
+          </div>
+          <button type="button" class="filters-clear" onclick="clearFilters()">Clear filters</button>
+        </div>
         <section class="card">
           <div class="roster-count" id="roster-count">Loading agents…</div>
+          <div style="overflow-x:auto">
           <table class="tx sortable" id="roster-table" hidden>
             <thead><tr>
               <th data-sort="name">Agent</th>
@@ -129,6 +161,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
+          </div>
           <div id="roster-empty" class="network-empty" hidden>No agents found.</div>
         </section>
       </main>
