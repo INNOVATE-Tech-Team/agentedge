@@ -37,6 +37,66 @@ function coverageList(v) {
   return (v || []).map(s => s.toLowerCase().trim()).filter(Boolean);
 }
 
+// Every field a coverage row can carry, and the friendly label shown next to
+// a matching option in the referral-location typeahead below.
+const COVERAGE_FIELDS = {
+  counties: 'county', cities: 'city', townships: 'township',
+  zips: 'zip', states: 'state', communities: 'community',
+};
+
+// Flat, deduped index of every location value actually entered in the
+// Referral tab (Back Office > Technology > Referral) -- lowercased value ->
+// { value: original casing, kinds: Set of field labels it appears under }.
+// Rebuilt once whenever COVERAGE (re)loads; powers the typeahead so agents
+// can only search for locations that are actually in the system, instead of
+// guessing at spellings that were never entered.
+let LOCATION_INDEX = new Map();
+
+function buildLocationIndex() {
+  LOCATION_INDEX = new Map();
+  COVERAGE.forEach(row => {
+    Object.keys(COVERAGE_FIELDS).forEach(field => {
+      (row[field] || []).forEach(raw => {
+        const v = raw.trim();
+        if (!v) return;
+        const key = v.toLowerCase();
+        if (!LOCATION_INDEX.has(key)) LOCATION_INDEX.set(key, { value: v, kinds: new Set() });
+        LOCATION_INDEX.get(key).kinds.add(COVERAGE_FIELDS[field]);
+      });
+    });
+  });
+}
+
+function renderLocationDropdown(query) {
+  const dropdown = document.getElementById('referral-location-dropdown');
+  const q = query.trim().toLowerCase();
+  if (!q) { dropdown.classList.remove('open'); dropdown.innerHTML = ''; return; }
+
+  const matches = [...LOCATION_INDEX.values()]
+    .filter(entry => entry.value.toLowerCase().includes(q))
+    .sort((a, b) => a.value.localeCompare(b.value))
+    .slice(0, 50);
+
+  if (!matches.length) {
+    dropdown.innerHTML = '<div class="loc-empty">Nothing in the Referral list matches yet.</div>';
+  } else {
+    dropdown.innerHTML = matches.map(entry => `
+      <div class="loc-opt" data-val="${esc(entry.value)}">
+        ${esc(entry.value)}<span class="loc-kind">${esc([...entry.kinds].join(', '))}</span>
+      </div>`).join('');
+    dropdown.querySelectorAll('.loc-opt').forEach(opt => {
+      opt.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const input = document.getElementById('referral-location');
+        input.value = opt.dataset.val;
+        dropdown.classList.remove('open');
+        refresh();
+      });
+    });
+  }
+  dropdown.classList.add('open');
+}
+
 // Returns the set of MLS names (lowercased) whose coverage includes the given
 // location term -- matched against county/city/township/zip, exact or
 // substring either direction so "Mullins" matches a "Mullins" city entry and
@@ -46,7 +106,7 @@ function mlsNamesCoveringLocation(term) {
   if (!q) return null;
   const matches = new Set();
   COVERAGE.forEach(row => {
-    const all = [...coverageList(row.counties), ...coverageList(row.cities), ...coverageList(row.townships), ...coverageList(row.zips), ...coverageList(row.states)];
+    const all = Object.keys(COVERAGE_FIELDS).flatMap(field => coverageList(row[field]));
     const hit = all.some(v => v === q || v.includes(q) || q.includes(v));
     if (hit) matches.add(row.mlsName.toLowerCase().trim());
   });
@@ -270,7 +330,14 @@ function refresh() {
 }
 
 document.getElementById('roster-search').addEventListener('input', refresh);
-document.getElementById('referral-location').addEventListener('input', refresh);
+
+const referralLocationInput = document.getElementById('referral-location');
+referralLocationInput.addEventListener('input', () => { renderLocationDropdown(referralLocationInput.value); refresh(); });
+referralLocationInput.addEventListener('focus', () => renderLocationDropdown(referralLocationInput.value));
+referralLocationInput.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('referral-location-dropdown').classList.remove('open'); });
+document.addEventListener('click', e => {
+  if (e.target !== referralLocationInput) document.getElementById('referral-location-dropdown').classList.remove('open');
+});
 
 document.querySelectorAll('#roster-table th[data-sort]').forEach(th => {
   th.addEventListener('click', () => {
@@ -287,6 +354,7 @@ Promise.all([
   .then(([rosterData, coverageData]) => {
     ALL = rosterData.agents || [];
     COVERAGE = coverageData.coverage || [];
+    buildLocationIndex();
     rosterLoaded = true;
     refresh();
   })

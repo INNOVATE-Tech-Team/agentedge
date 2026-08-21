@@ -99,9 +99,17 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .filters-group{min-width:220px}
     .filters-group-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px}
     .filters-group-sub{font-size:11px;color:#999;font-weight:400;text-transform:none;letter-spacing:0;display:block;margin-top:2px}
-    #roster-languages-checks{width:260px}
-    #referral-location{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:220px}
+    #roster-languages-checks{width:220px}
+    #referral-location{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:260px;box-sizing:border-box}
     #referral-location:focus{outline:2px solid #82C112;outline-offset:-1px}
+    .loc-dropdown{display:none;position:absolute;z-index:20;top:calc(100% + 2px);left:0;right:0;
+      max-height:220px;overflow-y:auto;background:#fff;border:1px solid #ccc;border-radius:6px;
+      box-shadow:0 4px 14px rgba(0,0,0,.14)}
+    .loc-dropdown.open{display:block}
+    .loc-opt{padding:7px 10px;font-size:13px;cursor:pointer}
+    .loc-opt:hover{background:#f5f7f3}
+    .loc-opt .loc-kind{color:#999;font-size:11px;margin-left:6px}
+    .loc-empty{padding:7px 10px;font-size:12px;color:#999;font-style:italic}
     .filters-clear{background:none;border:none;color:#888;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;align-self:flex-start;margin-top:8px}
     .filters-clear:hover{color:#c00}
   </style>
@@ -135,15 +143,20 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
       <main class="wrap">
         <div id="filters-panel" class="filters-panel">
           <div class="filters-group">
-            <div class="filters-group-label">Languages</div>
+            <div class="filters-group-label">Languages
+              <span class="filters-group-sub">Please pick one or more</span>
+            </div>
             <input type="hidden" id="roster-languages">
             <div id="roster-languages-checks"></div>
           </div>
           <div class="filters-group">
             <div class="filters-group-label">Referral Location
-              <span class="filters-group-sub">City, county, township, or zip — matches agents whose MLS covers it</span>
+              <span class="filters-group-sub">City/borough, county, township, zip, state, or community — matches agents whose MLS covers it</span>
             </div>
-            <input type="text" id="referral-location" placeholder="e.g. Mullins">
+            <div style="position:relative">
+              <input type="text" id="referral-location" placeholder="Start typing…" autocomplete="off">
+              <div id="referral-location-dropdown" class="loc-dropdown"></div>
+            </div>
           </div>
           <button type="button" class="filters-clear" onclick="clearFilters()">Clear filters</button>
         </div>
