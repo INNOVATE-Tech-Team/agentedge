@@ -146,11 +146,13 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
           <?php else: ?>
           <p class="placeholder">Not available</p>
           <?php endif; ?>
+          <?php if ($progress['current_session_number'] !== null): ?>
           <div class="launch-homework">
             <div class="launch-homework-head">
               Homework <span class="launch-homework-tag">Not yet tracked</span>
             </div>
           </div>
+          <?php endif; ?>
         </div>
 
         <div class="launch-card">
