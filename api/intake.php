@@ -13,10 +13,17 @@ require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/crypto.php';
 require_once __DIR__ . '/../lib/notifications.php';
 
-function intake_json_out(array $d, int $code = 200): void {
+function intake_json_out(array $d, int $code = 200, bool $dispatch = false): void {
     http_response_code($code);
     header('Content-Type: application/json');
     echo json_encode($d);
+    // $dispatch drains notification_queue in-request (right after a successful
+    // submit) instead of leaving staff alerts to wait on the next cron cycle —
+    // wrapped so a delivery hiccup here can never turn an already-succeeded
+    // save into an error response.
+    if ($dispatch) {
+        try { dispatch_notification_queue(); } catch (\Throwable $e) {}
+    }
     exit;
 }
 
@@ -364,4 +371,9 @@ if ($email === $myEmail) {
     }
 }
 
-intake_json_out(['ok' => true, 'submitted' => $isSubmitted]);
+// Mirrors the submitted_at COALESCE logic in the UPSERT above: unchanged if
+// this was already submitted before, freshly stamped to $now on the save
+// that flips it to submitted, null while still a draft.
+$submittedAt = $isSubmitted ? ($wasSubmitted ? ($pr['submitted_at'] ?? null) : $now) : null;
+
+intake_json_out(['ok' => true, 'submitted' => $isSubmitted, 'submitted_at' => $submittedAt], 200, true);

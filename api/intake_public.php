@@ -206,6 +206,11 @@ try {
     notify_intake_completed($submitterName, $submitterEmail, $queueResult['id'], (string)($queueRow->fetchColumn() ?: ''));
 
     echo json_encode(['ok' => true]);
+    // Drain notification_queue in-request so staff alerts go out immediately
+    // instead of waiting on the next cron cycle — wrapped so a delivery
+    // hiccup here can never turn an already-succeeded submission into an
+    // error response (the JSON success above is already sent).
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
 
 } catch (\Throwable $e) {
     http_response_code(500);

@@ -6,6 +6,30 @@
 if (defined('AGENTEDGE_LOCAL_DB_LOADED')) return;
 define('AGENTEDGE_LOCAL_DB_LOADED', true);
 
+// Bump this whenever a new migration/seed block is appended to the end of
+// local_db_migrate(). The applied version is stamped into local_db_schema_meta
+// (below) so local_db() only re-runs the migration body when the stored
+// version is behind this constant instead of on every single request.
+//
+// Deliberately NOT SQLite's built-in `PRAGMA user_version`: on the live DB
+// that pragma is already at 4, climbing from 0 across old on-disk backups
+// (0 -> 1 -> 4 between mid-July and Aug 17), even though nothing in this
+// codebase has ever set it. Something external already uses that pragma for
+// its own purposes, so reusing it here would silently collide -- a dedicated
+// table keeps our version tracking independent of whatever that is.
+//
+// Before this gate existed, every one of the ~300 CREATE TABLE/ALTER
+// TABLE/seed statements below ran on every page load and API call, no matter
+// how many times the DB had already seen them — each one still takes a
+// SQLite write lock even when it's a no-op (SQLite allows only one writer at
+// a time, even in WAL mode). Under real concurrent traffic that serialized
+// every request against this one file and was the confirmed cause of the
+// intermittent "database is locked" crashes in cron/process_email_queue.php
+// (it also meant an agent's intake submission and a staff member's page load
+// racing that same lock could leave the just-submitted data slow to
+// appear — see the AgentEdge intake duplicate-agent investigation, Aug 2026).
+const LOCAL_DB_SCHEMA_VERSION = 1;
+
 function local_db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
@@ -20,6 +44,30 @@ function local_db(): PDO {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("PRAGMA journal_mode=WAL");
     $pdo->exec("PRAGMA busy_timeout=15000"); // wait up to 15s for a lock instead of failing immediately
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS local_db_schema_meta (id INTEGER PRIMARY KEY CHECK (id=1), version INTEGER NOT NULL DEFAULT 0)");
+    $pdo->exec("INSERT OR IGNORE INTO local_db_schema_meta (id, version) VALUES (1, 0)");
+    $schemaVersion = (int)$pdo->query("SELECT version FROM local_db_schema_meta WHERE id=1")->fetchColumn();
+
+    if ($schemaVersion < LOCAL_DB_SCHEMA_VERSION) {
+        local_db_migrate($pdo, $dir, $schemaVersion);
+        $pdo->exec("UPDATE local_db_schema_meta SET version = " . LOCAL_DB_SCHEMA_VERSION . " WHERE id=1");
+    }
+
+    return $pdo;
+}
+
+// Every CREATE TABLE IF NOT EXISTS / ALTER TABLE (wrapped in try/catch, for
+// "duplicate column") / seed-data statement the app has ever needed, in the
+// order it must run — gated by local_db_schema_meta in local_db() above so
+// it runs once per DB instead of once per request. $fromVersion is unused by
+// the version-1 baseline below (everything that existed in this file,
+// committed or not, as of the schema-versioning cutover — see
+// LOCAL_DB_SCHEMA_VERSION) but is threaded through so a future
+// `if ($fromVersion < N) { ... }` block can be appended below without
+// re-running everything that came before it.
+function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
+    // ── version 1 (baseline) ───────────────────────────────────────────────────
 
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
@@ -86,6 +134,9 @@ function local_db(): PDO {
     // 'flexible' (default, 9-5/adjustable-duration) or 'fixed_4hr' (a hardcoded
     // Mon-Fri 9-1/1-5, Sat-Sun 10-2 grid -- see room_booking_fixed_windows_for_date()).
     try { $pdo->exec("ALTER TABLE conference_rooms ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'flexible'"); } catch (\Exception $e) {}
+    // Optional address to CC on every new booking for this room (e.g. an
+    // office manager who wants visibility into all bookings, not just their own).
+    try { $pdo->exec("ALTER TABLE conference_rooms ADD COLUMN notify_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Explicit office allow-list for a room, e.g. "NMB Agent on Duty" which is
     // bookable across a fixed set of offices spanning more than one state --
@@ -1921,6 +1972,43 @@ function local_db(): PDO {
         foreach ($offices as $o) { $mo->execute($o); }
     }
 
+    // ── MLS Notes / Activity log ──────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_notes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_id       INTEGER NOT NULL,
+        note         TEXT    NOT NULL,
+        tagged_email TEXT    NOT NULL DEFAULT '',
+        created_by   TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_notes_mls ON mls_notes(mls_id)");
+
+    // ── MLS Agreements (S3-backed uploads, TEXT UUID primary key) ────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_agreements (
+        id           TEXT    PRIMARY KEY,
+        mls_id       INTEGER NOT NULL,
+        name         TEXT    NOT NULL,
+        mime_type    TEXT    NOT NULL DEFAULT '',
+        size_bytes   INTEGER NOT NULL DEFAULT 0,
+        storage_key  TEXT    NOT NULL,
+        uploaded_by  TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_agreements_mls ON mls_agreements(mls_id)");
+
+    // ── MLS Reminders ─────────────────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_reminders (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_id       INTEGER NOT NULL,
+        remind_at    TEXT    NOT NULL,
+        note         TEXT    NOT NULL DEFAULT '',
+        created_by   TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        dismissed_at TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_reminders_mls ON mls_reminders(mls_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_reminders_due ON mls_reminders(remind_at, dismissed_at)");
+
     // ── MLS / Board Memberships (login + billing credentials per office) ─────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_memberships (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3013,6 +3101,13 @@ function local_db(): PDO {
     // non-split association.
     try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN agent_label TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN market_centers TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // specific_agents is a hard-coded roster of individual agents (by lower-
+    // cased email) who should surface for this row's location matches no
+    // matter what their own MLS Board says -- e.g. an agent whose board is
+    // CCAR (and so only auto-matches the Grand Strand CCAR row) but who
+    // personally also covers a non-CCAR area; adding her here to that other
+    // row makes her show up for it without reclassifying her MLS Board.
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN specific_agents TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     // Backfill: any row without its own agent_label (every pre-existing row,
     // and any future row saved without explicitly setting one) shows under
     // its own mls_name in the agent picker -- the 1-row-per-association norm.
@@ -3031,8 +3126,6 @@ function local_db(): PDO {
             foreach ($names as $n) { $ins->execute([$n]); }
         } catch (\Exception $e) {}
     }
-
-    return $pdo;
 }
 
 // Practical starter list of major U.S. metros per state (not the full ~390-entry
