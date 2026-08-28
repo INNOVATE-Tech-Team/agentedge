@@ -438,6 +438,38 @@ function local_db(): PDO {
     )");
     try { $pdo->exec("ALTER TABLE notification_trigger_recipients ADD COLUMN recipient_type TEXT NOT NULL DEFAULT 'email'"); } catch (\Exception $e) {}
 
+    // One-time seed: these addresses used to be hardcoded literal arrays
+    // inside the notify_* functions in lib/notifications.php — moved here so
+    // they show as ordinary, removable chips in admin_notification_triggers.php
+    // instead of being invisible in code. Gated on the notification_triggers
+    // row not existing yet for that event_key, so this never re-adds a
+    // recipient an admin has since deleted (once seeded, that row's mere
+    // existence — regardless of enabled state — marks seeding as done).
+    // offboard_system_tasks is deliberately NOT included here — its 3
+    // hardcoded addresses (abril@/lisa@/dominic@) are each tied to a specific
+    // system-specific email body (FUB/Maxa/Darwin), not a shared recipient
+    // list, so converting them needs a different UI shape than a flat
+    // removable-chip list.
+    $defaultTriggerRecipients = [
+        'agent_capped'          => ['lisa@innovateonline.com'],
+        'offboard_complete'     => ['darren@innovateonline.com', 'whitney@innovateonline.com'],
+        'profile_changed'       => ['whitney@innovateonline.com', 'lisa@innovateonline.com'],
+        'intake_submitted'      => ['lisa@innovateonline.com', 'dominic@innovateonline.com', 'darren@innovateonline.com', 'abril@innovateonline.com', 'whitney@innovateonline.com', 'kelseyabroussard@gmail.com'],
+        'intake_summary_admins' => ['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'],
+        'ticket_created'        => ['darren@innovateonline.com'],
+        'ticket_reply'          => ['darren@innovateonline.com'],
+    ];
+    $checkTriggerSeeded = $pdo->prepare("SELECT 1 FROM notification_triggers WHERE event_key=?");
+    $insTriggerSeeded   = $pdo->prepare("INSERT INTO notification_triggers (event_key, enabled) VALUES (?, 1)");
+    $insDefaultRecip    = $pdo->prepare("INSERT OR IGNORE INTO notification_trigger_recipients (event_key, email, recipient_type) VALUES (?, ?, 'email')");
+    foreach ($defaultTriggerRecipients as $eventKey => $emails) {
+        $checkTriggerSeeded->execute([$eventKey]);
+        if (!$checkTriggerSeeded->fetch()) {
+            foreach ($emails as $e) { $insDefaultRecip->execute([$eventKey, $e]); }
+            $insTriggerSeeded->execute([$eventKey]);
+        }
+    }
+
     // Staff notified by email when a specific onboarding/offboarding step is
     // added (heads-up) and when it becomes the next actionable step.
     // step_key matches the 'key' from onboard_tools()/offboard_tools().

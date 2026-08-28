@@ -671,7 +671,10 @@ function notify_offboard_complete(
     $ins = $db->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
     );
-    $recipients = array_unique(array_merge(['darren@innovateonline.com', 'whitney@innovateonline.com'], notification_trigger_extra_recipients('offboard_complete')));
+    // darren@/whitney@ used to be hardcoded here — moved into a one-time DB
+    // seed (local_db.php) so they show as ordinary, removable recipients in
+    // admin_notification_triggers.php instead of being invisible in code.
+    $recipients = notification_trigger_extra_recipients('offboard_complete');
     foreach ($recipients as $r) {
         $ins->execute([$r, 'email', $subject, $body, '', $fromEmail, $fromName]);
     }
@@ -978,8 +981,10 @@ function notify_agent_capped(string $agentName, string $agentEmail, string $mark
         $mcLeaderEmail = trim($st->fetchColumn() ?: '');
     }
 
+    // lisa@ used to be hardcoded here — moved into a one-time DB seed
+    // (local_db.php) so it shows as an ordinary, removable recipient.
     $emails = array_values(array_unique(array_filter(array_merge(
-        [$mcLeaderEmail, 'lisa@innovateonline.com'],
+        [$mcLeaderEmail],
         notification_trigger_extra_recipients('agent_capped')
     ))));
     if (!$emails) return;
@@ -1151,7 +1156,9 @@ function notify_profile_changed(string $agentName, string $agentEmail, array $ch
             "— AgentEdge",
         ]
     ));
-    $recipients = array_unique(array_merge(['whitney@innovateonline.com', 'lisa@innovateonline.com'], notification_trigger_extra_recipients('profile_changed')));
+    // whitney@/lisa@ used to be hardcoded here — moved into a one-time DB
+    // seed (local_db.php) so they show as ordinary, removable recipients.
+    $recipients = notification_trigger_extra_recipients('profile_changed');
     queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
 
@@ -1170,15 +1177,9 @@ function notify_intake_submitted(string $agentName, string $agentEmail): void {
         '',
         '— AgentEdge',
     ]);
-    $recipients = [
-        'lisa@innovateonline.com',
-        'dominic@innovateonline.com',
-        'darren@innovateonline.com',
-        'abril@innovateonline.com',
-        'whitney@innovateonline.com',
-        'kelseyabroussard@gmail.com',
-    ];
-    $recipients = array_unique(array_merge($recipients, notification_trigger_extra_recipients('intake_submitted')));
+    // This 6-address list used to be hardcoded here — moved into a one-time
+    // DB seed (local_db.php) so each shows as an ordinary, removable recipient.
+    $recipients = notification_trigger_extra_recipients('intake_submitted');
     queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
 
@@ -1405,10 +1406,9 @@ function notify_intake_summary_admins(string $agentEmail): int {
     $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', '')"
     );
-    $recipients = array_unique(array_merge(
-        ['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'],
-        notification_trigger_extra_recipients('intake_summary_admins')
-    ));
+    // This 3-address list used to be hardcoded here — moved into a one-time
+    // DB seed (local_db.php) so each shows as an ordinary, removable recipient.
+    $recipients = notification_trigger_extra_recipients('intake_summary_admins');
     foreach ($recipients as $recipient) {
         $ins->execute([$recipient, $subject, $body]);
     }
@@ -1425,11 +1425,15 @@ function super_admin_emails(): array {
 }
 
 // Ticket notifications, narrowed for now: instead of blasting every
-// super_admin, only Darren sees them (plus the ticket's own agent/CCs,
-// handled separately). Revert to super_admin_emails() here to go back to
-// notifying the whole admin roster.
+// super_admin, this used to hardcode just Darren (plus the ticket's own
+// agent/CCs, handled separately). That narrowing now lives as a one-time
+// DB-seeded, removable recipient on the 'ticket_created'/'ticket_reply'
+// triggers (local_db.php + admin_notification_triggers.php) instead of
+// being invisible in code — this function is deliberately empty so the base
+// audience comes entirely from notification_trigger_extra_recipients().
+// Add super_admin_emails() here to also notify the whole admin roster.
 function ticket_notify_admin_emails(): array {
-    return ['darren@innovateonline.com'];
+    return [];
 }
 
 // CC'd staff emails for a ticket.
