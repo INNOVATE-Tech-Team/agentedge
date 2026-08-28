@@ -425,12 +425,18 @@ function local_db(): PDO {
     )");
     // Extra recipients added on top of a trigger's base/dynamic audience —
     // for a custom trigger (is_custom=1) this IS the whole audience.
+    // 'email' holds either a literal address (recipient_type='email') or a
+    // role slug from roles.php's ROLE_LABELS (recipient_type='role') —
+    // role rows resolve to every agent_roles member of that role at send
+    // time (see trigger_role_member_emails() in lib/notifications.php), so
+    // membership changes take effect immediately without editing the trigger.
     $pdo->exec("CREATE TABLE IF NOT EXISTS notification_trigger_recipients (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
         event_key TEXT    NOT NULL,
         email     TEXT    NOT NULL,
         UNIQUE(event_key, email)
     )");
+    try { $pdo->exec("ALTER TABLE notification_trigger_recipients ADD COLUMN recipient_type TEXT NOT NULL DEFAULT 'email'"); } catch (\Exception $e) {}
 
     // Staff notified by email when a specific onboarding/offboarding step is
     // added (heads-up) and when it becomes the next actionable step.

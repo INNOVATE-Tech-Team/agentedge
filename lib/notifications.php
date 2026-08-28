@@ -68,10 +68,41 @@ function notification_trigger_enabled(string $eventKey): bool {
     return $row === false ? true : (bool)$row['enabled'];
 }
 
+// Every current agent_roles member of $role — checks both an agent's primary
+// role and their optional extra role (extra_roles_json, see admin_roles.php),
+// so a trigger's role recipients always reflect who holds the role right now
+// rather than a stale list frozen at the time the trigger was configured.
+function trigger_role_member_emails(string $role): array {
+    $rows = local_db()->query("SELECT email, role, extra_roles_json FROM agent_roles")->fetchAll(PDO::FETCH_ASSOC);
+    $emails = [];
+    foreach ($rows as $r) {
+        if (($r['role'] ?? '') === $role) {
+            $emails[] = strtolower(trim($r['email']));
+            continue;
+        }
+        $extra = json_decode($r['extra_roles_json'] ?? '[]', true) ?: [];
+        foreach ($extra as $er) {
+            if (($er['role'] ?? '') === $role) {
+                $emails[] = strtolower(trim($r['email']));
+                break;
+            }
+        }
+    }
+    return array_values(array_unique(array_filter($emails, fn($e) => filter_var($e, FILTER_VALIDATE_EMAIL))));
+}
+
 function notification_trigger_extra_recipients(string $eventKey): array {
-    $s = local_db()->prepare("SELECT email FROM notification_trigger_recipients WHERE event_key=? ORDER BY email");
+    $s = local_db()->prepare("SELECT recipient_type, email AS value FROM notification_trigger_recipients WHERE event_key=? ORDER BY email");
     $s->execute([$eventKey]);
-    return $s->fetchAll(PDO::FETCH_COLUMN);
+    $emails = [];
+    foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        if (($r['recipient_type'] ?? 'email') === 'role') {
+            $emails = array_merge($emails, trigger_role_member_emails($r['value']));
+        } else {
+            $emails[] = $r['value'];
+        }
+    }
+    return array_values(array_unique(array_filter($emails)));
 }
 
 // Fires a fully custom, admin-defined trigger (one with no notify_* function
