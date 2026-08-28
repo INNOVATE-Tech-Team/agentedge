@@ -12,6 +12,78 @@ require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/company_email.php';
 require_once __DIR__ . '/crypto.php';
 
+// ── Notification Trigger Registry ─────────────────────────────────────────────
+// Lets admins (admin_notification_triggers.php) enable/disable any of the
+// notify_* events below and add extra recipients to it without a code change.
+// Built-in event keys are read by the notify_* functions in this file via
+// notification_trigger_enabled()/notification_trigger_extra_recipients().
+// A trigger created in the admin UI that ISN'T one of these built-in keys has
+// no code hook until a developer calls fire_custom_trigger() for it — same
+// "manual until wired up" idea as step_defs.is_auto in admin_step_notify.php.
+//
+// Recipients configured here are always ADDITIVE — they supplement whatever
+// base/dynamic audience each notify_* function already resolves (BIC/MC
+// Leader lookups, role queries, the agent themself, etc.), never replace it.
+function builtin_trigger_catalog(): array {
+    return [
+        ['event_key'=>'onboard_added',           'group'=>'Onboarding', 'label'=>'Agent Added to Onboarding',        'description'=>'Sent to the adding admin + onboard_notify_emails (config.php) when a new agent enters the onboarding queue.'],
+        ['event_key'=>'intake_completed',        'group'=>'Onboarding', 'label'=>'Onboarding Intake Form Completed', 'description'=>'Sent when a queued agent finishes their onboarding intake form and is ready for account creation.'],
+        ['event_key'=>'intake_request',          'group'=>'Onboarding', 'label'=>'Intake Form Request (to agent)',   'description'=>'The "please complete your intake form" email sent to a newly-queued agent.'],
+        ['event_key'=>'coach_assignment_needed', 'group'=>'Onboarding', 'label'=>'Launch Coach Assignment Needed',   'description'=>'Sent to Director of Coaching + Launch Facilitators when a new (non-transfer) agent completes onboarding.'],
+        ['event_key'=>'onboard_completed',       'group'=>'Onboarding', 'label'=>'Welcome Email (onboarding complete)', 'description'=>'The welcome email sent to the agent once onboarding is marked complete.'],
+        ['event_key'=>'bic_ml_onboard_complete', 'group'=>'Onboarding', 'label'=>'BIC/ML — Onboarding Complete',     'description'=>'Sent to the BIC + Market Center Leader when an agent finishes onboarding.'],
+        ['event_key'=>'bic_ml_intake_submitted', 'group'=>'Onboarding', 'label'=>'BIC/ML — Intake Submitted',        'description'=>'Sent to the BIC + Market Center Leader when an agent submits their intake form.'],
+        ['event_key'=>'bic_ml_docs_signed',      'group'=>'Onboarding', 'label'=>'BIC/ML — Documents Signed',        'description'=>'Sent to the BIC + Market Center Leader when an agent completes document signing.'],
+        ['event_key'=>'mc_assigned',             'group'=>'Onboarding', 'label'=>'Agent Assigned to Market Center',  'description'=>'Sent to the BIC + Market Center Leader whenever an agent is assigned/reassigned to a market center.'],
+        ['event_key'=>'intake_submitted',        'group'=>'Onboarding', 'label'=>'Intake Form Submitted (ops)',      'description'=>'Ops heads-up when an agent submits their AgentEdge intake form for the first time.'],
+        ['event_key'=>'intake_summary_admins',   'group'=>'Onboarding', 'label'=>'Intake Summary (ops)',             'description'=>'Full intake-form summary sent to ops when an agent submits their intake form for the first time.'],
+        ['event_key'=>'upline_intake_submitted', 'group'=>'Onboarding', 'label'=>'Growth Network — New Recruit',     'description'=>'Sent to everyone in a new agent\'s upline/sponsor chain when that agent completes their intake form.'],
+
+        ['event_key'=>'offboard_added',          'group'=>'Offboarding', 'label'=>'Agent Added to Offboarding',      'description'=>'Sent to the adding admin + onboard_notify_emails when an agent enters the offboarding queue.'],
+        ['event_key'=>'offboard_system_tasks',   'group'=>'Offboarding', 'label'=>'Offboarding System Tasks',        'description'=>'The FUB/Maxa/Darwin/MLS deprovisioning task emails sent when an agent enters the offboarding queue.'],
+        ['event_key'=>'offboard_complete',       'group'=>'Offboarding', 'label'=>'Offboarding Complete',            'description'=>'Sent to leadership when an agent\'s offboarding is marked complete.'],
+        ['event_key'=>'exit_interview_sent',     'group'=>'Offboarding', 'label'=>'Exit Interview Request (to agent)', 'description'=>'The exit-interview link email sent to a departing agent.'],
+
+        ['event_key'=>'agent_capped',            'group'=>'Production',  'label'=>'Agent Capped',                    'description'=>'Sent to the Market Center Leader (+ lisa@innovateonline.com) when an agent reaches their commission cap.'],
+        ['event_key'=>'profile_changed',         'group'=>'Production',  'label'=>'Agent Profile Self-Edit',         'description'=>'Heads-up sent when an agent edits their own My Profile / Intake Form.'],
+
+        ['event_key'=>'ticket_created',          'group'=>'Support',     'label'=>'Support Ticket Created',          'description'=>'Sent to ticket admins when a new support ticket is submitted.'],
+        ['event_key'=>'ticket_reply',            'group'=>'Support',     'label'=>'Support Ticket Reply',            'description'=>'Sent to the other side of a ticket conversation (+ CCs) whenever a reply is posted.'],
+        ['event_key'=>'suggestion_created',      'group'=>'Support',     'label'=>'Suggestion Submitted',            'description'=>'Sent to all super admins when a new suggestion is submitted.'],
+    ];
+}
+
+// Custom (admin-created) triggers only — built-ins live in builtin_trigger_catalog()
+// and aren't rows here unless an admin has touched their enabled/recipients state.
+function custom_trigger_catalog(): array {
+    return local_db()->query(
+        'SELECT event_key, label, description, group_label AS "group" FROM notification_triggers WHERE is_custom=1 ORDER BY group_label, label'
+    )->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function notification_trigger_enabled(string $eventKey): bool {
+    $s = local_db()->prepare("SELECT enabled FROM notification_triggers WHERE event_key=?");
+    $s->execute([$eventKey]);
+    $row = $s->fetch(PDO::FETCH_ASSOC);
+    return $row === false ? true : (bool)$row['enabled'];
+}
+
+function notification_trigger_extra_recipients(string $eventKey): array {
+    $s = local_db()->prepare("SELECT email FROM notification_trigger_recipients WHERE event_key=? ORDER BY email");
+    $s->execute([$eventKey]);
+    return $s->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// Fires a fully custom, admin-defined trigger (one with no notify_* function
+// of its own) — recipients come entirely from notification_trigger_recipients
+// since there's no hardcoded base audience to add on top of. A developer
+// calls this from wherever the underlying event actually happens in the app;
+// creating the trigger in the admin UI alone does not make anything fire.
+function fire_custom_trigger(string $eventKey, string $subject, string $body, string $fromEmail = '', string $fromName = ''): int {
+    if (!notification_trigger_enabled($eventKey)) return 0;
+    return queue_email_to(notification_trigger_extra_recipients($eventKey), $subject, $body, $fromEmail, $fromName);
+}
+
 // ── Audience resolution ───────────────────────────────────────────────────────
 
 // Returns [['email'=>..., 'notify_email'=>1, 'notify_sms'=>0|1, 'sms_phone'=>...], ...].
@@ -261,12 +333,14 @@ function notify_onboard_added(
     string $addedBy,
     string $addedByName = ''
 ): void {
+    if (!notification_trigger_enabled('onboard_added')) return;
     // $addedBy is usually the acting admin's own email, but a webhook caller
     // (e.g. onboard_push.php from Advantage CRM) can pass a non-email label —
     // only use it as the From address when it's actually a real address.
     $fromEmail = filter_var($addedBy, FILTER_VALIDATE_EMAIL) ? $addedBy : '';
     $c       = cfg();
     $subject = "New Agent Onboarding: {$agentName}";
+    $extraRecipients = notification_trigger_extra_recipients('onboard_added');
     $body    = implode("\n", [
         "A new agent has been added to the onboarding queue in AgentEdge.",
         "",
@@ -299,7 +373,8 @@ function notify_onboard_added(
     if (is_string($ccEmails)) {
         $ccEmails = array_filter(array_map('trim', explode(',', $ccEmails)));
     }
-    foreach ((array)$ccEmails as $cc) {
+    $ccEmails = array_unique(array_merge((array)$ccEmails, $extraRecipients));
+    foreach ($ccEmails as $cc) {
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
             $ins->execute([$cc, 'email', $subject, $body, '', $fromEmail, $addedByName]);
         }
@@ -315,8 +390,10 @@ function notify_onboard_added(
 // agent's onboarding, and links straight into the queue row (not a separate
 // profile page) since that's now where the intake form itself can be viewed.
 function notify_intake_completed(string $agentName, string $agentEmail, int $queueId, string $addedBy): void {
+    if (!notification_trigger_enabled('intake_completed')) return;
     $c       = cfg();
     $subject = "{$agentName} completed their intake form — ready to create their account";
+    $extraRecipients = notification_trigger_extra_recipients('intake_completed');
     $body    = implode("\n", [
         "{$agentName} ({$agentEmail}) has completed their onboarding intake form.",
         "",
@@ -339,7 +416,8 @@ function notify_intake_completed(string $agentName, string $agentEmail, int $que
     if (is_string($ccEmails)) {
         $ccEmails = array_filter(array_map('trim', explode(',', $ccEmails)));
     }
-    foreach ((array)$ccEmails as $cc) {
+    $ccEmails = array_unique(array_merge((array)$ccEmails, $extraRecipients));
+    foreach ($ccEmails as $cc) {
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
             $ins->execute([$cc, 'email', $subject, $body, '', '', '']);
         }
@@ -361,9 +439,22 @@ function intake_link_url(int $queueId): string {
     return 'https://agentedge.innovateonline.com/public_intake.php?qid=' . $queueId . '&t=' . intake_link_token($queueId);
 }
 
+// Short HMAC token for the public (no-login) exit-interview link.
+function exit_interview_link_token(int $queueId): string {
+    $c      = cfg();
+    $secret = ($c['intake_link_secret'] ?? '') ?: (($c['sendgrid_key'] ?? '') ?: 'agentedge-intake-link');
+    return substr(hash_hmac('sha256', 'exit-interview-' . $queueId, $secret), 0, 16);
+}
+
+// Tokenized public exit-interview link for a specific offboard-queue row.
+function exit_interview_link_url(int $queueId): string {
+    return 'https://agentedge.innovateonline.com/public_exit_interview.php?qid=' . $queueId . '&t=' . exit_interview_link_token($queueId);
+}
+
 // Queue the "please fill out your intake form" email to a newly-queued agent.
 // Callers must call dispatch_notification_queue() after flushing the HTTP response.
 function notify_intake_request(string $agentName, string $agentEmail, int $queueId): void {
+    if (!notification_trigger_enabled('intake_request')) return;
     $subject = "Welcome to INNOVATE — Please Complete Your Intake Form";
     $body    = implode("\n", [
         "Hi {$agentName},",
@@ -379,9 +470,13 @@ function notify_intake_request(string $agentName, string $agentEmail, int $queue
         "— AgentEdge",
     ]);
 
-    local_db()->prepare(
+    $recipients = array_unique(array_merge([$agentEmail], notification_trigger_extra_recipients('intake_request')));
+    $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '', '', '']);
+    );
+    foreach ($recipients as $r) {
+        if (filter_var($r, FILTER_VALIDATE_EMAIL)) $ins->execute([$r, 'email', $subject, $body, '', '', '']);
+    }
 }
 
 // Queue an email when an agent enters the offboarding queue.
@@ -395,6 +490,7 @@ function notify_offboard_added(
     string $addedBy,
     string $addedByName = ''
 ): void {
+    if (!notification_trigger_enabled('offboard_added')) return;
     $fromEmail = filter_var($addedBy, FILTER_VALIDATE_EMAIL) ? $addedBy : '';
     $c          = cfg();
     $reasonLabel = match ($reason) {
@@ -435,7 +531,8 @@ function notify_offboard_added(
     if (is_string($ccEmails)) {
         $ccEmails = array_filter(array_map('trim', explode(',', $ccEmails)));
     }
-    foreach ((array)$ccEmails as $cc) {
+    $ccEmails = array_unique(array_merge((array)$ccEmails, notification_trigger_extra_recipients('offboard_added')));
+    foreach ($ccEmails as $cc) {
         if ($cc && $cc !== $addedBy && filter_var($cc, FILTER_VALIDATE_EMAIL)) {
             $ins->execute([$cc, 'email', $subject, $body, '', $fromEmail, $addedByName]);
         }
@@ -455,6 +552,8 @@ function notify_offboard_system_tasks(
     string $fromEmail = '',
     string $fromName = ''
 ): void {
+    if (!notification_trigger_enabled('offboard_system_tasks')) return;
+    $extraRecipients = notification_trigger_extra_recipients('offboard_system_tasks');
     $eName = htmlspecialchars($agentName,    ENT_QUOTES);
     $eEmail = htmlspecialchars($agentEmail,  ENT_QUOTES);
     $eMC   = htmlspecialchars($marketCenter, ENT_QUOTES);
@@ -486,6 +585,9 @@ function notify_offboard_system_tasks(
             . sender_signature_html($fromEmail, $fromName)
         );
         $ins->execute([$recipient, 'email', $subject, $body, '', $fromEmail, $fromName]);
+        foreach ($extraRecipients as $extra) {
+            $ins->execute([$extra, 'email', $subject, $body, '', $fromEmail, $fromName]);
+        }
     }
 
     // BIC gets the MLS removal task.
@@ -504,6 +606,9 @@ function notify_offboard_system_tasks(
                 . sender_signature_html($fromEmail, $fromName)
             );
             $ins->execute([$bicEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
+            foreach ($extraRecipients as $extra) {
+                $ins->execute([$extra, 'email', $subject, $body, '', $fromEmail, $fromName]);
+            }
         }
     }
 }
@@ -516,6 +621,7 @@ function notify_offboard_complete(
     string $fromEmail = '',
     string $fromName = ''
 ): void {
+    if (!notification_trigger_enabled('offboard_complete')) return;
     $eName  = htmlspecialchars($agentName,    ENT_QUOTES);
     $eEmail = htmlspecialchars($agentEmail,   ENT_QUOTES);
     $eMC    = htmlspecialchars($marketCenter, ENT_QUOTES);
@@ -534,7 +640,8 @@ function notify_offboard_complete(
     $ins = $db->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
     );
-    foreach (['darren@innovateonline.com', 'whitney@innovateonline.com'] as $r) {
+    $recipients = array_unique(array_merge(['darren@innovateonline.com', 'whitney@innovateonline.com'], notification_trigger_extra_recipients('offboard_complete')));
+    foreach ($recipients as $r) {
         $ins->execute([$r, 'email', $subject, $body, '', $fromEmail, $fromName]);
     }
 }
@@ -616,6 +723,7 @@ function notification_email_html(string $contentHtml): string {
 
 // Queue a welcome email to the agent when their onboarding is marked complete.
 function notify_onboard_completed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
+    if (!notification_trigger_enabled('onboard_completed')) return;
     // Whitney Beadling is the designated sender for all welcome emails.
     $senderEmail = 'whitney@innovateonline.com';
     $senderName  = 'Whitney Beadling';
@@ -645,19 +753,27 @@ function notify_onboard_completed(string $agentName, string $agentEmail, string 
         . $sig
     );
 
-    local_db()->prepare(
+    $recipients = array_unique(array_merge([$agentEmail], notification_trigger_extra_recipients('onboard_completed')));
+    $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '', $senderEmail, $senderName]);
+    );
+    foreach ($recipients as $r) {
+        $ins->execute([$r, 'email', $subject, $body, '', $senderEmail, $senderName]);
+    }
 }
 
 // Queue an email to the Director of Coaching + Launch Facilitator(s) to assign
 // a Launch Coach and LAUNCH class. Only called for new agents (no prior
 // brokerage affiliation on their intake form) — experienced transfers skip this.
 function notify_coach_assignment_needed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
+    if (!notification_trigger_enabled('coach_assignment_needed')) return;
     $db   = local_db();
     $st   = $db->prepare("SELECT email FROM agent_roles WHERE role IN ('director_of_coaching','launch_facilitator')");
     $st->execute();
-    $emails = array_values(array_unique(array_filter(array_map('trim', $st->fetchAll(PDO::FETCH_COLUMN)))));
+    $emails = array_values(array_unique(array_filter(array_merge(
+        array_map('trim', $st->fetchAll(PDO::FETCH_COLUMN)),
+        notification_trigger_extra_recipients('coach_assignment_needed')
+    ))));
     if (!$emails) return;
 
     $subject = 'New Agent — Assign Launch Coach & LAUNCH Class: ' . $agentName;
@@ -684,6 +800,7 @@ function notify_coach_assignment_needed(string $agentName, string $agentEmail, s
 // A non-matching/blank market center is a no-op, not an error — shouldn't
 // block onboarding completion over a mismatched free-text field.
 function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, string $marketCenter, string $fromEmail = '', string $fromName = ''): void {
+    if (!notification_trigger_enabled('bic_ml_onboard_complete')) return;
     $marketCenter = trim($marketCenter);
     if ($marketCenter === '') return;
 
@@ -693,7 +810,10 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
     $mc = $st->fetch(PDO::FETCH_ASSOC);
     if (!$mc) return;
 
-    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    $emails = array_values(array_unique(array_filter(array_merge(
+        [trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')],
+        notification_trigger_extra_recipients('bic_ml_onboard_complete')
+    ))));
     if (!$emails) return;
 
     $subject = 'Onboarding Complete: ' . $agentName;
@@ -717,7 +837,8 @@ function notify_bic_ml_onboard_complete(string $agentName, string $agentEmail, s
 // ── BIC/MC-leader onboarding milestone notifications ─────────────────────────
 // Shared helper — looks up BIC + MC leader for a market center and queues one
 // HTML email to each. $subject / $headline / $detail are the caller's content.
-function _notify_bic_ml(string $marketCenter, string $subject, string $headline, string $detail): void {
+function _notify_bic_ml(string $marketCenter, string $subject, string $headline, string $detail, string $eventKey): void {
+    if (!notification_trigger_enabled($eventKey)) return;
     $marketCenter = trim($marketCenter);
     if ($marketCenter === '') return;
     $db = local_db();
@@ -725,7 +846,10 @@ function _notify_bic_ml(string $marketCenter, string $subject, string $headline,
     $st->execute([$marketCenter]);
     $mc = $st->fetch(PDO::FETCH_ASSOC);
     if (!$mc) return;
-    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    $emails = array_values(array_unique(array_filter(array_merge(
+        [trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')],
+        notification_trigger_extra_recipients($eventKey)
+    ))));
     if (!$emails) return;
     $p    = 'style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"';
     $body = notification_email_html(
@@ -750,7 +874,8 @@ function notify_bic_ml_intake_submitted(string $agentName, string $agentEmail, s
         $marketCenter,
         $agentName . ' — Intake form submitted',
         'Intake Form Submitted',
-        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has submitted their intake form. Document signing is next.'
+        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has submitted their intake form. Document signing is next.',
+        'bic_ml_intake_submitted'
     );
 }
 
@@ -762,13 +887,15 @@ function notify_bic_ml_docs_signed(string $agentName, string $agentEmail, string
         $marketCenter,
         $agentName . ' — Documents signed',
         'Documents Signed',
-        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has completed document signing. Their onboarding agreement is on file.'
+        '<strong>' . $eName . '</strong> (' . $eEmail . ') at <strong>' . $eMC . '</strong> has completed document signing. Their onboarding agreement is on file.',
+        'bic_ml_docs_signed'
     );
 }
 
 // Notify the BIC and MC Leader whenever an agent is assigned to a market center —
 // fired both on onboarding completion and on any roster MC change.
 function notify_mc_assigned(string $agentName, string $agentEmail, string $marketCenter, string $fromEmail = '', string $fromName = ''): void {
+    if (!notification_trigger_enabled('mc_assigned')) return;
     $marketCenter = trim($marketCenter);
     if ($marketCenter === '') return;
 
@@ -778,7 +905,10 @@ function notify_mc_assigned(string $agentName, string $agentEmail, string $marke
     $mc = $st->fetch(PDO::FETCH_ASSOC);
     if (!$mc) return;
 
-    $emails = array_values(array_unique(array_filter([trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')])));
+    $emails = array_values(array_unique(array_filter(array_merge(
+        [trim($mc['bic_email'] ?? ''), trim($mc['mc_leader_email'] ?? '')],
+        notification_trigger_extra_recipients('mc_assigned')
+    ))));
     if (!$emails) return;
 
     $subject = $agentName . ' assigned to ' . $marketCenter;
@@ -807,6 +937,7 @@ function notify_mc_assigned(string $agentName, string $agentEmail, string $marke
 // notify_bic_ml_onboard_complete this does NOT include the BIC, only the MC
 // Leader, matching what was actually asked for.
 function notify_agent_capped(string $agentName, string $agentEmail, string $marketCenter, bool $isTest = false): void {
+    if (!notification_trigger_enabled('agent_capped')) return;
     $db = local_db();
     $mcLeaderEmail = '';
     $marketCenter = trim($marketCenter);
@@ -816,7 +947,10 @@ function notify_agent_capped(string $agentName, string $agentEmail, string $mark
         $mcLeaderEmail = trim($st->fetchColumn() ?: '');
     }
 
-    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com'])));
+    $emails = array_values(array_unique(array_filter(array_merge(
+        [$mcLeaderEmail, 'lisa@innovateonline.com'],
+        notification_trigger_extra_recipients('agent_capped')
+    ))));
     if (!$emails) return;
 
     $eName    = htmlspecialchars($agentName, ENT_QUOTES);
@@ -839,27 +973,33 @@ function notify_agent_capped(string $agentName, string $agentEmail, string $mark
 }
 
 // Queue an email to the departing agent with a link to fill out their exit
-// interview. Sent when an admin clicks "Send Exit Interview" — the agent's
-// AgentEdge login is still active at this point (account inactivation is a
-// later offboarding step), so this is a plain login link, not a public/token link.
-function notify_exit_interview_sent(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
+// interview. Sends a tokenized public link so the agent can complete it even
+// after their account has been deprovisioned.
+function notify_exit_interview_sent(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = '', int $queueId = 0): void {
+    if (!notification_trigger_enabled('exit_interview_sent')) return;
+    $link = $queueId > 0
+        ? exit_interview_link_url($queueId)
+        : 'https://agentedge.innovateonline.com/exit_interview.php';
     $subject = "Please complete your exit interview — AgentEdge";
     $body    = implode("\n", [
         "Hi {$agentName},",
         "",
         "As part of your offboarding, please take a few minutes to complete a short exit interview.",
         "",
-        "Log in to AgentEdge and fill it out here:",
-        "https://agentedge.innovateonline.com/exit_interview.php",
+        "Complete it here (no login required):",
+        $link,
         "",
         "Thank you,",
         "— AgentEdge",
     ]);
 
-    $db  = local_db();
-    $db->prepare(
+    $recipients = array_unique(array_merge([$agentEmail], notification_trigger_extra_recipients('exit_interview_sent')));
+    $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
-    )->execute([$agentEmail, 'email', $subject, $body, '', $fromEmail, $fromName]);
+    );
+    foreach ($recipients as $r) {
+        $ins->execute([$r, 'email', $subject, $body, '', $fromEmail, $fromName]);
+    }
 }
 
 // ── Onboarding / Offboarding per-step notifications ───────────────────────────
@@ -962,6 +1102,7 @@ function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queue
 // Whitney every time someone opens and re-saves the form unchanged.
 function notify_profile_changed(string $agentName, string $agentEmail, array $changes): void {
     if (!$changes) return;
+    if (!notification_trigger_enabled('profile_changed')) return;
 
     $subject = ($agentName ?: $agentEmail) . " updated their AgentEdge profile";
     $lines   = [];
@@ -979,13 +1120,15 @@ function notify_profile_changed(string $agentName, string $agentEmail, array $ch
             "— AgentEdge",
         ]
     ));
-    queue_email_to(['whitney@innovateonline.com', 'lisa@innovateonline.com'], $subject, $body, $agentEmail, $agentName);
+    $recipients = array_unique(array_merge(['whitney@innovateonline.com', 'lisa@innovateonline.com'], notification_trigger_extra_recipients('profile_changed')));
+    queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
 
 // ── Intake form submission notification ─────────────────────────────────────
 
 // Notify the ops team when an agent submits their intake form for the first time.
 function notify_intake_submitted(string $agentName, string $agentEmail): void {
+    if (!notification_trigger_enabled('intake_submitted')) return;
     $displayName = $agentName ?: $agentEmail;
     $subject = $displayName . ' completed their intake form';
     $body = implode("\n", [
@@ -1004,6 +1147,7 @@ function notify_intake_submitted(string $agentName, string $agentEmail): void {
         'whitney@innovateonline.com',
         'kelseyabroussard@gmail.com',
     ];
+    $recipients = array_unique(array_merge($recipients, notification_trigger_extra_recipients('intake_submitted')));
     queue_email_to($recipients, $subject, $body, $agentEmail, $agentName);
 }
 
@@ -1087,14 +1231,17 @@ function upline_chain(string $agentEmail): array {
 // sponsored THEM still gets notified, same as the Network page keeps showing
 // the recruits below a departed sponsor.
 function notify_upline_intake_submitted(string $agentName, string $agentEmail, string $marketCenter): int {
+    if (!notification_trigger_enabled('upline_intake_submitted')) return 0;
     $chain = upline_chain($agentEmail);
-    if (!$chain) return 0;
 
     $recipients = [];
     foreach ($chain as $a) {
         if ($a['terminated']) continue;
         $e = strtolower(trim($a['email'] ?? ''));
         if ($e && filter_var($e, FILTER_VALIDATE_EMAIL)) $recipients[$e] = true;
+    }
+    foreach (notification_trigger_extra_recipients('upline_intake_submitted') as $e) {
+        $recipients[strtolower(trim($e))] = true;
     }
     if (!$recipients) return 0;
 
@@ -1150,6 +1297,7 @@ function office_market_leaders(string $officeLocationCsv): array {
 // guessed at; "Referring Source" and "Anniversary Date" are intentional
 // duplicates of Recruited By / Start Date, not separate data.
 function notify_intake_summary_admins(string $agentEmail): int {
+    if (!notification_trigger_enabled('intake_summary_admins')) return 0;
     $st = local_db()->prepare("SELECT * FROM agent_intake WHERE email = ?");
     $st->execute([strtolower(trim($agentEmail))]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
@@ -1226,10 +1374,14 @@ function notify_intake_summary_admins(string $agentEmail): int {
     $ins = local_db()->prepare(
         "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', '')"
     );
-    foreach (['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'] as $recipient) {
+    $recipients = array_unique(array_merge(
+        ['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'],
+        notification_trigger_extra_recipients('intake_summary_admins')
+    ));
+    foreach ($recipients as $recipient) {
         $ins->execute([$recipient, $subject, $body]);
     }
-    return 2;
+    return count($recipients);
 }
 
 // ── Support ticket notifications ─────────────────────────────────────────────
@@ -1320,7 +1472,8 @@ function build_ticket_thread_text(PDO $db, int $ticketId): string {
 
 // A new ticket was created — notify all super admins.
 function notify_ticket_created(int $ticketId, string $title, string $body, string $deptSlug, string $deptName, string $agentName, string $agentEmail): int {
-    $emails  = ticket_notify_admin_emails();
+    if (!notification_trigger_enabled('ticket_created')) return 0;
+    $emails  = array_unique(array_merge(ticket_notify_admin_emails(), notification_trigger_extra_recipients('ticket_created')));
     $subject = "New Support Ticket #{$ticketId}: {$title}";
     $msg     = implode("\n", [
         "A new support ticket was submitted in AgentEdge.",
@@ -1345,8 +1498,9 @@ function notify_ticket_created(int $ticketId, string $title, string $body, strin
 // Includes the full ticket thread so recipients don't have to log in to see
 // prior notes.
 function notify_ticket_reply(int $ticketId, string $title, string $replyBody, bool $isStaffReply, string $deptSlug, string $agentEmail, string $fromEmail = '', string $fromName = ''): int {
+    if (!notification_trigger_enabled('ticket_reply')) return 0;
     $recipients = $isStaffReply ? [$agentEmail] : ticket_notify_admin_emails();
-    $recipients = array_merge($recipients, support_ticket_cc_emails($ticketId));
+    $recipients = array_unique(array_merge($recipients, support_ticket_cc_emails($ticketId), notification_trigger_extra_recipients('ticket_reply')));
 
     $subject = "Re: Support Ticket #{$ticketId}: {$title}";
     $who     = $isStaffReply ? 'Support staff replied' : 'The agent replied';
@@ -1429,11 +1583,23 @@ function email_is_staff(string $email): bool {
 // text, not the whole thread the mail client quoted back at us. Cuts at the
 // first line matching common client boilerplate ("On ... wrote:", Outlook's
 // "-----Original Message-----", or a run of "> " quoted lines).
+//
+// The "On ... wrote:" check also matches against the current line joined
+// with the next one -- confirmed on a real ticket (#47) that Gmail wraps
+// this header across two lines when the name+email is long enough
+// ("On Wed, Aug 5, 2026 at 12:16 PM Whitney Beadling <whitney@innovateonline.com>"
+// / "wrote:" on the following line), which the single-line regex never
+// matched. That let the header line leak into the stored reply while the
+// actual quoted body (correctly caught by the "> " rule right after it)
+// still got stripped -- so it looked like the quote vanished rather than
+// like the header survived.
 function strip_email_quote(string $text): string {
     $lines = preg_split('/\r\n|\r|\n/', $text);
     $cut   = count($lines);
     foreach ($lines as $i => $line) {
+        $withNext = trim($line . ' ' . ($lines[$i + 1] ?? ''));
         if (preg_match('/^\s*On .+ wrote:\s*$/i', $line)
+            || preg_match('/^\s*On .+ wrote:\s*$/i', $withNext)
             || preg_match('/^-{2,}\s*Original Message\s*-{2,}/i', $line)
             || preg_match('/^\s*>/', $line)) {
             $cut = $i;
@@ -1447,6 +1613,7 @@ function strip_email_quote(string $text): string {
 
 // A new suggestion was submitted — notify all super admins.
 function notify_suggestion_created(int $suggestionId, string $title, string $body, string $category, string $submitterName, string $submitterEmail): int {
+    if (!notification_trigger_enabled('suggestion_created')) return 0;
     $subject = "New Suggestion: {$title}";
     $msg     = implode("\n", [
         "A new suggestion was submitted in AgentEdge.",
@@ -1461,7 +1628,8 @@ function notify_suggestion_created(int $suggestionId, string $title, string $bod
         "",
         "— AgentEdge",
     ]);
-    return queue_email_to(super_admin_emails(), $subject, $msg, $submitterEmail, $submitterName);
+    $recipients = array_unique(array_merge(super_admin_emails(), notification_trigger_extra_recipients('suggestion_created')));
+    return queue_email_to($recipients, $subject, $msg, $submitterEmail, $submitterName);
 }
 
 // ── SendGrid email ────────────────────────────────────────────────────────────

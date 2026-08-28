@@ -411,6 +411,27 @@ function local_db(): PDO {
     // Migration: tracks whether the "your step is ready" email has already gone out
     try { $pdo->exec("ALTER TABLE offboard_steps ADD COLUMN notified_at TEXT"); } catch (\Exception $e) {}
 
+    // Notification trigger registry — see lib/notifications.php's "Notification
+    // Trigger Registry" section. enabled=1 default lives in code (a missing row
+    // means "enabled"); rows only exist once an admin has toggled a built-in
+    // trigger or created a custom one via admin_notification_triggers.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_triggers (
+        event_key   TEXT    PRIMARY KEY,
+        label       TEXT    NOT NULL DEFAULT '',
+        description TEXT    NOT NULL DEFAULT '',
+        group_label TEXT    NOT NULL DEFAULT 'Custom',
+        is_custom   INTEGER NOT NULL DEFAULT 0,
+        enabled     INTEGER NOT NULL DEFAULT 1
+    )");
+    // Extra recipients added on top of a trigger's base/dynamic audience —
+    // for a custom trigger (is_custom=1) this IS the whole audience.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_trigger_recipients (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_key TEXT    NOT NULL,
+        email     TEXT    NOT NULL,
+        UNIQUE(event_key, email)
+    )");
+
     // Staff notified by email when a specific onboarding/offboarding step is
     // added (heads-up) and when it becomes the next actionable step.
     // step_key matches the 'key' from onboard_tools()/offboard_tools().
@@ -461,6 +482,7 @@ function local_db(): PDO {
         ['offboard','constellation1',    'Constellation1',           'Auto-deactivate via API',                                            1, 40],
         ['offboard','dotloop',           'DotLoop',                  'Remove seat in DotLoop admin',                                       0, 50],
         ['offboard','mls',               'MLS Access',               'Submit MLS membership removal form',                                 0, 60],
+        ['offboard','realscout',         'RealScout',                'Remove agent from RealScout account',                                0, 65],
         ['offboard','listingstoleads',   'ListingsToLeads',          'Remove from account',                                                0, 70],
         ['offboard','maxa',              'MAXA Presents',            'Remove from account',                                                0, 80],
         ['offboard','email_decom',       'Company Email',            'Decommission company email and signature',                           0, 90],
@@ -478,6 +500,11 @@ function local_db(): PDO {
         "UPDATE step_defs SET sort_ord=25, is_auto=1,
             note='Auto-deactivate — removes login + roster listing'
          WHERE process='offboard' AND step_key='agentedge' AND sort_ord=110 AND is_auto=0"
+    );
+    // Migration: add RealScout offboard step for existing installs
+    $pdo->exec(
+        "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord)
+         VALUES ('offboard','realscout','RealScout','Remove agent from RealScout account',0,65)"
     );
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
@@ -526,6 +553,14 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_alt_email ON agent_extra(alt_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
+    // Same idea as alt_email above, but for DotLoop: the email a loop
+    // creator typed in when adding this agent as a participant sometimes
+    // differs from their AgentEdge login email, and unlike alt_email/Darwin
+    // there was previously no self-service fix — only a hardcoded
+    // config.php 'dotloop_email_groups' array. dotloop_email_group()
+    // (lib/dotloop.php) now also checks this column.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN dotloop_alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_dotloop_alt_email ON agent_extra(dotloop_alt_email)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
     // tblstaff auth, checked first in attempt_login() (auth.php) before
@@ -1638,6 +1673,18 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcti_template ON finance_checklist_template_items(template_id)");
 
+    // Notion SOP sync (lib/notion.php, cron/sync_notion_finance_sops.php) — one-way,
+    // matched by title against a Notion database. instructions_notion_page_id/url are
+    // populated BY the sync, never human-entered.
+    foreach ([
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_md TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_notion_page_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_notion_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_synced_at TEXT NOT NULL DEFAULT ''",
+    ] as $alter) {
+        try { $pdo->exec($alter); } catch (\Exception $e) {}
+    }
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_runs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         template_id INTEGER NOT NULL,
@@ -1663,6 +1710,31 @@ function local_db(): PDO {
         updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcri_run ON finance_checklist_run_items(run_id)");
+
+    // Snapshot of the template item's Notion SOP content at start_run time — same
+    // treatment as title/description, which are already copied and never re-synced
+    // after a run starts. A later Notion edit shows up on the NEXT run, not this one.
+    foreach ([
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_md TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_notion_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_synced_at TEXT NOT NULL DEFAULT ''",
+    ] as $alter) {
+        try { $pdo->exec($alter); } catch (\Exception $e) {}
+    }
+
+    // Singleton status/report row for the last Notion SOP sync (manual button or cron).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notion_sop_sync_state (
+        id                INTEGER PRIMARY KEY CHECK (id = 1),
+        last_run_at       TEXT    NOT NULL DEFAULT '',
+        last_ok           INTEGER NOT NULL DEFAULT 0,
+        last_error        TEXT    NOT NULL DEFAULT '',
+        pages_fetched     INTEGER NOT NULL DEFAULT 0,
+        items_matched     INTEGER NOT NULL DEFAULT 0,
+        items_updated     INTEGER NOT NULL DEFAULT 0,
+        unmatched_notion  TEXT    NOT NULL DEFAULT '',
+        unmatched_items   TEXT    NOT NULL DEFAULT '',
+        duration_ms       INTEGER NOT NULL DEFAULT 0
+    )");
 
     // ── MLS Integrations tracker ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (
@@ -1702,6 +1774,35 @@ function local_db(): PDO {
         $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
         $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
     }
+
+    // Activity feed for an mls_integrations row — separate from the single
+    // free-form `notes` field on the record itself so a running thread of
+    // updates (and optionally tagging a teammate for follow-up) doesn't
+    // overwrite that field. tagged_email queues a notification_queue email
+    // via lib/notifications.php's queue_email_to() (drained by the existing
+    // 5-minute email-queue cron — see api/mls_notes.php).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_notes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_id       INTEGER NOT NULL,
+        note         TEXT    NOT NULL,
+        tagged_email TEXT    NOT NULL DEFAULT '',
+        created_by   TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Uploaded MLS agreement/contract documents, one row per file, mirroring
+    // vault_files' shape (id/storage_key/S3) but scoped to an mls_integrations
+    // row instead of a vault folder — see api/mls_agreement_upload.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_agreements (
+        id           TEXT    PRIMARY KEY,
+        mls_id       INTEGER NOT NULL,
+        name         TEXT    NOT NULL,
+        mime_type    TEXT    NOT NULL DEFAULT '',
+        size_bytes   INTEGER NOT NULL DEFAULT 0,
+        storage_key  TEXT    NOT NULL,
+        uploaded_by  TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
 
     // ── MLS / State Offices & Licenses (from annual license report) ──────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_offices (
