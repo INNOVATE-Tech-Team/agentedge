@@ -27,8 +27,9 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // room_allowed_offices) that were part of that same baseline but had
 // dropped out of this file's working copy -- all five confirmed still live
 // in production with real data, so restored verbatim from d525e7b rather
-// than re-derived.
-const LOCAL_DB_SCHEMA_VERSION = 2;
+// than re-derived. Version 3 adds agent_extra.is_team_leader_tag, a
+// per-agent "Team Leader" flag for the Company Email audience picker.
+const LOCAL_DB_SCHEMA_VERSION = 3;
 
 function local_db(): PDO {
     static $pdo = null;
@@ -646,6 +647,12 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     // (lib/dotloop.php) now also checks this column.
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN dotloop_alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_dotloop_alt_email ON agent_extra(dotloop_alt_email)");
+    // A quick per-agent "Team Leader" tag for the Company Email audience
+    // picker (see ce_resolve_team_leaders() in lib/company_email.php) —
+    // deliberately independent of the teams/team_leaders tables (Teams
+    // admin page): tagging someone here does NOT make is_team_leader() true
+    // or grant My Team access, it only adds them to that one email audience.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN is_team_leader_tag INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
 
     // AgentEdge's own login credentials — the local replacement for Perfex
     // tblstaff auth, checked first in attempt_login() (auth.php) before
