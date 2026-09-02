@@ -276,6 +276,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Prior Affiliation</span><?= dv($a['prior_affiliation'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Full-Time</span><?= dvBool($a['full_time'] ?? 1) ?></div>
           <div class="dg-field"><span class="dg-label">Show on Website</span><?= dvBool($a['show_on_internet'] ?? 1) ?></div>
+          <div class="dg-field"><span class="dg-label">Team Leader (Company Email tag)</span><?= dvBool($a['is_team_leader_tag'] ?? 0) ?></div>
 
           <div class="dg-section">Business Entity &amp; Tax IDs</div>
           <div class="dg-field"><span class="dg-label">Corporation Start</span><?= dv($a['corporation_start'] ?? '') ?></div>
@@ -621,6 +622,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
             <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
             <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+            <div class="em-field em-check"><label><input type="checkbox" id="em-is_team_leader_tag"> Team Leader (Company Email audience tag — doesn't affect Teams/My Team access)</label></div>
             <div class="em-field em-full">
               <label>Additional Licensed States</label>
               <div id="em-additional-licenses"></div>
@@ -1140,6 +1142,7 @@ window.openEditModal = function () {
     emRenderMlsMemberships(results[0].mls_memberships);
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
+    document.getElementById('em-is_team_leader_tag').checked = !!extra.is_team_leader_tag;
     document.getElementById('em-alt_email').value = extra.alt_email || '';
     document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
@@ -1185,7 +1188,8 @@ window.saveEditModal = function () {
     hire_date: document.getElementById('em-hire_date').value,
     license_renewal: document.getElementById('em-license_renewal').value,
     alt_email: document.getElementById('em-alt_email').value,
-    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
+    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value,
+    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked
   };
 
   Promise.all([
