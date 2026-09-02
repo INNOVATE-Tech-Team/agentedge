@@ -11,6 +11,10 @@ $agent = require_login();
 $perms = current_perms();
 if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 
+$mlsOptions = local_db()
+    ->query("SELECT DISTINCT agent_label FROM mls_referral_coverage WHERE TRIM(agent_label) != '' ORDER BY agent_label")
+    ->fetchAll(PDO::FETCH_COLUMN);
+
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 function dv($val): string {
     if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
@@ -44,6 +48,7 @@ $canEditPermissions = is_super_admin();
 
 $profileData = $targetEmail !== '' ? load_agent_profile($targetEmail) : null;
 $extraLicenses = $targetEmail !== '' ? load_agent_additional_licenses($targetEmail) : [];
+$mlsMemberships = $targetEmail !== '' ? load_agent_mls_memberships($targetEmail) : [];
 $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) : 0;
 $headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
 $headshots     = $targetEmail !== '' ? load_agent_headshots($targetEmail) : [];
@@ -147,6 +152,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .license-row .em-field{margin-bottom:0}
 .btn-remove-license{border:1px solid var(--border);background:#fff;color:#888;border-radius:6px;padding:7px 10px;font-size:12px;cursor:pointer;height:fit-content}
 .btn-remove-license:hover{border-color:#e53935;color:#e53935}
+.mls-row{display:grid;grid-template-columns:1.4fr 1fr auto;gap:0 10px;align-items:end;margin-bottom:8px}
+.mls-row .em-field{margin-bottom:0}
 .btn-add-license{border:1px dashed #82C112;background:#f0f5e8;color:#5b8e0d;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-top:2px}
 .btn-add-license:hover{background:#e4f0d8}
 
@@ -248,6 +255,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Alternate Email (DotLoop match)</span><?= dv($a['dotloop_alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
@@ -263,7 +271,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 
           <div class="dg-section">Professional Background</div>
           <div class="dg-field"><span class="dg-label">Specialty</span><?= dv($a['specialty'] ?? '') ?></div>
-          <div class="dg-field"><span class="dg-label">Career Start</span><?= dv($a['career_start'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Initial License Year</span><?= dv($a['career_start'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Prior Occupation</span><?= dv($a['prior_occupation'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Prior Affiliation</span><?= dv($a['prior_affiliation'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Full-Time</span><?= dvBool($a['full_time'] ?? 1) ?></div>
@@ -316,8 +324,18 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <?php endif; ?>
 
           <div class="dg-section">MLS</div>
-          <div class="dg-field"><span class="dg-label">MLS Board</span><?= dv($a['mls_board']) ?></div>
-          <div class="dg-field"><span class="dg-label">MLS ID</span><?= dv($a['mls_id']) ?></div>
+          <div class="dg-field" style="grid-column:1/-1">
+            <span class="dg-label">MLS / Association Memberships</span>
+            <?php if ($mlsMemberships): ?>
+              <span class="dg-value">
+                <?php foreach ($mlsMemberships as $mem): ?>
+                  <?= h(trim($mem['mls_association'] . ($mem['mls_number'] !== '' ? ' — #' . $mem['mls_number'] : ''))) ?><br>
+                <?php endforeach; ?>
+              </span>
+            <?php else: ?>
+              <?= dv('') ?>
+            <?php endif; ?>
+          </div>
 
           <div class="dg-section">Personal</div>
           <div class="dg-field"><span class="dg-label">T-Shirt Size</span><?= dv($a['tshirt_size']) ?></div>
@@ -585,6 +603,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
+            <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has you under a different email"></div>
             <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
             <div class="em-section">Address</div>
@@ -609,8 +628,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             </div>
 
             <div class="em-section">MLS Information</div>
-            <div class="em-field"><label>MLS Board</label><input id="em-mls_board"></div>
-            <div class="em-field"><label>MLS ID</label><input id="em-mls_id"></div>
+            <div class="em-field em-full">
+              <label>MLS / Association Memberships</label>
+              <div id="em-mls-memberships"></div>
+              <button type="button" class="btn-add-license" id="em-btn-add-mls">+ Add Another MLS / Association</button>
+            </div>
 
             <div class="em-section">INNOVATE Office</div>
             <div class="em-field em-full"><label>Office Location</label><input id="em-office_location"></div>
@@ -630,7 +652,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
                 <option value="Other">Other</option>
               </select>
             </div>
-            <div class="em-field"><label>Career Start</label><input id="em-career_start" type="date"></div>
+            <div class="em-field">
+              <label>Initial License Year</label>
+              <input id="em-career_start" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="YYYY">
+              <div style="font-size:12px;color:var(--faint);font-weight:400;text-transform:none;margin-top:4px;">The year you got your real estate license</div>
+            </div>
             <div class="em-field"><label>Prior Occupation</label><input id="em-prior_occupation"></div>
             <div class="em-field"><label>Prior Affiliation</label><input id="em-prior_affiliation"></div>
             <div class="em-field em-check"><label><input type="checkbox" id="em-full_time"> Full-Time Agent</label></div>
@@ -666,7 +692,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Military</label><input id="em-is_military" placeholder="veteran / active / blank"></div>
             <div class="em-field"><label>First Responder</label><input id="em-first_responder" placeholder="e.g. paramedic, or blank"></div>
             <div class="em-field"><label>Teacher</label><input id="em-is_teacher" placeholder="no / current / former"></div>
-            <div class="em-field"><label>Languages</label><input id="em-languages"></div>
+            <div class="em-field em-full">
+              <label>Languages</label>
+              <input type="hidden" id="em-languages">
+              <div id="em-languages-checks"></div>
+            </div>
 
             <div class="em-section">Emergency Contact</div>
             <div class="em-field"><label>Emergency Contact Name</label><input id="em-emergency_name"></div>
@@ -699,7 +729,10 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
+<script src="assets/language_options.js"></script>
 <script>
+initLanguageChecklist('em-languages-checks', 'em-languages');
+const MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
 let networkLoaded = false;
@@ -972,7 +1005,7 @@ window.resetAgentPassword = function () {
 var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone_last4',
   'address_line1','address_line2','city','state','zip','country',
   'license_number','license_state','license_exp','nar_number',
-  'mls_board','mls_id','office_location',
+  'office_location',
   'specialty','career_start','prior_occupation','prior_affiliation',
   'corporation_start','corporation_end',
   'birthday','spouse_name','gender','drivers_license','tshirt_size',
@@ -1024,6 +1057,51 @@ function emCollectAdditionalLicenses() {
 var emBtnAddLicense = document.getElementById('em-btn-add-license');
 if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
+function emEscHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+function emAddMlsRow(mem) {
+  mem = mem || {};
+  var row = document.createElement('div');
+  row.className = 'mls-row';
+  var opts = MLS_OPTIONS.map(function (o) { return '<option value="' + emEscHtml(o) + '">' + emEscHtml(o) + '</option>'; }).join('');
+  row.innerHTML =
+    '<div class="em-field"><label>MLS / Association</label><select class="em-mls-assoc">' +
+      '<option value="">Select…</option>' + opts + '<option value="Other">Other (not listed)</option>' +
+    '</select></div>' +
+    '<div class="em-field"><label>MLS ID Number</label><input type="text" class="em-mls-number"></div>' +
+    '<button type="button" class="btn-remove-license">Remove</button>';
+  var sel = row.querySelector('.em-mls-assoc');
+  var val = mem.mls_association || '';
+  if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+    var opt = document.createElement('option');
+    opt.value = val; opt.textContent = val + ' (on file)';
+    sel.insertBefore(opt, sel.firstChild);
+  }
+  sel.value = val;
+  row.querySelector('.em-mls-number').value = mem.mls_number || '';
+  row.querySelector('.btn-remove-license').addEventListener('click', function () { row.remove(); });
+  document.getElementById('em-mls-memberships').appendChild(row);
+}
+
+function emRenderMlsMemberships(list) {
+  var container = document.getElementById('em-mls-memberships');
+  container.innerHTML = '';
+  (list && list.length ? list : [{}]).forEach(function (mem) { emAddMlsRow(mem); });
+}
+
+function emCollectMlsMemberships() {
+  var out = [];
+  document.querySelectorAll('#em-mls-memberships .mls-row').forEach(function (row) {
+    var assoc = row.querySelector('.em-mls-assoc').value.trim();
+    var number = row.querySelector('.em-mls-number').value.trim();
+    if (assoc || number) out.push({ mls_association: assoc, mls_number: number });
+  });
+  return out;
+}
+
+var emBtnAddMls = document.getElementById('em-btn-add-mls');
+if (emBtnAddMls) emBtnAddMls.addEventListener('click', function () { emAddMlsRow(); });
+
 window.openEditModal = function () {
   emLoaded = false;
   document.getElementById('em-save-btn').disabled = true;
@@ -1040,16 +1118,30 @@ window.openEditModal = function () {
 
     EM_FIELDS.forEach(function (key) {
       var node = document.getElementById('em-' + key);
-      if (node) node.value = intake[key] || '';
+      if (!node) return;
+      var val = intake[key] || '';
+      // A <select> (e.g. MLS Board) may not have an <option> for a legacy
+      // free-text value entered before the field became a dropdown -- add
+      // one on the fly so the agent's existing answer stays visible instead
+      // of silently reverting to blank.
+      if (node.tagName === 'SELECT' && val && !Array.prototype.some.call(node.options, function (o) { return o.value === val; })) {
+        var opt = document.createElement('option');
+        opt.value = val; opt.textContent = val + ' (on file)';
+        node.insertBefore(opt, node.firstChild);
+      }
+      node.value = val;
     });
+    applyLanguageChecklist('em-languages-checks', 'em-languages');
     EM_CHECK_FIELDS.forEach(function (key) {
       var node = document.getElementById('em-' + key);
       if (node) node.checked = intake[key] === undefined ? true : Number(intake[key]) === 1;
     });
     emRenderAdditionalLicenses(results[0].additional_licenses);
+    emRenderMlsMemberships(results[0].mls_memberships);
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
     document.getElementById('em-alt_email').value = extra.alt_email || '';
+    document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1085,13 +1177,15 @@ window.saveEditModal = function () {
   payload.personal_tax_id = document.getElementById('em-personal_tax_id').value;
   payload.corporate_tax_id = document.getElementById('em-corporate_tax_id').value;
   payload.additional_licenses = emCollectAdditionalLicenses();
+  payload.mls_memberships = emCollectMlsMemberships();
 
   var extraPayload = {
     email: PROFILE_EMAIL,
     birthday: emExtraBirthday,
     hire_date: document.getElementById('em-hire_date').value,
     license_renewal: document.getElementById('em-license_renewal').value,
-    alt_email: document.getElementById('em-alt_email').value
+    alt_email: document.getElementById('em-alt_email').value,
+    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
   };
 
   Promise.all([
@@ -1265,12 +1359,14 @@ function renderLevels() {
   }
 }
 
-function renderTree(tree, totalCount, sponsor) {
+function renderTree(tree, totalCount, sponsor, reason) {
   const wrap = document.getElementById('tree-wrap');
   wrap.innerHTML = '';
 
   if (!tree) {
-    wrap.innerHTML = '<div class="empty-prompt">No network data on file yet.</div>';
+    wrap.innerHTML = reason === 'not_in_perfex'
+      ? '<div class="empty-prompt">This agent hasn\'t been added to Perfex yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once a Perfex staff record is created for them.</div>'
+      : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
   }
 
@@ -1341,7 +1437,7 @@ window.loadNetworkTree = function () {
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => {
       if (d.error) { wrap.innerHTML = '<div class="error-msg">' + esc(d.error) + '</div>'; return; }
-      renderTree(d.tree, d.totalCount||0, d.sponsor||null);
+      renderTree(d.tree, d.totalCount||0, d.sponsor||null, d.reason||null);
     })
     .catch(() => { wrap.innerHTML = '<div class="error-msg">Could not load network data.</div>'; });
 };
