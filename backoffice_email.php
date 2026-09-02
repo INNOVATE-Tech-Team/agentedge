@@ -123,6 +123,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .aud-chip.leaders{background:#fce8f0;color:#c41a6a}
 .aud-chip.mc_leader{background:#fce8f0;color:#c41a6a}
 .aud-chip.bic{background:#fde8e0;color:#c46a1a}
+.aud-chip.team_leader{background:#e6f4ea;color:#1a7a4c}
 .aud-chip.launch{background:#eef5e8;color:#3a6b1a}
 .empty-note{color:var(--faint);font-style:italic;text-align:center;padding:20px}
 #sent-table{table-layout:fixed;min-width:760px}
@@ -175,6 +176,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <label class="aud-check"><input type="checkbox" class="em-aud" value="admin" onchange="onAudienceChange()"> Admin &amp; Staff Only</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc_leader" onchange="onAudienceChange()"> Market Center Leaders</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="bic" onchange="onAudienceChange()"> BICs</label>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="team_leader" onchange="onAudienceChange()"> Team Leaders</label>
           <?php endif; ?>
           <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc" onchange="onAudienceChange()">
@@ -589,7 +591,8 @@ function focusBody(){ document.getElementById('em-body').focus(); }
 
 const AUD_LABELS = {
   all: 'Entire Company', admin: 'Admin & Staff', mc_leader: 'Market Center Leaders',
-  bic: 'BICs', person: 'Specific Person', launch_agents: 'LAUNCH Agents', launch_coaches: 'LAUNCH Coaches',
+  bic: 'BICs', team_leader: 'Team Leaders', person: 'Specific Person',
+  launch_agents: 'LAUNCH Agents', launch_coaches: 'LAUNCH Coaches',
 };
 
 function selectedAudiences() {
@@ -673,6 +676,7 @@ function singleAudChip(audience, mcSlug, leaderTypes) {
   if (audience === 'admin')     return '<span class="aud-chip admin">Admin &amp; Staff</span>';
   if (audience === 'mc_leader') return '<span class="aud-chip mc_leader">Market Center Leaders</span>';
   if (audience === 'bic')       return '<span class="aud-chip bic">BICs</span>';
+  if (audience === 'team_leader') return '<span class="aud-chip team_leader">Team Leaders</span>';
   if (audience === 'leaders') {
     // Legacy combined audience — no longer produced by new sends, kept for history rows sent before this split.
     const types = (leaderTypes || 'mc_leader,bic').split(',').filter(Boolean);
