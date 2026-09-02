@@ -29,7 +29,9 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // in production with real data, so restored verbatim from d525e7b rather
 // than re-derived. Version 3 adds agent_extra.is_team_leader_tag, a
 // per-agent "Team Leader" flag for the Company Email audience picker.
-const LOCAL_DB_SCHEMA_VERSION = 3;
+// Version 4 adds events_calendar.mc_slugs, an optional Market Center
+// restriction for Company Calendar "Events" tab events.
+const LOCAL_DB_SCHEMA_VERSION = 4;
 
 function local_db(): PDO {
     static $pdo = null;
@@ -2360,6 +2362,14 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN reg_description TEXT"); } catch (\Exception $e) {}
     // See training_events.reg_slug above — same idea, for the Events tab.
     try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN reg_slug TEXT"); } catch (\Exception $e) {}
+    // Optional Market Center restriction — CSV of market_centers.slug values.
+    // Empty string = visible to every agent (the default, matching every other
+    // "empty = everyone" audience convention in this codebase). Enforced only
+    // in AgentEdge's own calendar feed (api/events_cal.php) for non-admin
+    // viewers — the event still lives on the shared Google "Events" calendar,
+    // so anyone subscribed to that calendar directly in Google/Apple/Outlook
+    // sees it regardless of this restriction.
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN mc_slugs TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Finance: Statement Scans ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS statement_scans (
