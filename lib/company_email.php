@@ -137,6 +137,40 @@ function ce_resolve_leaders(PDO $db, array $types): array {
     return array_values($out);
 }
 
+// Every enabled team's leader(s) — team_leaders joined to teams so a disabled
+// team's leader isn't pulled in (same enabled-team gate fetch_perms() uses to
+// grant the team_leader role itself, in roles.php). A team can have more than
+// one leader (team_leaders is a join table, not a single leader_email column).
+function ce_resolve_team_leaders(PDO $db): array {
+    $rows = $db->query(
+        "SELECT DISTINCT tl.agent_email AS email FROM team_leaders tl
+         JOIN teams t ON t.id = tl.team_id
+         WHERE t.enabled = 1"
+    )->fetchAll(PDO::FETCH_COLUMN);
+
+    $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
+    $optOutSet = array_flip(array_map(fn($e) => strtolower(trim($e)), $optOut));
+
+    $nameByEmail = [];
+    foreach (ce_fetch_crm_roster() as $a) {
+        $e = strtolower(trim($a['email'] ?? ''));
+        if ($e) $nameByEmail[$e] = $a['fullName'] ?? '';
+    }
+
+    $out = [];
+    foreach ($rows as $email) {
+        $email = strtolower(trim($email));
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL) || isset($optOutSet[$email])) continue;
+        $name = $nameByEmail[$email] ?? '';
+        if ($name === '') {
+            $localPart = strstr($email, '@', true) ?: $email;
+            $name = ucwords(str_replace(['.', '_'], ' ', $localPart));
+        }
+        $out[$email] = ['email' => $email, 'name' => $name];
+    }
+    return array_values($out);
+}
+
 // Recipients across one or more audiences, as [['email'=>..,'name'=>..], ...],
 // deduped by email (a person matching more than one selected audience is only
 // emailed once). Each audience is resolved independently by
@@ -228,6 +262,10 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 
     if ($audience === 'leaders') {
         return ce_resolve_leaders($db, $leaderTypes);
+    }
+
+    if ($audience === 'team_leader') {
+        return ce_resolve_team_leaders($db);
     }
 
     if ($audience === 'admin') {
@@ -340,7 +378,7 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEmail, array $leaderTypes = []): ?string {
     if (!$audiences) return 'Pick at least one audience';
 
-    $validKeys = ['all', 'admin', 'mc', 'person', 'leaders', 'mc_leader', 'bic', 'launch_agents', 'launch_coaches'];
+    $validKeys = ['all', 'admin', 'mc', 'person', 'leaders', 'mc_leader', 'bic', 'team_leader', 'launch_agents', 'launch_coaches'];
     foreach ($audiences as $audience) {
         if (!in_array($audience, $validKeys, true)) return 'Invalid audience';
 
@@ -357,7 +395,7 @@ function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEm
         } elseif ($audience === 'leaders') {
             if (!is_admin()) return 'Forbidden';
             if (!array_intersect($leaderTypes, ['mc_leader', 'bic'])) return 'Pick Market Center Leaders, BICs, or both';
-        } elseif (in_array($audience, ['mc_leader', 'bic'], true)) {
+        } elseif (in_array($audience, ['mc_leader', 'bic', 'team_leader'], true)) {
             if (!is_admin()) return 'Forbidden';
         } elseif (in_array($audience, ['launch_agents', 'launch_coaches'], true)) {
             if (!can_manage_cohorts()) return 'Forbidden';
