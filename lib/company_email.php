@@ -137,15 +137,21 @@ function ce_resolve_leaders(PDO $db, array $types): array {
     return array_values($out);
 }
 
-// Every enabled team's leader(s) — team_leaders joined to teams so a disabled
-// team's leader isn't pulled in (same enabled-team gate fetch_perms() uses to
-// grant the team_leader role itself, in roles.php). A team can have more than
-// one leader (team_leaders is a join table, not a single leader_email column).
+// Every enabled team's leader(s) (team_leaders joined to teams — a disabled
+// team's leader isn't pulled in, same enabled-team gate fetch_perms() uses to
+// grant the team_leader role in roles.php; a team can have more than one
+// leader) UNIONed with anyone carrying the standalone agent_extra
+// is_team_leader_tag (set from an agent's profile — see agent_profile.php).
+// The tag is deliberately independent of teams/team_leaders: it doesn't
+// affect is_team_leader()/My Team access, it only adds someone to this one
+// Company Email audience for people who lead a team without a "Team" record.
 function ce_resolve_team_leaders(PDO $db): array {
     $rows = $db->query(
         "SELECT DISTINCT tl.agent_email AS email FROM team_leaders tl
          JOIN teams t ON t.id = tl.team_id
-         WHERE t.enabled = 1"
+         WHERE t.enabled = 1
+         UNION
+         SELECT email FROM agent_extra WHERE is_team_leader_tag = 1"
     )->fetchAll(PDO::FETCH_COLUMN);
 
     $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
