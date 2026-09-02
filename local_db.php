@@ -6,6 +6,30 @@
 if (defined('AGENTEDGE_LOCAL_DB_LOADED')) return;
 define('AGENTEDGE_LOCAL_DB_LOADED', true);
 
+// Bump this whenever a new migration/seed block is appended to the end of
+// local_db_migrate(). The applied version is stamped into local_db_schema_meta
+// (below) so local_db() only re-runs the migration body when the stored
+// version is behind this constant instead of on every single request.
+//
+// Deliberately NOT SQLite's built-in `PRAGMA user_version`: that pragma is
+// externally owned (it climbed 0 -> 1 -> 4 on this DB with nothing in this
+// codebase ever setting it -- see commit d525e7b) and reusing it would
+// silently collide with whatever else already relies on it. A later,
+// uncommitted edit of this file briefly reintroduced a version check
+// against PRAGMA user_version anyway (bumped to 5 to pick up the Who Does
+// What migration) -- restored here to the original local_db_schema_meta
+// gate; PRAGMA user_version is no longer read or written by this file.
+//
+// Version 1 was the baseline stamped when this gate was first cut over
+// (commit d525e7b). Version 2 folds in everything added since: Who Does
+// What (team_directory), plus five tables (company_email_events,
+// mls_referral_coverage, agent_mls_memberships, mls_reminders,
+// room_allowed_offices) that were part of that same baseline but had
+// dropped out of this file's working copy -- all five confirmed still live
+// in production with real data, so restored verbatim from d525e7b rather
+// than re-derived.
+const LOCAL_DB_SCHEMA_VERSION = 2;
+
 function local_db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
@@ -21,6 +45,32 @@ function local_db(): PDO {
     $pdo->exec("PRAGMA journal_mode=WAL");
     $pdo->exec("PRAGMA busy_timeout=15000"); // wait up to 15s for a lock instead of failing immediately
 
+    // Admin Work OS + Staff Feature Access — bootstrapped independently of
+    // the schema-version gate below (whatever state that gate is in), via
+    // its own single sqlite_master existence check, so this table set is
+    // guaranteed to exist regardless of that gate's version bookkeeping.
+    _agentedge_migrate_admin_work_os($pdo);
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS local_db_schema_meta (id INTEGER PRIMARY KEY CHECK (id=1), version INTEGER NOT NULL DEFAULT 0)");
+    $pdo->exec("INSERT OR IGNORE INTO local_db_schema_meta (id, version) VALUES (1, 0)");
+    $schemaVersion = (int)$pdo->query("SELECT version FROM local_db_schema_meta WHERE id=1")->fetchColumn();
+
+    if ($schemaVersion < LOCAL_DB_SCHEMA_VERSION) {
+        local_db_migrate($pdo, $dir, $schemaVersion);
+        $pdo->exec("UPDATE local_db_schema_meta SET version = " . LOCAL_DB_SCHEMA_VERSION . " WHERE id=1");
+    }
+
+    return $pdo;
+}
+
+// Every CREATE TABLE IF NOT EXISTS / ALTER TABLE (wrapped in try/catch, for
+// "duplicate column") / seed-data statement the app has ever needed, in the
+// order it must run — gated by local_db_schema_meta in local_db() above so
+// it runs once per DB instead of once per request. $fromVersion is unused
+// today (nothing has needed a partial from-version migration yet) but is
+// threaded through so a future `if ($fromVersion < N) { ... }` block can be
+// appended without re-running everything that came before it.
+function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     // External nav links (editable by super_admin)
     $pdo->exec("CREATE TABLE IF NOT EXISTS nav_ext_links (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,15 +124,12 @@ function local_db(): PDO {
         created_at TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_conference_rooms_mc ON conference_rooms(mc_slug)");
-    // Seed one room per market center on first run only -- additional rooms
-    // for MCs that need 2+ are added later via admin_conference_rooms.php.
-    if ($pdo->query("SELECT COUNT(*) FROM conference_rooms")->fetchColumn() == 0) {
-        $seedMcs = $pdo->query("SELECT slug FROM market_centers")->fetchAll(PDO::FETCH_ASSOC);
-        $insRoom = $pdo->prepare("INSERT INTO conference_rooms (mc_slug, name) VALUES (?, ?)");
-        foreach ($seedMcs as $seedMc) {
-            $insRoom->execute([$seedMc['slug'], 'Conference Room']);
-        }
-    }
+    // Room seeding (one per market center, first run only) moved below --
+    // see right after market_centers is created. It used to run here, before
+    // market_centers existed, which threw "no such table: market_centers" on
+    // a truly fresh database (harmless on an already-initialized one, since
+    // conference_rooms already has rows there and the seed's own
+    // COUNT(*)==0 guard always skipped it).
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS room_bookings (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -411,6 +458,65 @@ function local_db(): PDO {
     // Migration: tracks whether the "your step is ready" email has already gone out
     try { $pdo->exec("ALTER TABLE offboard_steps ADD COLUMN notified_at TEXT"); } catch (\Exception $e) {}
 
+    // Notification trigger registry — see lib/notifications.php's "Notification
+    // Trigger Registry" section. enabled=1 default lives in code (a missing row
+    // means "enabled"); rows only exist once an admin has toggled a built-in
+    // trigger or created a custom one via admin_notification_triggers.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_triggers (
+        event_key   TEXT    PRIMARY KEY,
+        label       TEXT    NOT NULL DEFAULT '',
+        description TEXT    NOT NULL DEFAULT '',
+        group_label TEXT    NOT NULL DEFAULT 'Custom',
+        is_custom   INTEGER NOT NULL DEFAULT 0,
+        enabled     INTEGER NOT NULL DEFAULT 1
+    )");
+    // Extra recipients added on top of a trigger's base/dynamic audience —
+    // for a custom trigger (is_custom=1) this IS the whole audience.
+    // 'email' holds either a literal address (recipient_type='email') or a
+    // role slug from roles.php's ROLE_LABELS (recipient_type='role') —
+    // role rows resolve to every agent_roles member of that role at send
+    // time (see trigger_role_member_emails() in lib/notifications.php), so
+    // membership changes take effect immediately without editing the trigger.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notification_trigger_recipients (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_key TEXT    NOT NULL,
+        email     TEXT    NOT NULL,
+        UNIQUE(event_key, email)
+    )");
+    try { $pdo->exec("ALTER TABLE notification_trigger_recipients ADD COLUMN recipient_type TEXT NOT NULL DEFAULT 'email'"); } catch (\Exception $e) {}
+
+    // One-time seed: these addresses used to be hardcoded literal arrays
+    // inside the notify_* functions in lib/notifications.php — moved here so
+    // they show as ordinary, removable chips in admin_notification_triggers.php
+    // instead of being invisible in code. Gated on the notification_triggers
+    // row not existing yet for that event_key, so this never re-adds a
+    // recipient an admin has since deleted (once seeded, that row's mere
+    // existence — regardless of enabled state — marks seeding as done).
+    // offboard_system_tasks is deliberately NOT included here — its 3
+    // hardcoded addresses (abril@/lisa@/dominic@) are each tied to a specific
+    // system-specific email body (FUB/Maxa/Darwin), not a shared recipient
+    // list, so converting them needs a different UI shape than a flat
+    // removable-chip list.
+    $defaultTriggerRecipients = [
+        'agent_capped'          => ['lisa@innovateonline.com'],
+        'offboard_complete'     => ['darren@innovateonline.com', 'whitney@innovateonline.com'],
+        'profile_changed'       => ['whitney@innovateonline.com', 'lisa@innovateonline.com'],
+        'intake_submitted'      => ['lisa@innovateonline.com', 'dominic@innovateonline.com', 'darren@innovateonline.com', 'abril@innovateonline.com', 'whitney@innovateonline.com', 'kelseyabroussard@gmail.com'],
+        'intake_summary_admins' => ['dominic@innovateonline.com', 'darren@innovateonline.com', 'kelseyabroussard@gmail.com'],
+        'ticket_created'        => ['darren@innovateonline.com'],
+        'ticket_reply'          => ['darren@innovateonline.com'],
+    ];
+    $checkTriggerSeeded = $pdo->prepare("SELECT 1 FROM notification_triggers WHERE event_key=?");
+    $insTriggerSeeded   = $pdo->prepare("INSERT INTO notification_triggers (event_key, enabled) VALUES (?, 1)");
+    $insDefaultRecip    = $pdo->prepare("INSERT OR IGNORE INTO notification_trigger_recipients (event_key, email, recipient_type) VALUES (?, ?, 'email')");
+    foreach ($defaultTriggerRecipients as $eventKey => $emails) {
+        $checkTriggerSeeded->execute([$eventKey]);
+        if (!$checkTriggerSeeded->fetch()) {
+            foreach ($emails as $e) { $insDefaultRecip->execute([$eventKey, $e]); }
+            $insTriggerSeeded->execute([$eventKey]);
+        }
+    }
+
     // Staff notified by email when a specific onboarding/offboarding step is
     // added (heads-up) and when it becomes the next actionable step.
     // step_key matches the 'key' from onboard_tools()/offboard_tools().
@@ -461,6 +567,7 @@ function local_db(): PDO {
         ['offboard','constellation1',    'Constellation1',           'Auto-deactivate via API',                                            1, 40],
         ['offboard','dotloop',           'DotLoop',                  'Remove seat in DotLoop admin',                                       0, 50],
         ['offboard','mls',               'MLS Access',               'Submit MLS membership removal form',                                 0, 60],
+        ['offboard','realscout',         'RealScout',                'Remove agent from RealScout account',                                0, 65],
         ['offboard','listingstoleads',   'ListingsToLeads',          'Remove from account',                                                0, 70],
         ['offboard','maxa',              'MAXA Presents',            'Remove from account',                                                0, 80],
         ['offboard','email_decom',       'Company Email',            'Decommission company email and signature',                           0, 90],
@@ -478,6 +585,11 @@ function local_db(): PDO {
         "UPDATE step_defs SET sort_ord=25, is_auto=1,
             note='Auto-deactivate — removes login + roster listing'
          WHERE process='offboard' AND step_key='agentedge' AND sort_ord=110 AND is_auto=0"
+    );
+    // Migration: add RealScout offboard step for existing installs
+    $pdo->exec(
+        "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord)
+         VALUES ('offboard','realscout','RealScout','Remove agent from RealScout account',0,65)"
     );
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
@@ -526,6 +638,14 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_alt_email ON agent_extra(alt_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
+    // Same idea as alt_email above, but for DotLoop: the email a loop
+    // creator typed in when adding this agent as a participant sometimes
+    // differs from their AgentEdge login email, and unlike alt_email/Darwin
+    // there was previously no self-service fix — only a hardcoded
+    // config.php 'dotloop_email_groups' array. dotloop_email_group()
+    // (lib/dotloop.php) now also checks this column.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN dotloop_alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_dotloop_alt_email ON agent_extra(dotloop_alt_email)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
     // tblstaff auth, checked first in attempt_login() (auth.php) before
@@ -1427,6 +1547,56 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN bic_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE market_centers ADD COLUMN mc_leader_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
+    // Seed one room per market center on first run only -- additional rooms
+    // for MCs that need 2+ are added later via admin_conference_rooms.php.
+    // Moved here (from just after conference_rooms' own CREATE TABLE, much
+    // earlier in this function) because it depends on market_centers
+    // existing, which it doesn't yet at that earlier point on a truly fresh
+    // database.
+    if ($pdo->query("SELECT COUNT(*) FROM conference_rooms")->fetchColumn() == 0) {
+        $seedMcs = $pdo->query("SELECT slug FROM market_centers")->fetchAll(PDO::FETCH_ASSOC);
+        $insRoom = $pdo->prepare("INSERT INTO conference_rooms (mc_slug, name) VALUES (?, ?)");
+        foreach ($seedMcs as $seedMc) {
+            $insRoom->execute([$seedMc['slug'], 'Conference Room']);
+        }
+    }
+
+    // ── "Who Does What" agent-facing team directory (Back Office → Technology) ──
+    // A small curated roster, separate from agent_intake: entries are picked
+    // and edited by Back Office staff rather than self-reported by agents, and
+    // deliberately keep their own name/phone/photo rather than joining live to
+    // agent_intake (which (a) may have no row at all for a leadership/staff
+    // person who never went through onboarding, and (b) is self-edited by the
+    // agent, whereas a directory listing should only change when Back Office
+    // curates it). admin_who_does_what.php offers an autofill-from-roster
+    // convenience at data-entry time so this rarely means retyping.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS team_directory (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        email       TEXT NOT NULL UNIQUE,
+        name        TEXT NOT NULL DEFAULT '',
+        title       TEXT NOT NULL DEFAULT '',
+        group_label TEXT NOT NULL DEFAULT '',
+        handles     TEXT NOT NULL DEFAULT '',
+        tags        TEXT NOT NULL DEFAULT '',
+        phone       TEXT NOT NULL DEFAULT '',
+        booking_url TEXT NOT NULL DEFAULT '',
+        photo_key   TEXT NOT NULL DEFAULT '',
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        sort_ord    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_team_directory_group ON team_directory(group_label, sort_ord)");
+
+    // Directory photos are uploaded specifically for this page (not the same
+    // file as the agent's private intake headshot, which api/intake.php only
+    // serves back to the agent themself or a leader) — own web-protected dir,
+    // same convention as headshots/ and uni/ above.
+    $tdDir = $dir . '/team_directory_photos';
+    if (!is_dir($tdDir)) @mkdir($tdDir, 0750, true);
+    $tdHt  = $tdDir . '/.htaccess';
+    if (!file_exists($tdHt)) @file_put_contents($tdHt, "Deny from all\n");
+
     // Market-Center-scoped events, self-service for MC Leaders/BICs (own MC
     // only) and admins (any MC) — see mc_events.php/api/mc_events_action.php.
     // Distinct from custom_events (Industry Events), which is one shared
@@ -1638,6 +1808,18 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcti_template ON finance_checklist_template_items(template_id)");
 
+    // Notion SOP sync (lib/notion.php, cron/sync_notion_finance_sops.php) — one-way,
+    // matched by title against a Notion database. instructions_notion_page_id/url are
+    // populated BY the sync, never human-entered.
+    foreach ([
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_md TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_notion_page_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_notion_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_template_items ADD COLUMN instructions_synced_at TEXT NOT NULL DEFAULT ''",
+    ] as $alter) {
+        try { $pdo->exec($alter); } catch (\Exception $e) {}
+    }
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS finance_checklist_runs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         template_id INTEGER NOT NULL,
@@ -1663,6 +1845,31 @@ function local_db(): PDO {
         updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_fcri_run ON finance_checklist_run_items(run_id)");
+
+    // Snapshot of the template item's Notion SOP content at start_run time — same
+    // treatment as title/description, which are already copied and never re-synced
+    // after a run starts. A later Notion edit shows up on the NEXT run, not this one.
+    foreach ([
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_md TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_notion_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE finance_checklist_run_items ADD COLUMN instructions_synced_at TEXT NOT NULL DEFAULT ''",
+    ] as $alter) {
+        try { $pdo->exec($alter); } catch (\Exception $e) {}
+    }
+
+    // Singleton status/report row for the last Notion SOP sync (manual button or cron).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS notion_sop_sync_state (
+        id                INTEGER PRIMARY KEY CHECK (id = 1),
+        last_run_at       TEXT    NOT NULL DEFAULT '',
+        last_ok           INTEGER NOT NULL DEFAULT 0,
+        last_error        TEXT    NOT NULL DEFAULT '',
+        pages_fetched     INTEGER NOT NULL DEFAULT 0,
+        items_matched     INTEGER NOT NULL DEFAULT 0,
+        items_updated     INTEGER NOT NULL DEFAULT 0,
+        unmatched_notion  TEXT    NOT NULL DEFAULT '',
+        unmatched_items   TEXT    NOT NULL DEFAULT '',
+        duration_ms       INTEGER NOT NULL DEFAULT 0
+    )");
 
     // ── MLS Integrations tracker ──────────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_integrations (
@@ -1702,6 +1909,35 @@ function local_db(): PDO {
         $mi->execute(['PrimeMLS','PRIME','NH, VT, ME, MA, CT, RI','RETS','applied',750,'idx,crm','','data@primemls.com','Specialty Data Feed Agreement signed 2026-06-23. Contact: Chad Jacobson, CEO. Phone: (603) 228-9733. Agreement effective date 6/23/26.']);
         $mi->execute(['East Tennessee Association of REALTORS (ETAR)','ETAR','TN – Knoxville area','Spark','researching',0,'idx,crm','','','Spark Platform integration in progress. Demo token issue pending resolution.']);
     }
+
+    // Activity feed for an mls_integrations row — separate from the single
+    // free-form `notes` field on the record itself so a running thread of
+    // updates (and optionally tagging a teammate for follow-up) doesn't
+    // overwrite that field. tagged_email queues a notification_queue email
+    // via lib/notifications.php's queue_email_to() (drained by the existing
+    // 5-minute email-queue cron — see api/mls_notes.php).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_notes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_id       INTEGER NOT NULL,
+        note         TEXT    NOT NULL,
+        tagged_email TEXT    NOT NULL DEFAULT '',
+        created_by   TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Uploaded MLS agreement/contract documents, one row per file, mirroring
+    // vault_files' shape (id/storage_key/S3) but scoped to an mls_integrations
+    // row instead of a vault folder — see api/mls_agreement_upload.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_agreements (
+        id           TEXT    PRIMARY KEY,
+        mls_id       INTEGER NOT NULL,
+        name         TEXT    NOT NULL,
+        mime_type    TEXT    NOT NULL DEFAULT '',
+        size_bytes   INTEGER NOT NULL DEFAULT 0,
+        storage_key  TEXT    NOT NULL,
+        uploaded_by  TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
 
     // ── MLS / State Offices & Licenses (from annual license report) ──────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS mls_offices (
@@ -2831,7 +3067,267 @@ function local_db(): PDO {
         INSERT INTO howto_search(rowid, page_key, label, body_markdown) VALUES (new.id, new.page_key, new.label, new.body_markdown);
     END");
 
-    return $pdo;
+    // ── Restored from commit d525e7b — dropped from a later uncommitted edit
+    // of this file, but all five tables below are still live in production
+    // with real data (verified against the live DB before restoring, column
+    // for column). A fresh AgentEdge database needs these to match what's
+    // actually running today.
+    //
+    // Per-recipient SendGrid Event Webhook data (opens/clicks/bounces/etc.) for
+    // Company Email reporting. Populated by api/sendgrid_events_webhook.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS company_email_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_email_id  INTEGER NOT NULL,
+        recipient         TEXT    NOT NULL,
+        event             TEXT    NOT NULL,   -- delivered | open | click | bounce | dropped | deferred | spamreport
+        url               TEXT    NOT NULL DEFAULT '',
+        reason            TEXT    NOT NULL DEFAULT '',
+        sg_message_id     TEXT    NOT NULL DEFAULT '',
+        occurred_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_cee_company_email_id ON company_email_events(company_email_id)");
+
+    // Referral coverage (Back Office > Technology > Referral). One row per MLS
+    // association we're a member of; coverage areas matched against
+    // agent_intake.mls_board to power the Agent Roster's referral-location filter.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_referral_coverage (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_name    TEXT    NOT NULL UNIQUE,
+        counties    TEXT    NOT NULL DEFAULT '',
+        cities      TEXT    NOT NULL DEFAULT '',
+        townships   TEXT    NOT NULL DEFAULT '',
+        zips        TEXT    NOT NULL DEFAULT '',
+        states      TEXT    NOT NULL DEFAULT '',
+        communities TEXT    NOT NULL DEFAULT '',
+        notes       TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN states TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN communities TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage DROP COLUMN unincorporated_areas"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN agent_label TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN market_centers TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mls_referral_coverage ADD COLUMN specific_agents TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("UPDATE mls_referral_coverage SET agent_label = mls_name WHERE TRIM(agent_label) = ''");
+    if ($pdo->query("SELECT COUNT(*) FROM mls_referral_coverage")->fetchColumn() == 0) {
+        try {
+            $names = $pdo->query(
+                "SELECT DISTINCT TRIM(name) AS n FROM mls_memberships
+                 WHERE board_or_mls IN ('MLS','Board & MLS') AND TRIM(name) != '' ORDER BY n"
+            )->fetchAll(PDO::FETCH_COLUMN);
+            $ins = $pdo->prepare("INSERT OR IGNORE INTO mls_referral_coverage (mls_name) VALUES (?)");
+            foreach ($names as $n) { $ins->execute([$n]); }
+        } catch (\Exception $e) {}
+    }
+
+    // Per-agent MLS/board memberships (an agent can belong to more than one).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_mls_memberships (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email     TEXT NOT NULL,
+        mls_association TEXT NOT NULL DEFAULT '',
+        mls_number      TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_memberships_email ON agent_mls_memberships(agent_email)");
+    if ($pdo->query("SELECT COUNT(*) FROM agent_mls_memberships")->fetchColumn() == 0) {
+        $ins = $pdo->prepare(
+            "INSERT INTO agent_mls_memberships (agent_email, mls_association, mls_number) VALUES (?,?,?)"
+        );
+        foreach ($pdo->query("SELECT email, mls_board, mls_id FROM agent_intake WHERE TRIM(mls_board) != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $ins->execute([$r['email'], $r['mls_board'], $r['mls_id']]);
+        }
+    }
+
+    // Reminders against an MLS/board row (Back Office > Technology > MLS).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_reminders (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        mls_id       INTEGER NOT NULL,
+        remind_at    TEXT    NOT NULL,
+        note         TEXT    NOT NULL DEFAULT '',
+        created_by   TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        dismissed_at TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_reminders_mls ON mls_reminders(mls_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mls_reminders_due ON mls_reminders(remind_at, dismissed_at)");
+
+    // Explicit office allow-list for a conference room bookable across more
+    // than one market center (e.g. "NMB Agent on Duty").
+    $pdo->exec("CREATE TABLE IF NOT EXISTS room_allowed_offices (
+        room_id INTEGER NOT NULL,
+        mc_slug TEXT    NOT NULL,
+        PRIMARY KEY (room_id, mc_slug)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_room_allowed_offices_mc ON room_allowed_offices(mc_slug)");
+}
+
+// Admin Work OS (personal admin task queue + routines + Daily Check) plus the
+// generic Staff Feature Access flag table. Deliberately its own function,
+// called unconditionally near the top of local_db() above, rather than a
+// block inside local_db()'s own version-gated migration body — that gate
+// tracks a schema version this table set was never part of, so nesting it
+// there would tie this feature's rollout to that gate's unrelated state.
+// Guards itself with a single sqlite_master existence check instead: cheap,
+// read-only, and safe to run on every request until the tables exist, then
+// a no-op forever after.
+function _agentedge_migrate_admin_work_os(PDO $pdo): void {
+    $already = $pdo->query(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='staff_feature_flags'"
+    )->fetchColumn();
+    if ((int)$already > 0) return;
+
+    // ── Admin Work OS (V1A) — personal admin task queue ─────────────────────
+    // Human work items, not scheduled automation (see scheduled_tasks above,
+    // a separate fire-once job queue -- deliberately not reused here).
+    // category/status/source_type are validated in PHP against a fixed
+    // allow-list, same convention as support_tickets.status below -- no
+    // SQLite CHECK constraint, consistent with every other enum in this file.
+    // due_date/follow_up_date are plain YYYY-MM-DD (calendar dates, like
+    // wf_items.due_date), never a UTC datetime -- created_at/updated_at/
+    // completed_at ARE UTC datetime('now'), same as every other timestamp
+    // column in this file. owner_email/created_by_email are always written
+    // lowercased; read comparisons stay case-insensitive via LOWER(), same
+    // discipline as fetch_perms_local()'s agent_roles lookup.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS admin_work_items (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        title             TEXT    NOT NULL,
+        description       TEXT,
+        owner_email       TEXT    NOT NULL,
+        created_by_email  TEXT    NOT NULL,
+        category          TEXT    NOT NULL DEFAULT 'admin',   -- people | product | operations | admin
+        status            TEXT    NOT NULL DEFAULT 'inbox',   -- inbox | next | waiting | done
+        due_date          TEXT,
+        source_type       TEXT    NOT NULL DEFAULT 'manual',  -- manual | meeting | recurring | agent_request | project | system
+        source_label      TEXT    NOT NULL DEFAULT '',
+        waiting_on        TEXT,
+        follow_up_date    TEXT,
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        completed_at      TEXT
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_awi_owner_status    ON admin_work_items(owner_email, status)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_awi_owner_due       ON admin_work_items(owner_email, due_date)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_awi_owner_follow_up ON admin_work_items(owner_email, follow_up_date)");
+    // V1E-B: soft delete only -- a deleted row is never actually removed, so
+    // its routine occurrence, event history, and (if routine-generated) the
+    // routine template itself all stay intact. NULL means never deleted;
+    // every normal read query gains an explicit "AND deleted_at IS NULL"
+    // rather than relying elsewhere on this column's mere presence. Existing
+    // rows get NULL automatically (ALTER TABLE ADD COLUMN with no DEFAULT),
+    // same additive convention as V1D-C's schedule_weekdays/schedule_anchor_date.
+    try { $pdo->exec("ALTER TABLE admin_work_items ADD COLUMN deleted_at TEXT"); } catch (\Exception $e) {}
+
+    // Event history -- one row per meaningful change (created, owner_changed,
+    // status_changed, due_date_changed, waiting_changed, completed, reopened).
+    // Free-text 'detail' (e.g. "Status: Inbox -> Next"), same shape as
+    // support_ticket_events above -- no structured old/new columns, no
+    // triggers; callers insert an event row explicitly alongside each write.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS admin_work_item_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id      INTEGER NOT NULL,
+        event_type   TEXT    NOT NULL,
+        detail       TEXT    NOT NULL DEFAULT '',
+        actor_email  TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_awie_item ON admin_work_item_events(item_id)");
+
+    // ── Admin Work OS Routines (V1D-A) — reusable templates only ────────────
+    // A routine is NOT a work item; it's a definition that V1D-B's generation
+    // step will later turn into admin_work_items rows. Same PHP-validated
+    // allow-list convention as category/status/source_type above -- no CHECK
+    // constraints. routine_area is deliberately a separate vocabulary from
+    // admin_work_items.category (see lib/admin_work_routines.php) -- never
+    // conflated even though both are "categorize this" concepts.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS admin_work_routines (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_email           TEXT    NOT NULL,
+        title                 TEXT    NOT NULL,
+        description           TEXT,
+        category              TEXT    NOT NULL DEFAULT 'admin',
+        routine_area          TEXT    NOT NULL DEFAULT 'general',  -- general | opening | people | office | closing
+        frequency             TEXT    NOT NULL,                    -- daily | weekdays | weekly | biweekly | custom_weekdays | monthly | semiannual | annual
+        schedule_weekday      INTEGER,                             -- 1(Mon)-7(Sun) -- weekly/biweekly
+        schedule_day_of_month INTEGER,                             -- 1-31 -- monthly/semiannual/annual
+        schedule_month        INTEGER,                             -- 1-12 -- semiannual/annual only
+        enabled               INTEGER NOT NULL DEFAULT 1,
+        created_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at            TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_awr_owner_enabled ON admin_work_routines(owner_email, enabled)");
+    // V1D-C: biweekly needs an explicit anchor (never rely on server week-
+    // parity alone -- it can drift unexpectedly around year boundaries);
+    // custom_weekdays needs a set of days. Both nullable, populated only for
+    // their one relevant frequency -- existing rows get NULL for both and
+    // are completely unaffected (their frequencies never read these columns).
+    try { $pdo->exec("ALTER TABLE admin_work_routines ADD COLUMN schedule_weekdays TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE admin_work_routines ADD COLUMN schedule_anchor_date TEXT"); } catch (\Exception $e) {}
+
+    // Dedup/history ledger for V1D-B's generation step. One row per routine
+    // per calendar day it actually produced a work item -- the composite
+    // PRIMARY KEY is the authoritative guard against generating the same
+    // occurrence twice (e.g. two concurrent dashboard loads). Stays empty
+    // until V1D-B is implemented; created now so V1D-A's schema is complete.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS admin_work_routine_occurrences (
+        routine_id     INTEGER NOT NULL,
+        occurrence_key TEXT    NOT NULL,
+        work_item_id   INTEGER NOT NULL,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (routine_id, occurrence_key)
+    )");
+    // V1F-A-1: snapshot each occurrence's routine_area at generation time --
+    // editing a routine's routine_area later (e.g. opening -> closing) must
+    // never retroactively move an already-generated occurrence between
+    // Morning Check and Before You Leave (see generate_due_routine_items(),
+    // which now writes this alongside the occurrence row, in the same
+    // transaction, and never recomputes it afterward). NULL means "row
+    // predates this column"; the backfill below approximates those from
+    // the routine's CURRENT routine_area -- the best available signal for
+    // a pre-existing row -- and only ever touches still-NULL rows, so it's
+    // safe to re-run on every request (idempotent, like every ALTER here).
+    try { $pdo->exec("ALTER TABLE admin_work_routine_occurrences ADD COLUMN routine_area_snapshot TEXT"); } catch (\Exception $e) {}
+    $pdo->exec("
+        UPDATE admin_work_routine_occurrences
+        SET routine_area_snapshot = (
+            SELECT r.routine_area FROM admin_work_routines r WHERE r.id = admin_work_routine_occurrences.routine_id
+        )
+        WHERE routine_area_snapshot IS NULL
+    ");
+
+    // ── Daily Check (V1F-A-1) — per-admin Morning/Closing check state ───────
+    // One row per admin per day per check type. dismissed_at/completed_at
+    // stay unwritten in this slice -- no writer exists yet (manual preview
+    // only, see lib/admin_daily_checks.php and index.php's ?daily_check=
+    // param); table created now so the next slice has schema ready, same
+    // "create early, wire later" precedent as this file's own occurrences
+    // table above (V1D-A created it well before V1D-B's generator existed).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS admin_daily_checks (
+        owner_email  TEXT NOT NULL,
+        check_date   TEXT NOT NULL,
+        check_type   TEXT NOT NULL,   -- morning | closing
+        dismissed_at TEXT,
+        completed_at TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (owner_email, check_date, check_type)
+    )");
+
+    // ── Staff Feature Access — generic per-staff internal feature toggle ────
+    // Reusable for every future internal feature flag: adding one is a new
+    // feature_key value written through this same table, never a new
+    // column or table. admin_work_os is the first key. enabled=0/missing
+    // row both mean off — see feature_enabled_for_current_user() in
+    // lib/feature_flags.php, the single place that reads this table.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS staff_feature_flags (
+        user_email       TEXT    NOT NULL,
+        feature_key      TEXT    NOT NULL,
+        enabled          INTEGER NOT NULL DEFAULT 0,
+        updated_by_email TEXT,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_email, feature_key)
+    )");
 }
 
 // Practical starter list of major U.S. metros per state (not the full ~390-entry
