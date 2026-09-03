@@ -399,13 +399,18 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
                 </button>
                 <div class="cdd-menu">
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{first_name}}');closeDropdowns()">First Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{last_name}}');closeDropdowns()">Last Name</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{full_name}}');closeDropdowns()">Full Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{email}}');closeDropdowns()">Email</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{market_center}}');closeDropdowns()">Market Center</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{brokerage}}');closeDropdowns()">Brokerage</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{phone}}');closeDropdowns()">Phone</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_number}}');closeDropdowns()">License #</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_state}}');closeDropdowns()">License State</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{office}}');closeDropdowns()">Office Location</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{company_name}}');closeDropdowns()">Company Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{company_address}}');closeDropdowns()">Company Address</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{unsubscribe_url}}');closeDropdowns()">Unsubscribe Link</div>
                 </div>
               </div>
             </div>
