@@ -36,7 +36,7 @@ foreach ($due as $row) {
         $attachIdsStr = $row['attachment_ids'] ?? '';
         $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
         foreach ($recipients as $r) {
-            $personalized = ce_apply_merge_vars($row['body'], $r);
+            $personalized = ce_apply_merge_vars($db, CRON_HOST, $row['body'], $r);
             $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr, $row['sender_email'], $row['sender_email']]);
         }
 
