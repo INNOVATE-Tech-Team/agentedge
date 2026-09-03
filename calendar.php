@@ -2,12 +2,18 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 $agent    = require_login();
 $is_admin = is_admin();
 $is_leader = is_leader();
 $cal_id   = cfg()['gcal_calendar_id'] ?? 'training@innovateonline.com';
 $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
+// For the "Restrict to Market Center(s)" picker on the Events-tab admin
+// modal — only admins ever see that modal, so no MC-scoping needed here.
+$mcOptsAll = $is_admin
+    ? local_db()->query("SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 ?>
 <!doctype html>
 <html lang="en">
@@ -225,6 +231,15 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
         <label class="cal-field-label">Capacity <span style="color:#888;font-weight:400">(optional — extra RSVPs are waitlisted)</span>
           <input type="number" min="0" id="cal-ev2-capacity" class="cal-field-input" placeholder="No limit">
         </label>
+        <label class="cal-field-label">Restrict to Market Center(s) <span style="color:#888;font-weight:400">(optional — leave all unchecked to show this to everyone)</span></label>
+        <div id="cal-ev2-mc-list" style="display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <?php foreach ($mcOptsAll as $opt): ?>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;cursor:pointer">
+            <input type="checkbox" class="cal-ev2-mc-check" value="<?= htmlspecialchars($opt['slug']) ?>">
+            <?= htmlspecialchars(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?>
+          </label>
+          <?php endforeach; ?>
+        </div>
         <div id="cal-ev2-modal-err" class="cal-modal-err" style="display:none"></div>
         <div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px">
           <div class="cal-field-label" style="margin-bottom:6px">Attendees</div>

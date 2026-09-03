@@ -256,6 +256,9 @@ function renderList(evs) {
             ${scopeLabel(ev.scope)}
           </span>
           ${(ev.scope === 'training' || ev.scope === 'events') ? `
+            ${(ev.mc_slugs && ev.mc_slugs.length && typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
+              ? `<span class="cal-reg-badge" style="font-size:11px;color:#888" title="Only shown in-app to agents in: ${calEsc(ev.mc_slugs.join(', '))}">MC only (${ev.mc_slugs.length})</span>`
+              : ''}
             ${ev.capacity != null ? `<span class="cal-reg-badge" style="font-size:11px;color:#888">${ev.registered_count}/${ev.capacity} registered</span>` : ''}
             <button class="cal-rsvp-btn${ev.rsvped ? ' cal-rsvp-active' : ''}${ev.waitlisted ? ' cal-rsvp-waitlisted' : ''}"
               data-scope="${ev.scope}"
@@ -661,6 +664,8 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
     evRegDesc2.value     = ev ? (ev.reg_description || '') : '';
     evRegSlug2.value     = ev ? (ev.reg_slug || '') : '';
     evCapacity2.value    = (ev && ev.capacity != null) ? ev.capacity : '';
+    const mcSlugs2 = new Set(ev ? (ev.mc_slugs || []) : []);
+    document.querySelectorAll('.cal-ev2-mc-check').forEach(cb => { cb.checked = mcSlugs2.has(cb.value); });
     evStart2.value       = '';
     evEnd2.value         = '';
     if (!ev?.is_all_day && ev?.start_dt?.includes('T')) {
@@ -719,6 +724,7 @@ if (typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN) {
       reg_description: evRegDesc2.value,
       reg_slug:    evRegSlug2.value,
       capacity:    evCapacity2.value.trim(),
+      mc_slugs:    Array.from(document.querySelectorAll('.cal-ev2-mc-check:checked')).map(cb => cb.value),
     };
 
     try {
