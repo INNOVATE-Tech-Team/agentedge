@@ -14,6 +14,7 @@ require_once __DIR__ . '/../lib/company_email.php';
 const LAUNCH2_FROM_EMAIL = 'noreply@innovateonline.com';
 const LAUNCH2_FROM_NAME  = 'INNOVATE Real Estate';
 const LAUNCH2_SUBJECT    = "Introducing LAUNCH 2.0, Beta Accelerator Starts Monday, Aug 10 (\$200)";
+const LAUNCH2_HOST       = 'agents.innovateonline.com';
 
 $db = local_db();
 
@@ -64,7 +65,7 @@ if (!$recipients) { fwrite(STDERR, "no recipients resolved for audience 'all'\n"
 
 $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', ?, ?)");
 foreach ($recipients as $r) {
-    $personalized = ce_apply_merge_vars($html, $r);
+    $personalized = ce_apply_merge_vars($db, LAUNCH2_HOST, $html, $r);
     $ins->execute([$r['email'], LAUNCH2_SUBJECT, $personalized, LAUNCH2_FROM_EMAIL, LAUNCH2_FROM_NAME]);
 }
 
