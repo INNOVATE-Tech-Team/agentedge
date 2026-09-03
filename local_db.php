@@ -31,7 +31,10 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // per-agent "Team Leader" flag for the Company Email audience picker.
 // Version 4 adds events_calendar.mc_slugs, an optional Market Center
 // restriction for Company Calendar "Events" tab events.
-const LOCAL_DB_SCHEMA_VERSION = 4;
+// Version 5 adds notification_prefs.unsub_token for the Company Email
+// {{unsubscribe_url}} merge token (see ce_unsubscribe_url() in
+// lib/company_email.php and the new public unsubscribe.php).
+const LOCAL_DB_SCHEMA_VERSION = 5;
 
 function local_db(): PDO {
     static $pdo = null;
@@ -973,6 +976,11 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
         sms_phone    TEXT    NOT NULL DEFAULT '',
         updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
+    // One-click Company Email unsubscribe token — a stored random value
+    // (same pattern as agent_extra.cal_token) rather than a signed URL, so
+    // no new secret is needed in config.php. Minted lazily by
+    // ce_unsubscribe_url() the first time a send needs one for that email.
+    try { $pdo->exec("ALTER TABLE notification_prefs ADD COLUMN unsub_token TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // ── Outbound Notification Queue ───────────────────────────────────────────
     $pdo->exec("CREATE TABLE IF NOT EXISTS notification_queue (
