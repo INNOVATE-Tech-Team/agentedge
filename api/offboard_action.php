@@ -196,6 +196,23 @@ if ($action === 'add_to_queue') {
         $reason = 'voluntary';
     }
 
+    // This agent may already have an active offboarding record started from
+    // a different Market Center row (an agent can be listed in more than
+    // one) — reuse it instead of creating a second, duplicate queue entry
+    // with its own separate checklist and duplicate notification emails.
+    // Real incident, 2026-09-03: this action had no dedup check at all, so
+    // sending the same person to offboarding a second time always
+    // duplicated. Still detaches this specific roster row either way.
+    if ($email !== '') {
+        $existing = $pdo->prepare("SELECT id FROM offboard_queue WHERE LOWER(TRIM(agent_email))=LOWER(TRIM(?)) AND status='active' LIMIT 1");
+        $existing->execute([$email]);
+        $existingId = $existing->fetchColumn();
+        if ($existingId) {
+            try { remove_roster_agent($pdo, $name, $mc, null, $agent['email']); } catch (\Throwable $e) {}
+            json_out(['ok'=>true, 'id'=>(int)$existingId, 'already_active'=>true]);
+        }
+    }
+
     $ins = $pdo->prepare(
         "INSERT INTO offboard_queue
             (agent_email, agent_name, market_center, last_day, reason, reason_notes, book_of_biz_to, added_by, added_at)
