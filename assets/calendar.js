@@ -11,6 +11,7 @@ let agentMC   = '';
 let agentMCSlug = '';
 const evCache = {};
 let hasPersonalCal = false;
+let lastByDay = {}; // set by renderGrid; read by the "+X more" popover on click
 
 // Deep link from an emailed registration link — calendar.php?event=<gcal_id>
 // &scope=training&date=YYYY-MM-DD. Jumps to the right month/tab, then
@@ -181,6 +182,7 @@ function renderGrid(evs) {
     const d = parseInt(ev.date.split('-')[2], 10);
     (byDay[d] = byDay[d] || []).push(ev);
   });
+  lastByDay = byDay;
 
   const today      = new Date();
   const isCurMonth = today.getFullYear() === calYear && today.getMonth() === calMonth;
@@ -204,7 +206,7 @@ function renderGrid(evs) {
           title="${calEsc(ev.title)}${calFmtTime(ev) ? ' · ' + calFmtTime(ev) : ''}">${calEsc(ev.title)}</div>`
       ).join('')}
       ${dayEvs.length > 2
-        ? `<div class="cal-chip-more">+${dayEvs.length - 2} more</div>` : ''}
+        ? `<div class="cal-chip-more" data-day="${d}">+${dayEvs.length - 2} more</div>` : ''}
     </div>`;
   }
   html += '</div>';
@@ -335,6 +337,50 @@ function updateMyCalBar() {
   if (connected) connected.style.display = hasPersonalCal ? 'block' : 'none';
   if (setup)     setup.style.display     = hasPersonalCal ? 'none'  : 'block';
 }
+
+// "+X more" popover — shows every event for the clicked day (not just the
+// ones hidden past the 2-chip cutoff), read-only. Not admin-gated, so wired
+// up unconditionally rather than inside the CAL_IS_ADMIN block above.
+function showDayModal(day) {
+  const overlay = document.getElementById('cal-day-modal-overlay');
+  const title   = document.getElementById('cal-day-modal-title');
+  const body    = document.getElementById('cal-day-modal-body');
+  if (!overlay || !title || !body) return;
+
+  const dayEvs = lastByDay[day] || [];
+  const dateObj = new Date(calYear, calMonth, day);
+  title.textContent = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const sc = e => SCOPES[e.scope] || SCOPES.company;
+  body.innerHTML = dayEvs.map(ev => `
+    <div class="cal-list-ev">
+      <div class="cal-list-ev-inner">
+        <div class="cal-scope-bar" style="background:${sc(ev).bg}"></div>
+        <div class="cal-list-ev-body">
+          ${calFmtTime(ev) ? `<div class="cal-list-date">${calFmtTime(ev)}</div>` : ''}
+          <div class="cal-list-ev-title">${calEsc(ev.title)}</div>
+          ${ev.location ? `<div class="cal-list-meta">&#128205; ${calEsc(ev.location)}</div>` : ''}
+        </div>
+        <span class="cal-scope-badge" style="background:${sc(ev).bg};color:${sc(ev).text}">
+          ${scopeLabel(ev.scope)}
+        </span>
+      </div>
+    </div>`).join('');
+
+  overlay.style.display = 'flex';
+}
+
+document.getElementById('cal-grid').addEventListener('click', e => {
+  const chip = e.target.closest('.cal-chip-more');
+  if (!chip) return;
+  showDayModal(parseInt(chip.dataset.day, 10));
+});
+document.getElementById('cal-day-modal-close')?.addEventListener('click', () => {
+  document.getElementById('cal-day-modal-overlay').style.display = 'none';
+});
+document.getElementById('cal-day-modal-overlay')?.addEventListener('click', e => {
+  if (e.target.id === 'cal-day-modal-overlay') e.target.style.display = 'none';
+});
 
 document.querySelectorAll('.cal-tab').forEach(t => {
   t.addEventListener('click', () => {

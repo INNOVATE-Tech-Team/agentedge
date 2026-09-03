@@ -242,6 +242,18 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
   </div>
   <?php endif; ?>
 
+  <!-- Day events popover — opened by clicking a "+X more" chip on the grid;
+       not admin-gated since any signed-in agent can see the day's full list. -->
+  <div id="cal-day-modal-overlay" class="cal-modal-overlay" style="display:none">
+    <div class="cal-modal" style="width:min(420px,100%)">
+      <div class="cal-modal-header">
+        <span id="cal-day-modal-title">Events</span>
+        <button id="cal-day-modal-close" class="cal-modal-close">&times;</button>
+      </div>
+      <div class="cal-modal-body" id="cal-day-modal-body"></div>
+    </div>
+  </div>
+
   <script>const CAL_IS_ADMIN = <?= $is_admin ? 'true' : 'false' ?>;</script>
   <script src="assets/calendar.js"></script>
 </body>
