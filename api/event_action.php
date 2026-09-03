@@ -46,6 +46,17 @@ function reg_slug_taken(PDO $db, string $slug, string $excludeEventId = ''): boo
     return false;
 }
 
+// Sanitizes the request's mc_slugs array down to real, enabled market_centers
+// slugs, CSV-joined for storage (empty string = no restriction = everyone).
+function sanitize_mc_slugs(PDO $db, array $requested): string {
+    $requested = array_values(array_unique(array_filter(array_map('strval', $requested))));
+    if (!$requested) return '';
+    $placeholders = implode(',', array_fill(0, count($requested), '?'));
+    $st = $db->prepare("SELECT slug FROM market_centers WHERE slug IN ($placeholders)");
+    $st->execute($requested);
+    return implode(',', $st->fetchAll(PDO::FETCH_COLUMN));
+}
+
 // ── Create ────────────────────────────────────────────────────────────────────
 if ($action === 'create') {
     $title      = trim($body['title']       ?? '');
@@ -58,6 +69,7 @@ if ($action === 'create') {
     $capacity   = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
     $regDesc    = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
     $regSlug    = slugify_reg_link($body['reg_slug'] ?? '') ?: null;
+    $mcSlugs    = sanitize_mc_slugs(local_db(), (array)($body['mc_slugs'] ?? []));
 
     if (!$title || !$date) { http_response_code(400); echo json_encode(['error' => 'title and date required']); exit; }
     if ($regSlug !== null && reg_slug_taken(local_db(), $regSlug)) {
@@ -85,8 +97,8 @@ if ($action === 'create') {
 
     $result = gcal_create_event($cal_id, $token, $event);
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to create event — check calendar sharing permissions']); exit; }
-    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug) VALUES (?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug")
-        ->execute([$result['id'], $capacity, $regDesc, $regSlug]);
+    local_db()->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug, mc_slugs) VALUES (?,?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug, mc_slugs=excluded.mc_slugs")
+        ->execute([$result['id'], $capacity, $regDesc, $regSlug, $mcSlugs]);
     echo json_encode(['ok' => true, 'event_id' => $result['id']]);
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -102,6 +114,7 @@ if ($action === 'create') {
     $capacity    = ($body['capacity'] ?? '') !== '' ? max(0, (int)$body['capacity']) : null;
     $regDesc     = trim($body['reg_description'] ?? '') !== '' ? trim($body['reg_description']) : null;
     $regSlug     = slugify_reg_link($body['reg_slug'] ?? '') ?: null;
+    $mcSlugs     = sanitize_mc_slugs(local_db(), (array)($body['mc_slugs'] ?? []));
 
     if (!$event_id || !$title || !$date) { http_response_code(400); echo json_encode(['error' => 'event_id, title, date required']); exit; }
     if ($regSlug !== null && reg_slug_taken(local_db(), $regSlug, $event_id)) {
@@ -131,8 +144,8 @@ if ($action === 'create') {
     if (!$result) { http_response_code(500); echo json_encode(['error' => 'failed to update event']); exit; }
 
     $db = local_db();
-    $db->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug) VALUES (?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug")
-       ->execute([$event_id, $capacity, $regDesc, $regSlug]);
+    $db->prepare("INSERT INTO events_calendar (event_id, capacity, reg_description, reg_slug, mc_slugs) VALUES (?,?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET capacity=excluded.capacity, reg_description=excluded.reg_description, reg_slug=excluded.reg_slug, mc_slugs=excluded.mc_slugs")
+       ->execute([$event_id, $capacity, $regDesc, $regSlug, $mcSlugs]);
 
     // Capacity may have gone up (or been removed) — promote waitlisted agents
     // into any now-open seats, oldest first.

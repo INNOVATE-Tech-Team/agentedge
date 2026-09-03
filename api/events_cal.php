@@ -4,12 +4,20 @@
 // a separate calendar and RSVP pool so Events and Training stay independent.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/google_calendar.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
+
+// Admins always see every event (they're the only ones who can edit these,
+// so a restricted event must stay visible/editable to them regardless of
+// their own MC). Everyone else only sees events with no mc_slugs restriction
+// or where at least one of their own MCs is in that list.
+$viewerIsAdmin = is_admin();
+$myMcSlugs     = my_own_mc_slugs();
 
 $month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
 [$year, $mon] = array_map('intval', explode('-', $month));
@@ -74,10 +82,12 @@ foreach (local_db()->query("SELECT event_id, COUNT(*) AS cnt FROM events_rsvps W
 $capacities = [];
 $regDescs   = [];
 $regSlugs   = [];
-foreach (local_db()->query("SELECT event_id, capacity, reg_description, reg_slug FROM events_calendar")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+$mcSlugsMap = [];
+foreach (local_db()->query("SELECT event_id, capacity, reg_description, reg_slug, mc_slugs FROM events_calendar")->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $capacities[$r['event_id']] = $r['capacity'] !== null ? (int)$r['capacity'] : null;
     $regDescs[$r['event_id']]   = $r['reg_description'];
     $regSlugs[$r['event_id']]   = $r['reg_slug'];
+    $mcSlugsMap[$r['event_id']] = array_values(array_filter(explode(',', $r['mc_slugs'] ?? '')));
 }
 
 $events = [];
@@ -87,6 +97,10 @@ foreach ($items as $item) {
     if (!$start) continue;
 
     $gcal_id    = $item['id'] ?? '';
+    $mcRestrict = $mcSlugsMap[$gcal_id] ?? [];
+    if ($mcRestrict && !$viewerIsAdmin && !array_intersect($mcRestrict, $myMcSlugs)) {
+        continue;
+    }
     $is_all_day = isset($item['start']['date']);
     $start_dt   = $item['start']['date'] ?? ($item['start']['dateTime'] ?? '');
     $end_raw    = $item['end']['date']   ?? ($item['end']['dateTime']   ?? '');
@@ -117,6 +131,7 @@ foreach ($items as $item) {
         'capacity'    => $capacities[$gcal_id] ?? null,
         'reg_description' => $regDescs[$gcal_id] ?? null,
         'reg_slug'    => $regSlugs[$gcal_id] ?? null,
+        'mc_slugs'    => $mcRestrict,
         'registered_count' => $regCounts[$gcal_id] ?? 0,
         'is_all_day'  => $is_all_day,
         'start_dt'    => $start_dt,
