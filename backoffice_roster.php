@@ -920,7 +920,9 @@ function saveOffboard() {
         btn.disabled = false; btn.textContent = 'Send to Offboarding';
         if (!d.ok) { err.textContent = d.error || 'Error sending.'; err.style.display = ''; return; }
         closeOffboardModal();
-        alert(obName + ' has been sent to the Offboarding Queue.');
+        alert(d.already_active
+            ? obName + ' was already in the Offboarding Queue (e.g. removed from another Market Center) — this Market Center has been removed from their roster and tracked under that existing record, not a new one.'
+            : obName + ' has been sent to the Offboarding Queue.');
     })
     .catch(()=>{ btn.disabled = false; btn.textContent = 'Send to Offboarding'; err.textContent = 'Network error.'; err.style.display = ''; });
 }
@@ -1023,7 +1025,7 @@ function loginAsAgent(email) {
 
 // ── Remove agent ─────────────────────────────────────────────────────────────
 function removeAgent(id, name) {
-    if (!confirm('Remove ' + name + ' from the roster?\n\nThey will be moved to the Offboarding Queue for deprovisioning, and this is logged in Weekly Changes. The agent can be restored from the changes report or by cancelling their offboarding.')) return;
+    if (!confirm('Remove ' + name + ' from this Market Center?\n\nThis is logged in Weekly Changes. If they don\'t already have an active offboarding record, one is started for deprovisioning; if they do (e.g. already removed from another Market Center), this is tracked under that same record instead of starting a duplicate. The agent can be restored from the changes report or by cancelling their offboarding.')) return;
     fetch('api/roster_agent.php', {
         method:'POST', credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
