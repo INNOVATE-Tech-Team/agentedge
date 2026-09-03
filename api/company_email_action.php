@@ -67,18 +67,24 @@ if ($action === 'send' || $action === 'schedule') {
         exit;
     }
 
-    $sigHtml = ce_signature_html($me, $agent['name'] ?? $me, $_SERVER['HTTP_HOST']);
-    $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
-    foreach ($recipients as $r) {
-        $personalized = ce_apply_merge_vars($html, $r);
-        $ins->execute([$r['email'], $subject, $personalized . $sigHtml, $attachIdsStr, $me, $agent['name'] ?? '']);
-    }
-
+    // Inserted before the notification_queue loop below so its id can be
+    // stamped onto each queued row — that's how the "Sent" count and (once
+    // the SendGrid Event Webhook is registered) opens/clicks/bounces get
+    // matched back to this specific blast in the history report.
     $db->prepare(
         "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count, attachment_ids)
          VALUES (?,?,?,?,?,?,?,?)"
     )->execute([$me, my_role(), $audienceStr, $mcSlugsStr, $subject, $html, count($recipients), $attachIdsStr]);
-    ce_log_to_agent_records($recipients, $subject, $html, $me, (int)$db->lastInsertId());
+    $companyEmailId = (int)$db->lastInsertId();
+
+    $sigHtml = ce_signature_html($me, $agent['name'] ?? $me, $_SERVER['HTTP_HOST']);
+    $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name, company_email_id) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?, ?)");
+    foreach ($recipients as $r) {
+        $personalized = ce_apply_merge_vars($html, $r);
+        $ins->execute([$r['email'], $subject, $personalized . $sigHtml, $attachIdsStr, $me, $agent['name'] ?? '', $companyEmailId]);
+    }
+
+    ce_log_to_agent_records($recipients, $subject, $html, $me, $companyEmailId);
 
     echo json_encode(['ok'=>true, 'recipients'=>count($recipients)]);
     dispatch_notification_queue();
@@ -205,18 +211,91 @@ if ($action === 'launch_class_list') {
 if ($action === 'history') {
     if (is_admin()) {
         $rows = $db->query(
-            "SELECT sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
+            "SELECT id, sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
              FROM company_emails ORDER BY sent_at DESC LIMIT 50"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $s = $db->prepare(
-            "SELECT sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
+            "SELECT id, sender_email, audience, target_mc_slug, leader_types, subject, recipient_count, sent_at
              FROM company_emails WHERE sender_email=? ORDER BY sent_at DESC LIMIT 50"
         );
         $s->execute([$me]);
         $rows = $s->fetchAll(PDO::FETCH_ASSOC);
     }
+
+    // Reporting strip under each row: delivery counts come from our own
+    // notification_queue; open/click/bounce counts come from company_email_events,
+    // which stays empty until the SendGrid Event Webhook is registered (needs
+    // SendGrid dashboard access neither of us has yet — see api/sendgrid_events_webhook.php).
+    // Counted as DISTINCT recipients, not raw event rows, so a recipient who
+    // opens an email three times still counts once.
+    if ($rows) {
+        $ids = array_column($rows, 'id');
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        $delivery = [];
+        $d = $db->prepare(
+            "SELECT company_email_id,
+                    SUM(CASE WHEN status='sent'   THEN 1 ELSE 0 END) AS sent_count,
+                    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count
+             FROM notification_queue WHERE company_email_id IN ($placeholders) GROUP BY company_email_id"
+        );
+        $d->execute($ids);
+        foreach ($d->fetchAll(PDO::FETCH_ASSOC) as $r) $delivery[(int)$r['company_email_id']] = $r;
+
+        $events = [];
+        $e = $db->prepare(
+            "SELECT company_email_id, event, COUNT(DISTINCT recipient) AS cnt
+             FROM company_email_events WHERE company_email_id IN ($placeholders) GROUP BY company_email_id, event"
+        );
+        $e->execute($ids);
+        foreach ($e->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $events[(int)$r['company_email_id']][$r['event']] = (int)$r['cnt'];
+        }
+
+        foreach ($rows as &$row) {
+            $id = (int)$row['id'];
+            $row['sent_count']   = (int)($delivery[$id]['sent_count']   ?? 0);
+            $row['failed_count'] = (int)($delivery[$id]['failed_count'] ?? 0);
+            $row['opens']        = $events[$id]['open']    ?? 0;
+            $row['clicks']       = $events[$id]['click']   ?? 0;
+            $row['bounces']      = ($events[$id]['bounce'] ?? 0) + ($events[$id]['dropped'] ?? 0);
+        }
+        unset($row);
+    }
+
     echo json_encode(['ok'=>true, 'rows'=>$rows]);
+    exit;
+}
+
+// Fetches the full stored HTML body for one sent email, for the "View Email"
+// button in the history table — kept as a separate on-demand call rather than
+// folding into 'history' so the 50-row list doesn't ship every email's full body.
+if ($action === 'history_detail') {
+    $id = (int)($body['id'] ?? 0);
+    if (!$id) { echo json_encode(['ok'=>false,'error'=>'id required']); exit; }
+    $stmt = is_admin()
+        ? $db->prepare("SELECT subject, body, sender_email FROM company_emails WHERE id=?")
+        : $db->prepare("SELECT subject, body, sender_email FROM company_emails WHERE id=? AND sender_email=?");
+    is_admin() ? $stmt->execute([$id]) : $stmt->execute([$id, $me]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) { echo json_encode(['ok'=>false,'error'=>'Not found']); exit; }
+
+    // company_emails.body is stored without the signature (it's tacked onto each
+    // notification_queue row per-recipient at send time — see the 'send' action
+    // above), so re-derive it here the same way 'preview' does for the compose view.
+    $senderEmail = strtolower(trim($row['sender_email']));
+    $senderName = '';
+    foreach (ce_fetch_crm_roster() as $a) {
+        if (strtolower(trim($a['email'] ?? '')) === $senderEmail) { $senderName = $a['fullName'] ?? ''; break; }
+    }
+    if ($senderName === '') {
+        $localPart = strstr($senderEmail, '@', true) ?: $senderEmail;
+        $senderName = ucwords(str_replace(['.', '_'], ' ', $localPart));
+    }
+    $sigHtml = ce_signature_html($senderEmail, $senderName, $_SERVER['HTTP_HOST']);
+
+    echo json_encode(['ok'=>true, 'subject'=>$row['subject'], 'html'=>$row['body'] . $sigHtml]);
     exit;
 }
 
