@@ -80,7 +80,7 @@ if ($action === 'send' || $action === 'schedule') {
     $sigHtml = ce_signature_html($me, $agent['name'] ?? $me, $_SERVER['HTTP_HOST']);
     $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name, company_email_id) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?, ?)");
     foreach ($recipients as $r) {
-        $personalized = ce_apply_merge_vars($html, $r);
+        $personalized = ce_apply_merge_vars($db, $_SERVER['HTTP_HOST'], $html, $r);
         $ins->execute([$r['email'], $subject, $personalized . $sigHtml, $attachIdsStr, $me, $agent['name'] ?? '', $companyEmailId]);
     }
 
@@ -101,7 +101,7 @@ if ($action === 'preview') {
 
     $recipients = ce_enrich_recipients([['email' => $me, 'name' => $agent['name'] ?? '']]);
     $sigHtml = ce_signature_html($me, $agent['name'] ?? $me, $_SERVER['HTTP_HOST']);
-    $personalized = ce_apply_merge_vars($html, $recipients[0]) . $sigHtml;
+    $personalized = ce_apply_merge_vars($db, $_SERVER['HTTP_HOST'], $html, $recipients[0]) . $sigHtml;
 
     echo json_encode(['ok'=>true, 'subject'=>$subject, 'html'=>$personalized]);
     exit;
