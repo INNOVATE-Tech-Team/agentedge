@@ -164,7 +164,7 @@ foreach ($_POST as $k => $v) {
 
 // ── POST: add_to_queue ────────────────────────────────────────────────────────
 if ($action === 'add_to_queue') {
-    $email = trim($body['agent_email'] ?? '');
+    $email = strtolower(trim($body['agent_email'] ?? ''));
     $name  = trim($body['agent_name']  ?? '');
     $mc    = trim($body['market_center'] ?? '');
 
@@ -183,7 +183,7 @@ if ($action === 'add_to_queue') {
         }
         $name = $row['agent_name'];
         $mc   = $row['market_center'];
-        if ($row['email']) $email = $row['email'];
+        if ($row['email']) $email = strtolower(trim($row['email']));
     }
 
     if ($email === '' || $name === '') {
@@ -346,7 +346,7 @@ if ($action === 'send_exit_interview') {
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
-        notify_exit_interview_sent($entry['agent_name'], $entry['agent_email'], $agent['email'], $agent['name'] ?? '');
+        notify_exit_interview_sent($entry['agent_name'], $entry['agent_email'], $agent['email'], $agent['name'] ?? '', $queueId);
     } catch (\Throwable $e) {}
 
     http_response_code(200);
@@ -357,6 +357,47 @@ if ($action === 'send_exit_interview') {
         dispatch_notification_queue();
     } catch (\Throwable $e) {}
     exit;
+}
+
+// ── POST: set_dotloop_reminder — skip DotLoop step + schedule a check-back ────
+if ($action === 'set_dotloop_reminder') {
+    $queueId     = (int)($body['queue_id'] ?? 0);
+    $reminderDate = trim($body['reminder_date'] ?? '');
+    if (!$queueId || !$reminderDate || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $reminderDate)) {
+        json_out(['ok'=>false,'error'=>'queue_id and valid reminder_date (YYYY-MM-DD) required'], 400);
+    }
+
+    $q = $pdo->prepare("SELECT * FROM offboard_queue WHERE id=?");
+    $q->execute([$queueId]);
+    $entry = $q->fetch(PDO::FETCH_ASSOC);
+    if (!$entry) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+
+    // Mark the dotloop step skipped (same logic as mark_done)
+    $now = date('Y-m-d H:i:s');
+    $existing = $pdo->prepare("SELECT id, status FROM offboard_steps WHERE queue_id=? AND tool_key='dotloop'");
+    $existing->execute([$queueId]);
+    $stepRow = $existing->fetch(PDO::FETCH_ASSOC);
+    if ($stepRow) {
+        $pdo->prepare("UPDATE offboard_steps SET status='skipped', done_by=?, done_at=? WHERE id=?")
+            ->execute([$agent['email'], $now, $stepRow['id']]);
+    } else {
+        $pdo->prepare("INSERT INTO offboard_steps (queue_id, tool_key, status, done_by, done_at) VALUES (?,?,?,?,?)")
+            ->execute([$queueId, 'dotloop', 'skipped', $agent['email'], $now]);
+    }
+
+    // Schedule the reminder via scheduled_tasks
+    $fireAt = $reminderDate . ' 09:00:00';
+    $payload = json_encode([
+        'queue_id'   => $queueId,
+        'agent_name' => $entry['agent_name'],
+        'agent_email'=> $entry['agent_email'],
+        'set_by'     => $agent['email'],
+    ]);
+    $pdo->prepare(
+        "INSERT INTO scheduled_tasks (task_type, payload_json, status, fire_at, created_at) VALUES ('dotloop_remind',?,?,?,?)"
+    )->execute([$payload, 'pending', $fireAt, $now]);
+
+    json_out(['ok'=>true]);
 }
 
 // ── POST: provision (auto-deprovision) ────────────────────────────────────────
@@ -448,7 +489,7 @@ if ($action === 'cancel_offboarding') {
     $q->execute([$queueId]);
     $email = $q->fetchColumn();
     if ($email) {
-        $pdo->prepare("UPDATE agent_admin SET terminated_date='' WHERE email=?")->execute([$email]);
+        $pdo->prepare("UPDATE agent_admin SET terminated_date='' WHERE LOWER(email)=LOWER(?)")->execute([$email]);
     }
 
     json_out(['ok'=>true]);
