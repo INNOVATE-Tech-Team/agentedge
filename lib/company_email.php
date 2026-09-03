@@ -433,27 +433,71 @@ function ce_log_to_agent_records(array $recipients, string $subject, string $bod
     }
 }
 
-// {{merge_var}} substitution, personalized per recipient. $recipient is one
+// Mints (and persists) a per-email one-click unsubscribe link for
+// {{unsubscribe_url}}. Stored random token (same pattern as
+// agent_extra.cal_token) rather than a signed URL, so no new secret is
+// needed in config.php. Landing on unsubscribe.php sets
+// notification_prefs.notify_email=0, which every Company Email audience
+// already checks before sending (see ce_resolve_single_audience()) — no
+// separate suppression list needed.
+function ce_unsubscribe_url(PDO $db, string $host, string $email): string {
+    $email = strtolower(trim($email));
+    if ($email === '') return '';
+    $stmt = $db->prepare("SELECT unsub_token FROM notification_prefs WHERE email=?");
+    $stmt->execute([$email]);
+    $token = $stmt->fetchColumn();
+    if (!$token) {
+        $token = bin2hex(random_bytes(16));
+        $db->prepare(
+            "INSERT INTO notification_prefs (email, unsub_token) VALUES (?, ?)
+             ON CONFLICT(email) DO UPDATE SET
+                 unsub_token = CASE WHEN notification_prefs.unsub_token = ''
+                                    THEN excluded.unsub_token ELSE notification_prefs.unsub_token END"
+        )->execute([$email, $token]);
+        $stmt->execute([$email]);
+        $token = $stmt->fetchColumn() ?: $token;
+    }
+    return 'https://' . $host . '/unsubscribe.php?email=' . urlencode($email) . '&t=' . urlencode($token);
+}
+
+// {{merge_var}} substitution, personalized per recipient, with an optional
+// {{token|fallback text}} syntax — falls back to that text (or, for tokens
+// with a sensible built-in default like first_name, to that default) when
+// the token has no value for this recipient. A token actually written with
+// an explicit fallback always wins over the built-in one. $recipient is one
 // row from ce_resolve_recipients() (email/name plus the ce_enrich_recipients
-// fields) — any field missing on a given recipient just renders blank.
-function ce_apply_merge_vars(string $html, array $recipient): string {
+// fields).
+function ce_apply_merge_vars(PDO $db, string $host, string $html, array $recipient): string {
     $name  = trim($recipient['name'] ?? '');
-    $full  = $name !== '' ? $name : 'there';
-    $first = $name !== '' ? preg_split('/\s+/', $name)[0] : 'there';
+    $parts = $name !== '' ? preg_split('/\s+/', $name) : [];
+    $first = $parts[0] ?? '';
+    $last  = count($parts) > 1 ? end($parts) : '';
 
     $vars = [
-        '{{first_name}}'     => $first,
-        '{{full_name}}'      => $full,
-        '{{market_center}}'  => $recipient['market_center']  ?? '',
-        '{{brokerage}}'      => $recipient['brokerage']      ?? '',
-        '{{phone}}'          => $recipient['phone']          ?? '',
-        '{{license_number}}' => $recipient['license_number'] ?? '',
-        '{{license_state}}'  => $recipient['license_state']  ?? '',
-        '{{office}}'         => $recipient['office']         ?? '',
+        'first_name'      => $first,
+        'last_name'       => $last,
+        'full_name'       => $name,
+        'email'           => $recipient['email'] ?? '',
+        'market_center'   => $recipient['market_center']  ?? '',
+        'brokerage'       => $recipient['brokerage']      ?? '',
+        'phone'           => $recipient['phone']          ?? '',
+        'license_number'  => $recipient['license_number'] ?? '',
+        'license_state'   => $recipient['license_state']  ?? '',
+        'office'          => $recipient['office']         ?? '',
+        'company_name'    => 'INNOVATE Real Estate',
+        'company_address' => '3103 S Hwy 17 Bus, Unit F, Murrells Inlet, SC 29576',
+        'unsubscribe_url' => ce_unsubscribe_url($db, $host, $recipient['email'] ?? ''),
     ];
-    return str_replace(
-        array_keys($vars),
-        array_map(fn($v) => htmlspecialchars($v, ENT_QUOTES), array_values($vars)),
+    $builtinFallback = ['first_name' => 'there'];
+
+    return preg_replace_callback(
+        '/\{\{\s*([a-z_]+)(?:\s*\|\s*([^}]*))?\s*\}\}/i',
+        function ($m) use ($vars, $builtinFallback) {
+            $key      = strtolower($m[1]);
+            $fallback = array_key_exists(2, $m) ? trim($m[2]) : ($builtinFallback[$key] ?? '');
+            $value    = $vars[$key] ?? '';
+            return htmlspecialchars($value !== '' ? $value : $fallback, ENT_QUOTES);
+        },
         $html
     );
 }
