@@ -275,18 +275,6 @@ function createRequest() {
     if (!res.ok) { msg.textContent = res.error || 'Post failed.'; return; }
     document.getElementById('rf-notes').value = '';
     msg.innerHTML = '';
-    if (res.post_text) {
-      const span = document.createElement('span');
-      span.textContent = res.fb_posted ? 'Posted — also shared to Facebook. ' : 'Posted. ';
-      if (!res.fb_posted) {
-        const btn = document.createElement('button');
-        btn.className = 'btn-sm';
-        btn.textContent = 'Copy post text for Facebook';
-        btn.onclick = () => { navigator.clipboard.writeText(res.post_text); btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy post text for Facebook', 2000); };
-        span.appendChild(btn);
-      }
-      msg.appendChild(span);
-    }
     loadBootstrap();
   });
 }
@@ -324,8 +312,7 @@ function renderRequests() {
           ${resp.shared_partner_specialty ? `<div style="font-size:11.5px;color:var(--faint)">${esc(resp.shared_partner_specialty)}</div>` : ''}
           <div style="font-size:11.5px;margin-top:2px">${esc(resp.shared_partner_phone) || ''}${resp.shared_partner_phone && resp.shared_partner_email ? ' · ' : ''}${esc(resp.shared_partner_email) || ''}</div>
         </div>` : '';
-      const isFb = resp.source === 'facebook';
-      const who = isFb ? `${esc(resp.fb_commenter_name)} <span style="font-size:10px;font-weight:700;color:#1877F2;background:#e7f0fd;padding:1px 6px;border-radius:8px;margin-left:4px">FACEBOOK</span>` : esc(resp.responder_email);
+      const who = esc(resp.responder_email);
       return `<div class="rn-resp"><strong>${who}</strong>${resp.message ? ' — ' + esc(resp.message) : ''}${shared}<div style="color:var(--faint);font-size:11px;margin-top:4px">${fmtDate(resp.created_at)}</div></div>`;
     }).join('') : '';
 
@@ -352,7 +339,7 @@ function renderRequests() {
     <div class="rn-card">
       <div class="rn-card-head">
         <div>
-          <div class="rn-name">${TYPE_LABELS[r.referral_type] || 'Referral'} — ${esc(r.metro_name)}, ${esc(r.state_code)} ${r.mine ? '<span class="rn-req-badge">You</span>' : ''}${r.fb_post_id ? '<span class="rn-req-badge" style="background:#e7f0fd;color:#1877F2">On Facebook</span>' : ''}</div>
+          <div class="rn-name">${TYPE_LABELS[r.referral_type] || 'Referral'} — ${esc(r.metro_name)}, ${esc(r.state_code)} ${r.mine ? '<span class="rn-req-badge">You</span>' : ''}</div>
           <div class="rn-meta">${r.status === 'open' ? 'Open' : 'Closed'} · posted ${fmtDate(r.created_at)}${r.mine ? '' : ' by ' + esc(r.agent_email)}</div>
           ${r.notes ? `<div style="font-size:13px;margin-top:8px">${esc(r.notes)}</div>` : ''}
         </div>

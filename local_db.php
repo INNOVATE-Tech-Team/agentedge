@@ -2853,8 +2853,10 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     // buyer | seller | other — drives the templated dashboard/social copy
     // ("{name} has a {type} referral in {metro}").
     try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN referral_type TEXT NOT NULL DEFAULT 'other'"); } catch (\Exception $e) {}
-    // Facebook Page post id ("{page_id}_{post_id}") once cross-posted, so
-    // api/facebook_webhook.php can match an incoming comment back to its request.
+    // Unused as of 2026-08-10 -- Facebook cross-posting was built, then
+    // removed before ever being turned on (config was never filled in).
+    // Column/index kept rather than risk a SQLite column-drop migration for
+    // an already-empty column; every row's value is just ''.
     try { $pdo->exec("ALTER TABLE referral_requests ADD COLUMN fb_post_id TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_fb_post ON referral_requests(fb_post_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_referral_requests_status ON referral_requests(status)");
@@ -2877,10 +2879,11 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
         'shared_partner_phone'     => "TEXT NOT NULL DEFAULT ''",
         'shared_partner_email'     => "TEXT NOT NULL DEFAULT ''",
         'shared_partner_specialty' => "TEXT NOT NULL DEFAULT ''",
-        // Facebook-comment-sourced responses (see api/facebook_webhook.php):
-        // source distinguishes them from in-app responses; fb_comment_id is
-        // checked before insert (not a UNIQUE constraint) so a redelivered
-        // webhook — Facebook retries on anything but a 200 — never double-posts.
+        // Unused as of 2026-08-10 -- these backed Facebook-comment-sourced
+        // responses (source would be 'facebook' vs. the 'agentedge' default),
+        // removed before Facebook cross-posting was ever turned on. Kept
+        // rather than risk a SQLite column-drop migration; every row's
+        // source is just 'agentedge'.
         'source'            => "TEXT NOT NULL DEFAULT 'agentedge'",
         'fb_comment_id'     => "TEXT NOT NULL DEFAULT ''",
         'fb_commenter_name' => "TEXT NOT NULL DEFAULT ''",
