@@ -89,10 +89,13 @@ function admin_os_nav_items(): array {
 function agent_assets_items(): array {
     return [
         ['key' => 'network',            'label' => 'My Network',              'href' => 'network.php'],
-        // Referral Network: existed and worked (5 real commits, Facebook
-        // cross-posting and all) but had no menu entry anywhere -- same
-        // missing-nav-entry bug as Listing Intel below, just never caught
-        // for this one. Only reachable by typing the URL directly until now.
+        // Referral Network: existed and worked (cross-market partner tracking
+        // + company-wide requests) but had no menu entry -- same
+        // missing-nav-entry bug as Listing Intel below. Added once already
+        // on 2026-08-10, then lost when nav.php got overwritten by an older
+        // copy during later Market Center work. Re-added 2026-09-03+ -- if
+        // this goes missing again, check whether whatever edits nav.php is
+        // starting from a stale local backup.
         ['key' => 'referral_network',   'label' => 'Referral Network',        'href' => 'referral_network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
         // Buy Back Your Time: every producing agent's own book of business,
