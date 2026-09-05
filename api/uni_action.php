@@ -4,6 +4,7 @@ ini_set("display_errors", 0);
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/uni_templates.php';
 header('Content-Type: application/json');
 
 $me = current_agent();
@@ -112,6 +113,19 @@ if ($action === 'delete_category') {
     echo json_encode(['ok'=>true]); exit;
 }
 
+// Folders and top-level (unfoldered) lessons share one sort_ord sequence per
+// course so the Lessons tab can render them interleaved instead of always
+// placing folders first — this returns the next value in that shared sequence.
+function next_toplevel_sort_ord(PDO $db, int $courseId): int {
+    $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM (
+        SELECT sort_ord FROM uni_folders WHERE course_id=?
+        UNION ALL
+        SELECT sort_ord FROM uni_lessons WHERE course_id=? AND folder_id IS NULL
+    )");
+    $mo->execute([$courseId, $courseId]);
+    return ((int)$mo->fetchColumn()) + 10;
+}
+
 // ── Folders ───────────────────────────────────────────────────────────────
 if ($action === 'list_folders') {
     $courseId = (int)($in['course_id'] ?? 0);
@@ -121,25 +135,39 @@ if ($action === 'list_folders') {
     echo json_encode(['ok'=>true,'folders'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
 }
 if ($action === 'create_folder') {
-    $courseId = (int)($in['course_id'] ?? 0);
-    $title    = trim($in['title'] ?? '');
+    $courseId    = (int)($in['course_id'] ?? 0);
+    $title       = trim($in['title'] ?? '');
+    $code        = strtoupper(trim($in['code'] ?? ''));
+    $description = trim($in['description'] ?? '');
     if (!$courseId || !$title) { http_response_code(400); echo json_encode(['error'=>'course_id and title required']); exit; }
-    $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_folders WHERE course_id=?"); $mo->execute([$courseId]);
-    $nextOrd = ((int)$mo->fetchColumn()) + 10;
-    $db->prepare("INSERT INTO uni_folders (course_id,title,sort_ord) VALUES (?,?,?)")->execute([$courseId, $title, $nextOrd]);
+    $nextOrd = next_toplevel_sort_ord($db, $courseId);
+    $db->prepare("INSERT INTO uni_folders (course_id,title,code,description,sort_ord) VALUES (?,?,?,?,?)")->execute([$courseId, $title, $code, $description, $nextOrd]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_folder') {
-    $id    = (int)($in['id'] ?? 0);
-    $title = trim($in['title'] ?? '');
+    $id          = (int)($in['id'] ?? 0);
+    $title       = trim($in['title'] ?? '');
+    $code        = strtoupper(trim($in['code'] ?? ''));
+    $description = trim($in['description'] ?? '');
     if (!$id || !$title) { http_response_code(400); echo json_encode(['error'=>'id and title required']); exit; }
-    $db->prepare("UPDATE uni_folders SET title=? WHERE id=?")->execute([$title, $id]);
+    $db->prepare("UPDATE uni_folders SET title=?,code=?,description=? WHERE id=?")->execute([$title, $code, $description, $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_folder') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
-    $db->prepare("UPDATE uni_lessons SET folder_id=NULL WHERE folder_id=?")->execute([$id]);
+    $cq = $db->prepare("SELECT course_id FROM uni_folders WHERE id=?"); $cq->execute([$id]);
+    $courseId = (int)$cq->fetchColumn();
+    tombstone_if_template_derived($db, 'uni_folders', $id, 'folder');
+    // Orphaned lessons become top-level — append them to the end of the shared
+    // top-level sequence rather than leaving their old intra-folder sort_ord,
+    // which has no meaning outside the folder they just left.
+    $orphans = $db->prepare("SELECT id FROM uni_lessons WHERE folder_id=? ORDER BY sort_ord,id"); $orphans->execute([$id]);
+    $orphanIds = $orphans->fetchAll(PDO::FETCH_COLUMN);
+    $upd = $db->prepare("UPDATE uni_lessons SET folder_id=NULL, sort_ord=? WHERE id=?");
+    foreach ($orphanIds as $lid) {
+        $upd->execute([next_toplevel_sort_ord($db, $courseId), $lid]);
+    }
     $db->prepare("DELETE FROM uni_folders WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
@@ -163,22 +191,69 @@ if ($action === 'create_course') {
     $title = trim($in['title'] ?? '');
     if (!$title) { http_response_code(400); echo json_encode(['error'=>'title required']); exit; }
     $catId = !empty($in['category_id']) ? (int)$in['category_id'] : null;
-    $db->prepare("INSERT INTO uni_courses (category_id,title,description,is_required,sort_ord,published,created_by,invite_only,state_filter,role_filter) VALUES (?,?,?,?,?,0,?,?,?,?)")
-       ->execute([$catId, $title, trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), $me['email'], 0, '[]', '[]']);
+    $layoutStyle = in_array($in['layout_style'] ?? '', ['standard', 'on_demand_hero'], true) ? $in['layout_style'] : 'standard';
+    $estMinutes = max(0, (int)($in['overview_estimated_minutes'] ?? 0));
+    $db->prepare("INSERT INTO uni_courses (category_id,title,description,is_required,sort_ord,published,created_by,invite_only,state_filter,role_filter,layout_style,overview_estimated_minutes) VALUES (?,?,?,?,?,0,?,?,?,?,?,?)")
+       ->execute([$catId, $title, trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), $me['email'], 0, '[]', '[]', $layoutStyle, $estMinutes]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
 }
 if ($action === 'update_course') {
+    // Every column below is preserve-if-absent (array_key_exists against the existing row),
+    // not a blind overwrite -- callers that only send a subset of fields (e.g. the Settings tab
+    // sending just its own sequencing/quiz/cert fields, or togglePublish() sending only
+    // {id, published}) must not blank out title/description/etc. Fixes a real, live data-loss
+    // bug: togglePublish() on admin_university.php has always sent a partial payload, and the
+    // previous blind-overwrite UPDATE silently wiped title/description/category/sort_ord on
+    // every publish/unpublish click.
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
-    $existingStmt = $db->prepare("SELECT invite_only,state_filter,role_filter FROM uni_courses WHERE id=?");
+    $existingStmt = $db->prepare(
+        "SELECT category_id,title,description,is_required,sort_ord,published,invite_only,state_filter,role_filter,
+                layout_style,overview_estimated_minutes,sequencing_mode,quiz_pass_score,quiz_retake_policy,
+                quiz_max_attempts,quiz_block_on_fail,cert_enabled,cert_expiry_months,cert_design
+         FROM uni_courses WHERE id=?"
+    );
     $existingStmt->execute([$id]);
-    $ex = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: ['invite_only'=>0,'state_filter'=>'[]','role_filter'=>'[]'];
-    $catId       = !empty($in['category_id']) ? (int)$in['category_id'] : null;
+    $ex = $existingStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$ex) { http_response_code(404); echo json_encode(['error'=>'course not found']); exit; }
+    $catId       = array_key_exists('category_id', $in) ? (!empty($in['category_id']) ? (int)$in['category_id'] : null) : $ex['category_id'];
+    $title       = array_key_exists('title', $in) ? trim($in['title']) : $ex['title'];
+    $description = array_key_exists('description', $in) ? trim($in['description']) : $ex['description'];
+    $isRequired  = array_key_exists('is_required', $in) ? (int)$in['is_required'] : (int)$ex['is_required'];
+    $sortOrd     = array_key_exists('sort_ord', $in) ? (int)$in['sort_ord'] : (int)$ex['sort_ord'];
+    $published   = array_key_exists('published', $in) ? (int)$in['published'] : (int)$ex['published'];
     $inviteOnly  = array_key_exists('invite_only', $in) ? (int)$in['invite_only'] : (int)$ex['invite_only'];
     $stateFilter = array_key_exists('state_filter', $in) ? json_encode(array_values(array_filter((array)$in['state_filter'], 'strlen'))) : $ex['state_filter'];
     $roleFilter  = array_key_exists('role_filter', $in) ? json_encode(array_values(array_filter((array)$in['role_filter'], 'strlen'))) : $ex['role_filter'];
-    $db->prepare("UPDATE uni_courses SET category_id=?,title=?,description=?,is_required=?,sort_ord=?,published=?,invite_only=?,state_filter=?,role_filter=? WHERE id=?")
-       ->execute([$catId, trim($in['title'] ?? ''), trim($in['description'] ?? ''), (int)($in['is_required'] ?? 0), (int)($in['sort_ord'] ?? 0), (int)($in['published'] ?? 0), $inviteOnly, $stateFilter, $roleFilter, $id]);
+    $layoutStyle = array_key_exists('layout_style', $in)
+        ? (in_array($in['layout_style'], ['standard', 'on_demand_hero'], true) ? $in['layout_style'] : $ex['layout_style'])
+        : $ex['layout_style'];
+    $estMinutes  = array_key_exists('overview_estimated_minutes', $in) ? max(0, (int)$in['overview_estimated_minutes']) : (int)$ex['overview_estimated_minutes'];
+    // Sequencing/Quiz/Certificate Settings -- previously accepted by this action's
+    // whitelist but never actually written to the UPDATE below, so the admin
+    // Settings card silently no-op'd while still showing "Settings saved".
+    $sequencingMode   = array_key_exists('sequencing_mode', $in)
+        ? (in_array($in['sequencing_mode'], ['free', 'in_order'], true) ? $in['sequencing_mode'] : $ex['sequencing_mode'])
+        : $ex['sequencing_mode'];
+    $quizPassScore    = array_key_exists('quiz_pass_score', $in) ? max(0, min(100, (int)$in['quiz_pass_score'])) : (int)$ex['quiz_pass_score'];
+    $quizRetakePolicy = array_key_exists('quiz_retake_policy', $in)
+        ? (in_array($in['quiz_retake_policy'], ['unlimited', 'limited'], true) ? $in['quiz_retake_policy'] : $ex['quiz_retake_policy'])
+        : $ex['quiz_retake_policy'];
+    $quizMaxAttempts  = array_key_exists('quiz_max_attempts', $in) ? max(0, (int)$in['quiz_max_attempts']) : (int)$ex['quiz_max_attempts'];
+    $quizBlockOnFail  = array_key_exists('quiz_block_on_fail', $in) ? (int)(bool)$in['quiz_block_on_fail'] : (int)$ex['quiz_block_on_fail'];
+    $certEnabled      = array_key_exists('cert_enabled', $in) ? (int)(bool)$in['cert_enabled'] : (int)$ex['cert_enabled'];
+    $certExpiryMonths = array_key_exists('cert_expiry_months', $in) ? max(0, (int)$in['cert_expiry_months']) : (int)$ex['cert_expiry_months'];
+    $certDesign       = array_key_exists('cert_design', $in) ? trim((string)$in['cert_design']) ?: $ex['cert_design'] : $ex['cert_design'];
+    $db->prepare(
+        "UPDATE uni_courses SET category_id=?,title=?,description=?,is_required=?,sort_ord=?,published=?,invite_only=?,
+                state_filter=?,role_filter=?,layout_style=?,overview_estimated_minutes=?,sequencing_mode=?,
+                quiz_pass_score=?,quiz_retake_policy=?,quiz_max_attempts=?,quiz_block_on_fail=?,cert_enabled=?,
+                cert_expiry_months=?,cert_design=? WHERE id=?"
+    )->execute([
+        $catId, $title, $description, $isRequired, $sortOrd, $published, $inviteOnly, $stateFilter, $roleFilter,
+        $layoutStyle, $estMinutes, $sequencingMode, $quizPassScore, $quizRetakePolicy, $quizMaxAttempts,
+        $quizBlockOnFail, $certEnabled, $certExpiryMonths, $certDesign, $id,
+    ]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'delete_course') {
@@ -203,6 +278,9 @@ if ($action === 'delete_course') {
         $db->prepare("DELETE FROM uni_quiz_answers WHERE lesson_id=?")->execute([$lid]);
         $db->prepare("DELETE FROM uni_progress WHERE lesson_id=?")->execute([$lid]);
         $db->prepare("DELETE FROM uni_learner_uploads WHERE lesson_id=?")->execute([$lid]);
+        $db->prepare("DELETE FROM uni_feedback_answers WHERE response_id IN (SELECT id FROM uni_feedback_responses WHERE lesson_id=?)")->execute([$lid]);
+        $db->prepare("DELETE FROM uni_feedback_responses WHERE lesson_id=?")->execute([$lid]);
+        $db->prepare("DELETE FROM uni_feedback_questions WHERE lesson_id=?")->execute([$lid]);
     }
     $db->prepare("DELETE FROM uni_lessons WHERE course_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_folders WHERE course_id=?")->execute([$id]);
@@ -249,7 +327,8 @@ if ($action === 'list_lessons') {
     $courseId = (int)($in['course_id'] ?? 0);
     if (!$courseId) { http_response_code(400); echo json_encode(['error'=>'course_id required']); exit; }
     $s = $db->prepare("SELECT *, (SELECT COUNT(*) FROM uni_questions WHERE lesson_id=uni_lessons.id) as question_count,
-                       (SELECT COUNT(*) FROM uni_lesson_files WHERE lesson_id=uni_lessons.id) as attachment_count
+                       (SELECT COUNT(*) FROM uni_lesson_files WHERE lesson_id=uni_lessons.id) as attachment_count,
+                       (SELECT COUNT(*) FROM uni_feedback_questions WHERE lesson_id=uni_lessons.id) as feedback_question_count
                        FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
     $s->execute([$courseId]);
     echo json_encode(['ok'=>true,'lessons'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
@@ -264,10 +343,14 @@ if ($action === 'create_lesson') {
     if (!$learningObjective) { http_response_code(400); echo json_encode(['error'=>'learning objective is required']); exit; }
     $difficulty = in_array($in['difficulty'] ?? '', ['beginner','intermediate','advanced']) ? $in['difficulty'] : 'beginner';
     $relatedLessons = array_values(array_unique(array_map('intval', (array)($in['related_lessons'] ?? []))));
-    $type = in_array($in['type'] ?? '', ['video','doc','quiz','placeholder','upload']) ? $in['type'] : 'video';
+    $type = in_array($in['type'] ?? '', ['video','doc','quiz','placeholder','upload','feedback']) ? $in['type'] : 'video';
     $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
-    $mo   = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE course_id=?"); $mo->execute([$courseId]);
-    $nextOrd = ((int)$mo->fetchColumn()) + 10;
+    if ($folderId) {
+        $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE course_id=?"); $mo->execute([$courseId]);
+        $nextOrd = ((int)$mo->fetchColumn()) + 10;
+    } else {
+        $nextOrd = next_toplevel_sort_ord($db, $courseId);
+    }
     $db->prepare("INSERT INTO uni_lessons (course_id,folder_id,title,sort_ord,type,embed_url,content_html,duration_sec,tags,learning_objective,difficulty,related_lessons) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
        ->execute([$courseId, $folderId, $title, $nextOrd, $type, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), json_encode($tags), $learningObjective, $difficulty, json_encode($relatedLessons)]);
     echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
@@ -282,8 +365,13 @@ if ($action === 'update_lesson') {
     $difficulty = in_array($in['difficulty'] ?? '', ['beginner','intermediate','advanced']) ? $in['difficulty'] : 'beginner';
     $relatedLessons = array_values(array_unique(array_map('intval', (array)($in['related_lessons'] ?? []))));
     $folderId = !empty($in['folder_id']) ? (int)$in['folder_id'] : null;
-    $db->prepare("UPDATE uni_lessons SET title=?,sort_ord=?,folder_id=?,embed_url=?,content_html=?,duration_sec=?,tags=?,learning_objective=?,difficulty=?,related_lessons=? WHERE id=?")
-       ->execute([trim($in['title'] ?? ''), (int)($in['sort_ord'] ?? 0), $folderId, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), json_encode($tags), $learningObjective, $difficulty, json_encode($relatedLessons), $id]);
+    // sort_ord is intentionally not settable here — it's owned by the create
+    // actions and the reorder_lessons/reorder_toplevel drag-and-drop actions.
+    // update_lesson used to overwrite it from $in['sort_ord'], but the editor
+    // never sends that field, so every edit silently reset the lesson's
+    // position to the front (undoing drag-and-drop order on unrelated saves).
+    $db->prepare("UPDATE uni_lessons SET title=?,folder_id=?,embed_url=?,content_html=?,duration_sec=?,tags=?,learning_objective=?,difficulty=?,related_lessons=? WHERE id=?")
+       ->execute([trim($in['title'] ?? ''), $folderId, trim($in['embed_url'] ?? ''), trim($in['content_html'] ?? ''), (int)($in['duration_sec'] ?? 0), json_encode($tags), $learningObjective, $difficulty, json_encode($relatedLessons), $id]);
     echo json_encode(['ok'=>true]); exit;
 }
 if ($action === 'search_lessons') {
@@ -313,9 +401,24 @@ if ($action === 'publish_lesson') {
     $db->prepare("UPDATE uni_lessons SET pending_review=0 WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
+if ($action === 'move_lesson') {
+    // Reassigns a lesson to a different course — mainly for triaging
+    // Fathom-ingested recordings that all land in one holding course
+    // (see lib/fathom.php) before someone sorts them into the right class.
+    $id       = (int)($in['id'] ?? 0);
+    $courseId = (int)($in['course_id'] ?? 0);
+    if (!$id || !$courseId) { http_response_code(400); echo json_encode(['error'=>'id and course_id required']); exit; }
+    $chk = $db->prepare("SELECT id FROM uni_courses WHERE id=?"); $chk->execute([$courseId]);
+    if (!$chk->fetchColumn()) { http_response_code(400); echo json_encode(['error'=>'target course not found']); exit; }
+    $nextOrd = next_toplevel_sort_ord($db, $courseId);
+    $db->prepare("UPDATE uni_lessons SET course_id=?, folder_id=NULL, sort_ord=? WHERE id=?")
+       ->execute([$courseId, $nextOrd, $id]);
+    echo json_encode(['ok'=>true]); exit;
+}
 if ($action === 'delete_lesson') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    tombstone_if_template_derived($db, 'uni_lessons', $id, 'lesson');
     $fkQ = $db->prepare("SELECT file_key FROM uni_lessons WHERE id=?"); $fkQ->execute([$id]);
     $fk  = $fkQ->fetchColumn();
     if ($fk && file_exists($uniDir . $fk)) @unlink($uniDir . $fk);
@@ -328,6 +431,9 @@ if ($action === 'delete_lesson') {
     $db->prepare("DELETE FROM uni_quiz_answers WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_progress WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_learner_uploads WHERE lesson_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_feedback_answers WHERE response_id IN (SELECT id FROM uni_feedback_responses WHERE lesson_id=?)")->execute([$id]);
+    $db->prepare("DELETE FROM uni_feedback_responses WHERE lesson_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_feedback_questions WHERE lesson_id=?")->execute([$id]);
     $db->prepare("DELETE FROM uni_lessons WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
 }
@@ -348,11 +454,24 @@ if ($action === 'reorder_lessons') {
     }
     echo json_encode(['ok'=>true]); exit;
 }
-if ($action === 'reorder_folders') {
+if ($action === 'reorder_toplevel') {
+    // order: array of {type:'folder'|'lesson', id} — the full top-level
+    // sequence (folders + unfoldered lessons) in the desired display order.
+    // Assigns one shared, interleaved sort_ord across both tables so folders
+    // and top-level lessons render in a single controllable sequence instead
+    // of folders always coming first (see admin_university_course.php).
     $order = $in['order'] ?? [];
     if (!is_array($order)) { http_response_code(400); echo json_encode(['error'=>'order array required']); exit; }
-    $upd = $db->prepare("UPDATE uni_folders SET sort_ord=? WHERE id=?");
-    foreach ($order as $i => $folderId) $upd->execute([($i + 1) * 10, (int)$folderId]);
+    $updFolder = $db->prepare("UPDATE uni_folders SET sort_ord=? WHERE id=?");
+    $updLesson = $db->prepare("UPDATE uni_lessons SET sort_ord=?, folder_id=NULL WHERE id=?");
+    foreach ($order as $i => $item) {
+        if (!is_array($item)) continue;
+        $id = (int)($item['id'] ?? 0);
+        if (!$id) continue;
+        $ord = ($i + 1) * 10;
+        if (($item['type'] ?? '') === 'folder') $updFolder->execute([$ord, $id]);
+        else $updLesson->execute([$ord, $id]);
+    }
     echo json_encode(['ok'=>true]); exit;
 }
 
@@ -417,8 +536,155 @@ if ($action === 'update_question') {
 if ($action === 'delete_question') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    tombstone_if_template_derived($db, 'uni_questions', $id, 'question');
     $db->prepare("DELETE FROM uni_questions WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]); exit;
+}
+
+// ── Feedback Questions ───────────────────────────────────────────────────────
+// Deliberately separate from Quiz Questions above -- no correct_index/scoring
+// semantics here, and a different config shape per qtype. Not template-aware
+// (no tombstone call): Feedback lessons are blocked from "Save as Template"
+// entirely -- see snapshot_course_as_template() in lib/uni_templates.php.
+const UNI_FEEDBACK_QTYPES = ['rating_5', 'scale_10', 'short_text', 'long_text', 'date'];
+
+if ($action === 'list_feedback_questions') {
+    $lessonId = (int)($in['lesson_id'] ?? 0);
+    if (!$lessonId) { http_response_code(400); echo json_encode(['error'=>'lesson_id required']); exit; }
+    $s = $db->prepare("SELECT * FROM uni_feedback_questions WHERE lesson_id=? ORDER BY sort_ord,id");
+    $s->execute([$lessonId]);
+    echo json_encode(['ok'=>true,'questions'=>$s->fetchAll(PDO::FETCH_ASSOC)]); exit;
+}
+if ($action === 'create_feedback_question') {
+    $lessonId = (int)($in['lesson_id'] ?? 0);
+    $question = trim($in['question'] ?? '');
+    $qtype    = in_array($in['qtype'] ?? '', UNI_FEEDBACK_QTYPES, true) ? $in['qtype'] : null;
+    if (!$lessonId || !$question || !$qtype) { http_response_code(400); echo json_encode(['error'=>'lesson_id, question, and a valid qtype are required']); exit; }
+    $config = feedback_question_config_for_save($qtype, $in['config'] ?? []);
+    $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_feedback_questions WHERE lesson_id=?"); $mo->execute([$lessonId]);
+    $nextOrd = ((int)$mo->fetchColumn()) + 10;
+    $db->prepare("INSERT INTO uni_feedback_questions (lesson_id,section_label,is_intro_field,qtype,question,config,sort_ord) VALUES (?,?,?,?,?,?,?)")
+       ->execute([$lessonId, trim($in['section_label'] ?? ''), !empty($in['is_intro_field']) ? 1 : 0, $qtype, $question, json_encode($config), $nextOrd]);
+    echo json_encode(['ok'=>true,'id'=>(int)$db->lastInsertId()]); exit;
+}
+if ($action === 'update_feedback_question') {
+    // sort_ord is preserve-if-absent, not defaulted to 0 -- a caller that only means to
+    // change the question text/type (like the admin editor does) must not silently reset
+    // this question's position. Same preserve-if-absent discipline as update_course.
+    $id       = (int)($in['id'] ?? 0);
+    $question = trim($in['question'] ?? '');
+    $qtype    = in_array($in['qtype'] ?? '', UNI_FEEDBACK_QTYPES, true) ? $in['qtype'] : null;
+    if (!$id || !$question || !$qtype) { http_response_code(400); echo json_encode(['error'=>'id, question, and a valid qtype are required']); exit; }
+    $existing = $db->prepare("SELECT sort_ord FROM uni_feedback_questions WHERE id=?"); $existing->execute([$id]);
+    $existingSortOrd = $existing->fetchColumn();
+    if ($existingSortOrd === false) { http_response_code(404); echo json_encode(['error'=>'question not found']); exit; }
+    $sortOrd = array_key_exists('sort_ord', $in) ? (int)$in['sort_ord'] : (int)$existingSortOrd;
+    $config = feedback_question_config_for_save($qtype, $in['config'] ?? []);
+    $db->prepare("UPDATE uni_feedback_questions SET section_label=?,is_intro_field=?,qtype=?,question=?,config=?,sort_ord=? WHERE id=?")
+       ->execute([trim($in['section_label'] ?? ''), !empty($in['is_intro_field']) ? 1 : 0, $qtype, $question, json_encode($config), $sortOrd, $id]);
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'delete_feedback_question') {
+    $id = (int)($in['id'] ?? 0);
+    if (!$id) { http_response_code(400); echo json_encode(['error'=>'id required']); exit; }
+    $db->prepare("DELETE FROM uni_feedback_answers WHERE question_id=?")->execute([$id]);
+    $db->prepare("DELETE FROM uni_feedback_questions WHERE id=?")->execute([$id]);
+    echo json_encode(['ok'=>true]); exit;
+}
+if ($action === 'reorder_feedback_questions') {
+    $order = array_values(array_unique(array_map('intval', (array)($in['order'] ?? []))));
+    $upd = $db->prepare("UPDATE uni_feedback_questions SET sort_ord=? WHERE id=?");
+    foreach ($order as $i => $qid) { $upd->execute([($i + 1) * 10, $qid]); }
+    echo json_encode(['ok'=>true]); exit;
+}
+
+// Whitelists the config JSON down to the keys that qtype actually uses, so an
+// admin can't smuggle arbitrary fields in. Absent/malformed keys just fall
+// back to "off"/blank rather than erroring -- the builder always sends a
+// complete object, but this endpoint doesn't have to trust that it did.
+function feedback_question_config_for_save(string $qtype, $rawConfig): array {
+    $c = is_array($rawConfig) ? $rawConfig : [];
+    if ($qtype === 'rating_5') {
+        $labels = is_array($c['labels'] ?? null) ? $c['labels'] : [];
+        $cleanLabels = [];
+        for ($i = 1; $i <= 5; $i++) { $cleanLabels[(string)$i] = trim((string)($labels[(string)$i] ?? '')); }
+        return [
+            'labels'   => $cleanLabels,
+            'allow_na' => !empty($c['allow_na']),
+            'na_label' => trim((string)($c['na_label'] ?? '')) ?: 'N/A',
+        ];
+    }
+    if ($qtype === 'scale_10') {
+        return [
+            'low_label'  => trim((string)($c['low_label'] ?? '')),
+            'high_label' => trim((string)($c['high_label'] ?? '')),
+        ];
+    }
+    $prefill = in_array($c['prefill'] ?? '', ['agent_name', 'agent_email'], true) ? $c['prefill'] : '';
+    if ($qtype === 'date') { return ['prefill' => $prefill]; } // no placeholder -- not meaningful on a date input
+    // short_text / long_text
+    return ['prefill' => $prefill, 'placeholder' => trim((string)($c['placeholder'] ?? ''))];
+}
+
+// Tombstones a deliberately-deleted, template-derived folder/lesson/question
+// so apply_template_update() never resurrects it — see diff_template_structure()
+// in lib/uni_templates.php. No-op for anything not derived from a template.
+function tombstone_if_template_derived(PDO $db, string $table, int $id, string $itemType): void {
+    if ($itemType === 'folder') {
+        $row = $db->prepare("SELECT course_id, template_item_id FROM uni_folders WHERE id=?");
+    } elseif ($itemType === 'lesson') {
+        $row = $db->prepare("SELECT course_id, template_item_id FROM uni_lessons WHERE id=?");
+    } else {
+        $row = $db->prepare("SELECT l.course_id as course_id, q.template_item_id as template_item_id FROM uni_questions q JOIN uni_lessons l ON l.id=q.lesson_id WHERE q.id=?");
+    }
+    $row->execute([$id]);
+    $r = $row->fetch(PDO::FETCH_ASSOC);
+    if (!$r || empty($r['template_item_id'])) return;
+    $db->prepare("INSERT INTO uni_template_removed_items (course_id,template_item_id,item_type) VALUES (?,?,?)")
+       ->execute([$r['course_id'], $r['template_item_id'], $itemType]);
+}
+
+// ── On-Demand Course Templates ─────────────────────────────────────────────
+if ($action === 'list_templates') {
+    // Read-only; needed by the "+ New Course" picker, which any is_admin()
+    // user can reach — template *editing* is gated separately and more
+    // tightly (can_edit_uni_templates()) in api/uni_template_action.php.
+    $rows = $db->query("SELECT id,name,description,sequencing_mode,cert_enabled,cert_expiry_months FROM uni_templates WHERE archived=0 ORDER BY name")
+               ->fetchAll(PDO::FETCH_ASSOC);
+    echo json_encode(['ok'=>true,'templates'=>$rows]); exit;
+}
+if ($action === 'create_course_from_template') {
+    $templateId = (int)($in['template_id'] ?? 0);
+    $title      = trim($in['title'] ?? '');
+    if (!$templateId || !$title) { http_response_code(400); echo json_encode(['error'=>'template_id and title required']); exit; }
+    $catId = !empty($in['category_id']) ? (int)$in['category_id'] : null;
+    try {
+        $courseId = instantiate_course_from_template($db, $templateId, $title, $catId, $me['email']);
+        echo json_encode(['ok'=>true,'id'=>$courseId]); exit;
+    } catch (\InvalidArgumentException $e) {
+        http_response_code(400); echo json_encode(['error'=>$e->getMessage()]); exit;
+    }
+}
+if ($action === 'preview_template_update') {
+    $courseId = (int)($in['course_id'] ?? 0);
+    if (!$courseId) { http_response_code(400); echo json_encode(['error'=>'course_id required']); exit; }
+    try {
+        echo json_encode(['ok'=>true] + preview_template_update($db, $courseId)); exit;
+    } catch (\InvalidArgumentException $e) {
+        http_response_code(400); echo json_encode(['error'=>$e->getMessage()]); exit;
+    }
+}
+if ($action === 'apply_template_update') {
+    // Only ever reachable after the admin has seen preview_template_update's
+    // diff and confirmed it — the confirm dialog is enforced client-side by
+    // only wiring this call to the modal's Apply button.
+    $courseId = (int)($in['course_id'] ?? 0);
+    if (!$courseId) { http_response_code(400); echo json_encode(['error'=>'course_id required']); exit; }
+    try {
+        echo json_encode(['ok'=>true] + apply_template_update($db, $courseId)); exit;
+    } catch (\InvalidArgumentException $e) {
+        http_response_code(400); echo json_encode(['error'=>$e->getMessage()]); exit;
+    }
 }
 
 // ── Stats (for admin dashboard) ────────────────────────────────────────────

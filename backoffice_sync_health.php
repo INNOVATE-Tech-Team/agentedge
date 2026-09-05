@@ -51,6 +51,27 @@ $darwinEmails = array_flip(array_map(
     fn($e) => strtolower(trim($e)),
     $db->query("SELECT DISTINCT agent_email FROM darwin_cap_progress WHERE agent_email != ''")->fetchAll(PDO::FETCH_COLUMN)
 ));
+// Agent-set overrides (agent_profile.php / backoffice_agents.php "Alternate
+// Email" fields) — an agent counts as matched here if either their tblstaff
+// email or their alt/dotloop_alt_email shows up on the other side, so a
+// mismatch already fixed via those fields doesn't keep reading as a gap.
+$altEmails = [];
+foreach ($db->query("SELECT email, alt_email, dotloop_alt_email FROM agent_extra WHERE alt_email != '' OR dotloop_alt_email != ''")->fetchAll(PDO::FETCH_ASSOC) as $ae) {
+    $altEmails[strtolower(trim($ae['email']))] = [
+        'alt_email'         => strtolower(trim($ae['alt_email'] ?? '')),
+        'dotloop_alt_email' => strtolower(trim($ae['dotloop_alt_email'] ?? '')),
+    ];
+}
+
+// Non-selling AgentEdge roles (admin/office/recruiting staff) never produce
+// Darwin or DotLoop activity, so they'd otherwise sit in "In Neither"
+// forever. Sourced from agent_roles rather than tblstaff.admin — the latter
+// flags some genuine producing agents (e.g. an owner who still sells) who
+// should still surface here if their sync is actually broken.
+$nonSellingEmails = array_flip(array_map(
+    fn($e) => strtolower(trim($e)),
+    $db->query("SELECT email FROM agent_roles WHERE role IN ('staff','recruiter','super_admin')")->fetchAll(PDO::FETCH_COLUMN)
+));
 
 $staff = db_query_safe("SELECT email, firstname, lastname FROM tblstaff WHERE active=1", []);
 
@@ -59,11 +80,14 @@ foreach ($staff as $s) {
     $email = trim($s['email']);
     $name  = trim($s['firstname'] . ' ' . $s['lastname']);
     if (sync_health_is_noise($name, $email)) continue;
+    if (isset($nonSellingEmails[strtolower($email)])) continue;
 
-    $e         = strtolower($email);
-    $inDarwin  = isset($darwinEmails[$e]);
-    $inDotloop = isset($dotloopEmails[$e]);
-    $row       = ['name' => $name, 'email' => $email];
+    $e          = strtolower($email);
+    $altDarwin  = $altEmails[$e]['alt_email'] ?? '';
+    $altDotloop = $altEmails[$e]['dotloop_alt_email'] ?? '';
+    $inDarwin   = isset($darwinEmails[$e]) || ($altDarwin !== '' && isset($darwinEmails[$altDarwin]));
+    $inDotloop  = isset($dotloopEmails[$e]) || ($altDotloop !== '' && isset($dotloopEmails[$altDotloop]));
+    $row        = ['name' => $name, 'email' => $email];
 
     if ($inDarwin && $inDotloop) $buckets['both'][] = $row;
     elseif ($inDarwin) $buckets['darwin_only'][] = $row;
@@ -80,6 +104,11 @@ $tabs = [
 ];
 if (!isset($tabs[$tab])) $tab = 'darwin_only';
 $rows = $buckets[$tab];
+// These two tabs are exactly the ones where DotLoop has no participant row
+// under the agent's tblstaff email — offer the name-search tool there so an
+// admin can find their real DotLoop email and save it as dotloop_alt_email
+// without leaving this page.
+$showDotloopFix = in_array($tab, ['darwin_only', 'neither'], true);
 ?>
 <!doctype html>
 <html lang="en">
@@ -110,6 +139,14 @@ $rows = $buckets[$tab];
     .sh-btn-bulk-delete{padding:6px 14px;border-radius:6px;font-size:12px;font-weight:700;background:#c0392b;border:none;color:#fff;cursor:pointer}
     .sh-btn-bulk-delete:disabled{opacity:.5;cursor:not-allowed}
     .sh-table td.sh-check{width:30px}
+    .sh-btn-find{padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fff;border:1px solid #82C112;color:#4a7a0a;cursor:pointer}
+    .sh-btn-find:hover{background:#82C112;color:#000}
+    .sh-btn-find:disabled{opacity:.5;cursor:not-allowed}
+    .sh-match-results{margin-top:6px;font-size:11px}
+    .sh-match-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+    .sh-btn-use{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:#82C112;border:none;color:#000;cursor:pointer}
+    .sh-btn-use:disabled{opacity:.5;cursor:not-allowed}
+    .sh-no-match{color:#aaa}
   </style>
 </head>
 <body>
@@ -151,6 +188,7 @@ $rows = $buckets[$tab];
             <?php if (is_super_admin()): ?><th class="sh-check"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th><?php endif; ?>
             <th>Agent</th>
             <th>Email</th>
+            <?php if ($showDotloopFix): ?><th>DotLoop Match</th><?php endif; ?>
             <?php if (is_super_admin()): ?><th></th><?php endif; ?>
           </tr>
         </thead>
@@ -162,6 +200,12 @@ $rows = $buckets[$tab];
             <?php endif; ?>
             <td><?= h($r['name']) ?></td>
             <td><?= h($r['email']) ?></td>
+            <?php if ($showDotloopFix): ?>
+            <td>
+              <button type="button" class="sh-btn-find" data-email="<?= h($r['email']) ?>" data-name="<?= h($r['name']) ?>" onclick="findDotloopMatch(this)">Find DotLoop match</button>
+              <div class="sh-match-results"></div>
+            </td>
+            <?php endif; ?>
             <?php if (is_super_admin()): ?>
             <td><button type="button" class="sh-btn-delete" onclick="deleteOne('<?= h(addslashes($r['email'])) ?>', this)">Delete</button></td>
             <?php endif; ?>
@@ -229,6 +273,77 @@ function deleteOne(email, btn) {
     btn.disabled = false;
     btn.textContent = 'Delete';
   });
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function findDotloopMatch(btn) {
+  var staffEmail = btn.dataset.email;
+  var name = btn.dataset.name;
+  var box = btn.nextElementSibling;
+  btn.disabled = true;
+  var original = btn.textContent;
+  btn.textContent = 'Searching…';
+  fetch('api/dotloop_find_participant.php?name=' + encodeURIComponent(name))
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      btn.textContent = original;
+      var matches = d.matches || [];
+      if (!matches.length) {
+        box.innerHTML = '<span class="sh-no-match">No DotLoop participant found for this name.</span>';
+        return;
+      }
+      box.innerHTML = matches.map(function(m) {
+        return '<div class="sh-match-row"><span>' + escapeHtml(m.email) + ' (' + m.loop_count
+          + ' loop' + (m.loop_count == 1 ? '' : 's') + ')</span>'
+          + '<button type="button" class="sh-btn-use" data-staff-email="' + escapeHtml(staffEmail) + '" data-candidate-email="' + escapeHtml(m.email) + '" onclick="useDotloopMatch(this)">Use this</button></div>';
+      }).join('');
+    })
+    .catch(function() {
+      btn.disabled = false;
+      btn.textContent = original;
+      box.innerHTML = '<span class="sh-no-match">Search failed.</span>';
+    });
+}
+function useDotloopMatch(btn) {
+  var staffEmail = btn.dataset.staffEmail;
+  var candidateEmail = btn.dataset.candidateEmail;
+  if (!confirm('Set "' + candidateEmail + '" as the DotLoop alternate email for ' + staffEmail + '?')) return;
+  btn.disabled = true;
+  // Fetch existing agent_extra fields first so this save only touches
+  // dotloop_alt_email — api/agent_extra.php's POST overwrites every field
+  // it's given, so blindly posting just {email, dotloop_alt_email} would
+  // wipe out this agent's birthday/hire_date/license_renewal/alt_email.
+  fetch('api/agent_extra.php?email=' + encodeURIComponent(staffEmail))
+    .then(function(r) { return r.json(); })
+    .then(function(existing) {
+      return fetch('api/agent_extra.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          email: staffEmail,
+          birthday: existing.birthday || '',
+          hire_date: existing.hire_date || '',
+          license_renewal: existing.license_renewal || '',
+          alt_email: existing.alt_email || '',
+          dotloop_alt_email: candidateEmail
+        })
+      });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        alert('Saved. Refresh this page to see it move to "Fully Synced".');
+      } else {
+        alert('Save failed: ' + (d.error || 'unknown error'));
+        btn.disabled = false;
+      }
+    })
+    .catch(function() {
+      alert('Request failed.');
+      btn.disabled = false;
+    });
 }
 function bulkDelete() {
   var checked = Array.from(document.querySelectorAll('.sh-row-check:checked'));

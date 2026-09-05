@@ -30,21 +30,29 @@ foreach ($due as $row) {
         $leaderTypes = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
         $recipients  = ce_resolve_recipients($audiences, $mcSlugs, $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic'], $row['launch_class_date'] ?? '');
 
-        // agent_roles has no display name column — fall back to the email itself,
-        // matching what the immediate-send path does when $agent['name'] is empty.
-        $sigHtml = ce_signature_html($row['sender_email'], $row['sender_email'], CRON_HOST);
         $attachIdsStr = $row['attachment_ids'] ?? '';
-        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?)");
-        foreach ($recipients as $r) {
-            $personalized = ce_apply_merge_vars($row['body'], $r);
-            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr, $row['sender_email'], $row['sender_email']]);
-        }
 
+        // Inserted before the notification_queue loop below so its id can be
+        // stamped onto each queued row -- same ordering as the immediate-send
+        // path (api/company_email_action.php's 'send' action), needed so
+        // SendGrid's Event Webhook can match opens/clicks/bounces back to
+        // this scheduled blast (see api/sendgrid_events_webhook.php).
         $db->prepare(
             "INSERT INTO company_emails (sender_email, sender_role, audience, target_mc_slug, subject, body, recipient_count, attachment_ids)
              VALUES (?,?,?,?,?,?,?,?)"
         )->execute([$row['sender_email'], $row['sender_role'], $row['audience'], $row['target_mc_slug'], $row['subject'], $row['body'], count($recipients), $attachIdsStr]);
-        ce_log_to_agent_records($recipients, $row['subject'], $row['body'], $row['sender_email'], (int)$db->lastInsertId());
+        $companyEmailId = (int)$db->lastInsertId();
+
+        // agent_roles has no display name column — fall back to the email itself,
+        // matching what the immediate-send path does when $agent['name'] is empty.
+        $sigHtml = ce_signature_html($row['sender_email'], $row['sender_email'], CRON_HOST);
+        $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name, company_email_id) VALUES (?, 'email', ?, ?, '', 1, ?, ?, ?, ?)");
+        foreach ($recipients as $r) {
+            $personalized = ce_apply_merge_vars($db, CRON_HOST, $row['body'], $r);
+            $ins->execute([$r['email'], $row['subject'], $personalized . $sigHtml, $attachIdsStr, $row['sender_email'], $row['sender_email'], $companyEmailId]);
+        }
+
+        ce_log_to_agent_records($recipients, $row['subject'], $row['body'], $row['sender_email'], $companyEmailId);
 
         $db->prepare("UPDATE scheduled_emails SET status='sent', recipient_count=? WHERE id=?")
            ->execute([count($recipients), $row['id']]);

@@ -9,9 +9,10 @@ $agentName = 'Andrew Bennett';
 $subject = 'Test Subject';
 $html = '<p>Hi {{first_name}}, you are at {{market_center}} ({{brokerage}}). License {{license_number}} {{license_state}}.</p>';
 
+$db = local_db();
 $recipients = ce_enrich_recipients([['email' => $me, 'name' => $agentName]]);
 $sigHtml = ce_signature_html($me, $agentName, 'agents.innovateonline.com');
-$personalized = ce_apply_merge_vars($html, $recipients[0]) . $sigHtml;
+$personalized = ce_apply_merge_vars($db, 'agents.innovateonline.com', $html, $recipients[0]) . $sigHtml;
 
 echo "Subject: $subject\n";
 echo "HTML:\n$personalized\n";

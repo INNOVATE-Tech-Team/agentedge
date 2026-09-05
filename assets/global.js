@@ -45,6 +45,22 @@ function toggleSbLinks(btn) {
   });
 })();
 
+// ── Mobile sidebar toggle ─────────────────────────────────────────────────────
+
+function toggleSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const open = sidebar.classList.toggle('sidebar-open');
+  document.getElementById('sb-overlay')?.remove();
+  if (open) {
+    const overlay = document.createElement('div');
+    overlay.id = 'sb-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.45)';
+    overlay.addEventListener('click', toggleSidebar);
+    document.body.appendChild(overlay);
+  }
+}
+
 // ── Masquerade stop ───────────────────────────────────────────────────────────
 
 function stopMasquerade() {
@@ -54,7 +70,7 @@ function stopMasquerade() {
     body: JSON.stringify({ action: 'stop' }),
   })
     .then(r => r.json())
-    .then(d => { location.href = d.redirect || 'roster.php'; })
+    .then(d => { location.href = d.redirect || 'index.php'; })
     .catch(() => location.reload());
 }
 
@@ -218,6 +234,7 @@ function submitSupportTicket() {
   let btn, panel, root;
   let shortcutsLoaded = false;
   let shortcuts = [];
+  let quickAddEnabled = false;
   let searchTimer = null;
   let dragged = false;
 
@@ -279,7 +296,18 @@ function submitSupportTicket() {
         <button type="button" class="hw-close" aria-label="Close">&times;</button>
       </div>
       <input type="text" class="hw-search" placeholder="Search lessons, topics, tags…" autocomplete="off">
-      <div class="hw-body"><div class="hw-shortcuts"></div><div class="hw-results" style="display:none"></div></div>
+      <div class="hw-body">
+        <div class="hw-shortcuts"></div>
+        <div class="hw-quickadd" style="display:none">
+          <div class="hw-quickadd-eyebrow">Admin OS Quick Add</div>
+          <div class="hw-quickadd-row">
+            <input type="text" class="hw-quickadd-input" placeholder="What do you need to remember or do?" autocomplete="off">
+            <button type="button" class="hw-quickadd-btn">Add</button>
+          </div>
+          <span class="hw-quickadd-msg"></span>
+        </div>
+        <div class="hw-results" style="display:none"></div>
+      </div>
     `;
 
     root.appendChild(panel);
@@ -293,6 +321,11 @@ function submitSupportTicket() {
     btn.addEventListener('click', () => { if (!dragged) toggleHelpPanel(); });
     panel.querySelector('.hw-close').addEventListener('click', closeHelpPanel);
     panel.querySelector('.hw-search').addEventListener('input', onHelpSearch);
+    panel.querySelector('.hw-shortcuts').addEventListener('click', onShortcutClick);
+    panel.querySelector('.hw-quickadd-btn').addEventListener('click', quickAddCapture);
+    panel.querySelector('.hw-quickadd-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); quickAddCapture(); }
+    });
 
     document.addEventListener('click', e => {
       if (!panel.classList.contains('open')) return;
@@ -391,6 +424,7 @@ function submitSupportTicket() {
     shortcutsLoaded = true;
     helpApi({ action: 'widget_shortcuts' }).then(d => {
       shortcuts = (d.ok && d.shortcuts) || [];
+      quickAddEnabled = !!(d.ok && d.quick_add);
       showShortcuts();
     });
   }
@@ -405,15 +439,66 @@ function submitSupportTicket() {
       const icon = String(s.icon || '').startsWith('img:')
         ? `<img class="hw-shortcut-icon-img" src="api/help_action.php?icon=${encodeURIComponent(s.icon.slice(4))}" alt="">`
         : `<span class="hw-shortcut-icon">${escHtml(s.icon || '🔗')}</span>`;
+      const url = String(s.url || '');
+      const inner = `${icon}<span class="hw-shortcut-label">${escHtml(s.label)}</span><span class="hw-shortcut-arrow">&rsaquo;</span>`;
+      if (url.startsWith('action:')) {
+        const name = url.slice('action:'.length);
+        return `<button type="button" class="hw-shortcut-row" data-action="${escHtml(name)}">${inner}</button>`;
+      }
       const ext = (parseInt(s.is_ext) ? ' target="_blank" rel="noopener"' : '');
-      return `<a class="hw-shortcut-row" href="${escHtml(s.url)}"${ext}>${icon}<span class="hw-shortcut-label">${escHtml(s.label)}</span><span class="hw-shortcut-arrow">&rsaquo;</span></a>`;
+      return `<a class="hw-shortcut-row" href="${escHtml(url)}"${ext}>${inner}</a>`;
     }).join('');
+  }
+
+  function onShortcutClick(e) {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    e.preventDefault();
+    const name = el.getAttribute('data-action');
+    if (name === 'get_support') {
+      closeHelpPanel();
+      openSupportModal();
+    }
   }
 
   function showShortcuts() {
     panel.querySelector('.hw-shortcuts').style.display = '';
+    panel.querySelector('.hw-quickadd').style.display = quickAddEnabled ? '' : 'none';
     panel.querySelector('.hw-results').style.display = 'none';
     panel.querySelector('.hw-shortcuts').innerHTML = renderShortcuts();
+  }
+
+  function quickAddCapture() {
+    const input = panel.querySelector('.hw-quickadd-input');
+    const btn   = panel.querySelector('.hw-quickadd-btn');
+    const msg   = panel.querySelector('.hw-quickadd-msg');
+    const title = input.value.trim();
+    if (!title) { input.focus(); return; }
+
+    btn.disabled = true;
+    msg.textContent = 'Adding…'; msg.className = 'hw-quickadd-msg';
+
+    fetch('api/admin_work_item_action.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create', title: title, csrf: window.AE_CSRF || '' }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        btn.disabled = false;
+        if (d.ok) {
+          input.value = '';
+          msg.textContent = 'Added to Inbox'; msg.className = 'hw-quickadd-msg ok';
+        } else {
+          msg.textContent = d.error || 'Could not add — please try again.'; msg.className = 'hw-quickadd-msg err';
+        }
+        input.focus();
+      })
+      .catch(() => {
+        btn.disabled = false;
+        msg.textContent = 'Network error — please try again.'; msg.className = 'hw-quickadd-msg err';
+        input.focus();
+      });
   }
 
   function difficultyBadge(d) {
@@ -422,11 +507,31 @@ function submitSupportTicket() {
     return `<span class="hw-diff hw-diff-${escHtml(key)}">${escHtml(label)}</span>`;
   }
 
-  function renderResults(results) {
+  function renderAgents(agents) {
+    if (!agents.length) return '';
+    const rows = agents.map(a => {
+      const loc = [a.market_center, a.state_code].filter(Boolean).join(', ');
+      const phone = a.phone
+        ? `<a class="hw-agent-phone" href="tel:${escHtml(a.phone.replace(/[^\d+]/g, ''))}">${escHtml(a.phone)}</a>`
+        : '<span class="hw-agent-phone hw-agent-phone-none">No phone on file</span>';
+      return `
+        <div class="hw-agent-row">
+          <div class="hw-agent-main">
+            <span class="hw-agent-name">${escHtml(a.name)}</span>
+            ${loc ? `<span class="hw-agent-loc">${escHtml(loc)}</span>` : ''}
+          </div>
+          ${phone}
+        </div>`;
+    }).join('');
+    return `<div class="hw-agents"><div class="hw-agents-head">Agent Roster</div>${rows}</div>`;
+  }
+
+  function renderResults(results, agents) {
+    const agentsHtml = renderAgents(agents || []);
     if (!results.length) {
-      return '<div class="hw-empty">No lessons matched — try a different word, or check a shortcut below.</div>';
+      return agentsHtml + '<div class="hw-empty">No lessons matched — try a different word, or check a shortcut below.</div>';
     }
-    return results.map(r => {
+    const lessonsHtml = results.map(r => {
       const related = (r.related || []).slice(0, 3).map(rel =>
         `<a class="hw-related-chip" href="${escHtml(rel.link)}">${escHtml(rel.title)}</a>`
       ).join('');
@@ -440,6 +545,7 @@ function submitSupportTicket() {
           ${related ? `<div class="hw-related-list">${related}</div>` : ''}
         </a>`;
     }).join('');
+    return agentsHtml + lessonsHtml;
   }
 
   function onHelpSearch(e) {
@@ -450,8 +556,9 @@ function submitSupportTicket() {
       helpApi({ action: 'search', q }).then(d => {
         const resultsEl = panel.querySelector('.hw-results');
         panel.querySelector('.hw-shortcuts').style.display = 'none';
+        panel.querySelector('.hw-quickadd').style.display = 'none';
         resultsEl.style.display = '';
-        resultsEl.innerHTML = renderResults((d.ok && d.results) || []);
+        resultsEl.innerHTML = renderResults((d.ok && d.results) || [], d.ok && d.agents);
       });
     }, 300);
   }

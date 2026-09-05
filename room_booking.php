@@ -21,6 +21,13 @@ if ($isAdmin) {
 } elseif ($isLeaderUser && isset($_GET['mc']) && in_array(trim($_GET['mc']), my_mc_slugs(), true)) {
     $viewMcSlug = trim($_GET['mc']);
 }
+if ($viewMcSlug === '') {
+    // own_mc_slug is admin-set in agent_roles, and most rank-and-file agents
+    // have no agent_roles row at all -- fall back to their roster-derived MC
+    // (innovate_roster.market_center) before giving up. Same source already
+    // used for notification/announcement targeting (see my_roster_mc_slugs()).
+    $viewMcSlug = my_roster_mc_slugs()[0] ?? '';
+}
 
 // Admins can switch to any market center; mc_leader/bic can switch only
 // among the MCs they lead (my_mc_slugs()) -- previously only admins could
@@ -66,31 +73,50 @@ if ($viewMcSlug === '') {
 
 $rooms = room_booking_rooms_for_mc($db, $viewMcSlug);
 $preselectRoomId = isset($_GET['room']) ? (int)$_GET['room'] : null;
+// Deep link from a reminder email's Cancel/Reschedule buttons -- both land
+// here with the booking id so it's highlighted in the table below.
+$highlightBookingId = isset($_GET['booking']) ? (int)$_GET['booking'] : null;
+// Default the room picker to this market center's own room rather than
+// whichever allow-listed room happens to sort first -- an agent looking at
+// their own office's booking page should land on their own room.
+if ($preselectRoomId === null) {
+    foreach ($rooms as $r) {
+        if ($r['mc_slug'] === $viewMcSlug) { $preselectRoomId = (int)$r['id']; break; }
+    }
+}
 
-$canSeeAll = $isAdmin || ((is_mc_leader() || is_bic()) && in_array($viewMcSlug, my_mc_slugs(), true));
+// Every agent who can view a room can also see who has it booked -- but
+// only for rooms that belong to their own market center. For rooms they can
+// reach solely via another office's allow-list (e.g. a shared PA room), they
+// only see their own bookings, not the whole office's calendar. Admins/leaders
+// still see everything in scope.
+$canManageAny = $isAdmin || ((is_mc_leader() || is_bic()) && in_array($viewMcSlug, my_mc_slugs(), true));
 
 $nowEt = new DateTime('now', new DateTimeZone(ROOM_BOOKING_TIMEZONE));
 $today = $nowEt->format('Y-m-d');
 $nowHm = $nowEt->format('H:i');
 
-if ($canSeeAll) {
+if ($canManageAny) {
     $bs = $db->prepare(
-        "SELECT b.*, r.name AS room_name FROM room_bookings b
+        "SELECT DISTINCT b.*, r.name AS room_name FROM room_bookings b
          JOIN conference_rooms r ON r.id = b.room_id
-         WHERE r.mc_slug = ? AND b.status='booked'
+         LEFT JOIN room_allowed_offices rao ON rao.room_id = r.id
+         WHERE (r.mc_slug = ? OR rao.mc_slug = ?) AND b.status='booked'
            AND (b.booking_date > ? OR (b.booking_date = ? AND b.end_time > ?))
          ORDER BY b.booking_date, b.start_time"
     );
-    $bs->execute([$viewMcSlug, $today, $today, $nowHm]);
+    $bs->execute([$viewMcSlug, $viewMcSlug, $today, $today, $nowHm]);
 } else {
     $bs = $db->prepare(
-        "SELECT b.*, r.name AS room_name FROM room_bookings b
+        "SELECT DISTINCT b.*, r.name AS room_name FROM room_bookings b
          JOIN conference_rooms r ON r.id = b.room_id
-         WHERE r.mc_slug = ? AND b.agent_email = ? AND b.status='booked'
+         LEFT JOIN room_allowed_offices rao ON rao.room_id = r.id
+         WHERE (r.mc_slug = ? OR rao.mc_slug = ?) AND b.status='booked'
            AND (b.booking_date > ? OR (b.booking_date = ? AND b.end_time > ?))
+           AND (r.mc_slug = ? OR b.agent_email = ?)
          ORDER BY b.booking_date, b.start_time"
     );
-    $bs->execute([$viewMcSlug, $agent['email'], $today, $today, $nowHm]);
+    $bs->execute([$viewMcSlug, $viewMcSlug, $today, $today, $nowHm, $viewMcSlug, $agent['email']]);
 }
 $upcoming = $bs->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -132,6 +158,7 @@ $upcoming = $bs->fetchAll(PDO::FETCH_ASSOC);
     .bk-table td{padding:9px 14px;border-top:1px solid var(--border);vertical-align:middle}
     .btn-sm{padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid var(--border);background:#fff;cursor:pointer}
     .btn-sm:hover{background:#f5f5f5}
+    .bk-table tr.rb-highlight td{background:#f0f7e8}
   </style>
 </head>
 <body>
@@ -186,13 +213,21 @@ $upcoming = $bs->fetchAll(PDO::FETCH_ASSOC);
           <div class="rb-slot-list" id="rb-slot-list"></div>
 
           <div class="rb-book-form" id="rb-book-form" style="display:none">
-            <div class="rb-field">
+            <div class="rb-field" id="rb-duration-field">
               <label class="rb-label">Duration</label>
               <select id="rb-duration" class="rb-select"></select>
             </div>
             <div class="rb-field">
-              <label class="rb-label">Purpose (optional)</label>
-              <input id="rb-purpose" class="rb-input" type="text" placeholder="e.g. Buyer consultation">
+              <label class="rb-label">Purpose</label>
+              <select id="rb-purpose-select" class="rb-select" onchange="rbTogglePurposeOther()">
+                <?php foreach (ROOM_BOOKING_PURPOSES as $p): ?>
+                  <option value="<?= h($p) ?>"><?= h($p) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="rb-field" id="rb-purpose-other-field" style="display:none">
+              <label class="rb-label">Describe</label>
+              <input id="rb-purpose-other" class="rb-input" type="text" placeholder="Describe the purpose">
             </div>
             <button class="btn-add" onclick="rbBook()">Book Room</button>
           </div>
@@ -202,23 +237,24 @@ $upcoming = $bs->fetchAll(PDO::FETCH_ASSOC);
       <table class="bk-table">
         <thead>
           <tr>
-            <th>Date</th><th>Time</th><th>Room</th>
-            <?php if ($canSeeAll): ?><th>Agent</th><?php endif; ?>
+            <th>Date</th><th>Time</th><th>Room</th><th>Agent</th><th>Purpose</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($upcoming as $b): ?>
-          <tr>
+          <?php $canManageRow = $canManageAny || strtolower($b['agent_email']) === strtolower($agent['email'] ?? ''); ?>
+          <tr id="booking-<?= (int)$b['id'] ?>" <?= $highlightBookingId === (int)$b['id'] ? 'class="rb-highlight"' : '' ?>>
             <td><?= h((new DateTime($b['booking_date']))->format('M j, Y')) ?></td>
             <td><?= h(DateTime::createFromFormat('H:i', $b['start_time'])->format('g:i A')) ?> - <?= h(DateTime::createFromFormat('H:i', $b['end_time'])->format('g:i A')) ?></td>
             <td><?= h($b['room_name']) ?></td>
-            <?php if ($canSeeAll): ?><td><?= h($b['agent_name'] ?: $b['agent_email']) ?></td><?php endif; ?>
-            <td><button class="btn-sm" onclick="rbCancel(<?= (int)$b['id'] ?>)">Cancel</button></td>
+            <td><?= h($b['agent_name'] ?: $b['agent_email']) ?></td>
+            <td><?= h($b['purpose'] ?: '—') ?></td>
+            <td><?php if ($canManageRow): ?><button class="btn-sm" onclick="rbCancel(<?= (int)$b['id'] ?>)">Cancel</button><?php endif; ?></td>
           </tr>
           <?php endforeach; ?>
           <?php if (!$upcoming): ?>
-          <tr><td colspan="<?= $canSeeAll ? 5 : 4 ?>">No upcoming bookings.</td></tr>
+          <tr><td colspan="6">No upcoming bookings.</td></tr>
           <?php endif; ?>
         </tbody>
       </table>
@@ -229,9 +265,16 @@ $upcoming = $bs->fetchAll(PDO::FETCH_ASSOC);
 
 <script>
 const RB_TODAY = <?= json_encode($today) ?>;
-let rbViewYear, rbViewMonth, rbSelectedDate = null, rbSelectedSlot = null;
+let rbViewYear, rbViewMonth, rbSelectedDate = null, rbSelectedSlot = null, rbScheduleType = 'flexible';
 
 function rbPad(n) { return n < 10 ? '0'+n : ''+n; }
+
+function rbFormatTime(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return h12 + ':' + rbPad(m) + ' ' + period;
+}
 
 function rbInitCalendar() {
   const t = new Date(RB_TODAY + 'T00:00:00');
@@ -280,13 +323,17 @@ async function rbLoadAvailability() {
   const data = await res.json();
   if (!data.ok) { document.getElementById('rb-slots-title').textContent = data.error || 'Failed to load'; return; }
 
+  rbScheduleType = data.room.schedule_type || 'flexible';
   document.getElementById('rb-slots-title').textContent = 'Available times for ' + rbSelectedDate;
   const list = document.getElementById('rb-slot-list');
   list.innerHTML = '';
   data.slots.forEach(slot => {
     const div = document.createElement('div');
     div.className = 'rb-slot' + (slot.available ? '' : ' booked');
-    div.textContent = slot.start + (slot.available ? '' : ' (Reserved)');
+    const label = rbScheduleType === 'fixed_4hr'
+      ? rbFormatTime(slot.start) + ' - ' + rbFormatTime(slot.end)
+      : rbFormatTime(slot.start);
+    div.textContent = label + (slot.available ? '' : ' (Reserved — ' + slot.agent_name + ')');
     if (slot.available) {
       div.onclick = () => rbSelectSlot(slot, data.slots);
     }
@@ -295,10 +342,27 @@ async function rbLoadAvailability() {
   document.getElementById('rb-book-form').style.display = 'none';
 }
 
+function rbTogglePurposeOther() {
+  const isOther = document.getElementById('rb-purpose-select').value === 'Other';
+  document.getElementById('rb-purpose-other-field').style.display = isOther ? '' : 'none';
+}
+
 function rbSelectSlot(slot, allSlots) {
   rbSelectedSlot = slot;
   document.querySelectorAll('#rb-slot-list .rb-slot').forEach(el => el.classList.remove('selected'));
   event.target.classList.add('selected');
+  document.getElementById('rb-purpose-select').value = <?= json_encode(ROOM_BOOKING_PURPOSES[0]) ?>;
+  document.getElementById('rb-purpose-other').value = '';
+  rbTogglePurposeOther();
+
+  // Fixed-slot rooms (e.g. NMB Agent on Duty) have no adjustable duration --
+  // the slot itself is the whole 4-hour window, so skip the duration picker.
+  if (rbScheduleType === 'fixed_4hr') {
+    document.getElementById('rb-duration-field').style.display = 'none';
+    document.getElementById('rb-book-form').style.display = 'block';
+    return;
+  }
+  document.getElementById('rb-duration-field').style.display = '';
 
   // Build duration options (15-120 min, 15-min steps) that don't run past
   // close or into the next booked slot -- server re-validates regardless.
@@ -322,8 +386,11 @@ function rbSelectSlot(slot, allSlots) {
 
 async function rbBook() {
   const roomId = document.getElementById('rb-room').value;
-  const endTime = document.getElementById('rb-duration').value;
-  const purpose = document.getElementById('rb-purpose').value.trim();
+  const endTime = rbScheduleType === 'fixed_4hr' ? rbSelectedSlot.end : document.getElementById('rb-duration').value;
+  const purposeChoice = document.getElementById('rb-purpose-select').value;
+  const purposeOther = document.getElementById('rb-purpose-other').value.trim();
+  if (purposeChoice === 'Other' && !purposeOther) { alert('Describe the purpose.'); return; }
+  const purpose = purposeChoice === 'Other' ? purposeOther : purposeChoice;
   if (!rbSelectedSlot || !endTime) { alert('Pick a start time and duration.'); return; }
 
   const res = await fetch('api/room_booking_action.php', {
@@ -352,6 +419,10 @@ async function rbCancel(bookingId) {
 }
 
 rbInitCalendar();
+
+<?php if ($highlightBookingId !== null): ?>
+document.getElementById('booking-<?= (int)$highlightBookingId ?>')?.scrollIntoView({block: 'center'});
+<?php endif; ?>
 </script>
 </body>
 </html>

@@ -75,6 +75,16 @@ $superAdmin = is_super_admin();
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 
+    /* Notes button + hover preview */
+    .notes-actions{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+    .notes-btn[data-note]:not([data-note=""]){border-color:#c3dfa8;color:#5b8e0d}
+    #notes-tip{
+      position:fixed;display:none;max-width:280px;white-space:pre-wrap;
+      background:#222;color:#fff;font-size:11px;font-weight:500;
+      padding:8px 10px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.25);
+      z-index:9999;line-height:1.4;pointer-events:none;
+    }
+
     /* Tabs */
     .mls-tabs{display:flex;gap:4px;border-bottom:2px solid #f0f0f0;margin-bottom:20px}
     .mls-tab{padding:10px 4px;margin-bottom:-2px;background:none;border:none;border-bottom:2px solid transparent;font-size:13px;font-weight:700;color:#888;cursor:pointer}
@@ -265,7 +275,16 @@ $superAdmin = is_super_admin();
         <div class="form-section-title">Billing</div>
         <div class="field-grid">
           <div class="field field-full"><label>Billing Site</label><input type="text" id="m-billing-site" placeholder="URL"></div>
-          <div class="field"><label>Billing Frequency</label><input type="text" id="m-billing-frequency" placeholder="e.g. quarterly"></div>
+          <div class="field"><label>Billing Frequency</label>
+            <select id="m-billing-frequency">
+              <option value="">— Select —</option>
+              <option value="Monthly">Monthly</option>
+              <option value="Quarterly">Quarterly</option>
+              <option value="Semi-Annual">Semi-Annual</option>
+              <option value="Annual">Annual</option>
+              <option value="One-Time">One-Time</option>
+            </select>
+          </div>
           <div class="field"><label>Billing Username</label><input type="text" id="m-billing-username" autocomplete="off"></div>
           <div class="field"><label>Billing Password</label>
             <div class="field-row">
@@ -377,6 +396,25 @@ $superAdmin = is_super_admin();
   </div>
 </div>
 
+<!-- Notes Modal (shared by memberships and market centers) -->
+<div class="modal-overlay" id="notes-modal">
+  <div class="modal" style="width:480px">
+    <div class="modal-head">
+      <h3 id="notes-modal-title">Notes</h3>
+      <button class="modal-close" onclick="closeNotesModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="n-kind">
+      <input type="hidden" id="n-id">
+      <textarea id="n-notes" rows="8" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical" placeholder="No notes yet."></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" onclick="closeNotesModal()">Cancel</button>
+      <button class="btn-primary" id="notes-save-btn" onclick="saveNotes()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPER = <?= $superAdmin ? 'true' : 'false' ?>;
 
@@ -463,7 +501,12 @@ function renderMembershipRow(r){
     <td onclick="event.stopPropagation()">${passwordCell(r)}</td>
     <td onclick="event.stopPropagation()">${loginLinkCell(r)}</td>
     <td style="font-size:11px;color:#777">${esc(feesSummary(r))}</td>
-    <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openMembershipModal(${r.id})">Edit</button>`:''}</td>
+    <td onclick="event.stopPropagation()">
+      <div class="notes-actions">
+        <button class="btn-sm notes-btn" data-note="${esc(r.notes||'')}" onclick="openNotesModal('membership',${r.id})">Notes</button>
+        ${SUPER?`<button class="btn-sm" onclick="openMembershipModal(${r.id})">Edit</button>`:''}
+      </div>
+    </td>
   </tr>`;
 }
 
@@ -577,6 +620,37 @@ function deleteMembership(){
     .then(r=>r.json()).then(d=>{if(d.ok){closeMembershipModal();load();}else alert(d.error||'Delete failed.');});
 }
 
+function openNotesModal(kind, id){
+  const r = (kind==='office'?officeRows:membershipRows).find(x=>x.id===id);
+  if(!r)return;
+  document.getElementById('notes-modal-title').textContent = (r.name||r.branch_office||r.state||'') + ' — Notes';
+  document.getElementById('n-kind').value=kind;
+  document.getElementById('n-id').value=r.id;
+  document.getElementById('n-notes').value=r.notes||'';
+  document.getElementById('n-notes').disabled=!SUPER;
+  document.getElementById('notes-save-btn').style.display=SUPER?'':'none';
+  document.getElementById('notes-modal').classList.add('open');
+}
+
+function closeNotesModal(){document.getElementById('notes-modal').classList.remove('open');}
+
+function saveNotes(){
+  const kind=document.getElementById('n-kind').value;
+  const id=parseInt(document.getElementById('n-id').value);
+  const notes=document.getElementById('n-notes').value;
+  const endpoint = kind==='office' ? 'api/mls_offices_action.php' : 'api/mls_memberships_action.php';
+  const btn=document.getElementById('notes-save-btn');
+  btn.disabled=true; btn.textContent='Saving…';
+  fetch(endpoint,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_notes',id,notes})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='Save';
+      if(d.ok){
+        closeNotesModal();
+        if(kind==='office') loadOffices(); else load();
+      } else alert(d.error||'Save failed.');
+    }).catch(()=>{btn.disabled=false;btn.textContent='Save';alert('Request failed.');});
+}
+
 /* ══════════════ Market Centers (mls_offices) ══════════════ */
 let officeRows = [];
 
@@ -604,7 +678,12 @@ function renderOfficeRow(r){
     <td style="color:#555">${esc(r.designated_broker||'—')}</td>
     <td style="color:#555">${esc(r.market_leader||'—')}</td>
     <td style="font-size:11px;color:#777">${esc(r.office_type||'—')}</td>
-    <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openOfficeModal(${r.id})">Edit</button>`:''}</td>
+    <td onclick="event.stopPropagation()">
+      <div class="notes-actions">
+        <button class="btn-sm notes-btn" data-note="${esc(r.notes||'')}" onclick="openNotesModal('office',${r.id})">Notes</button>
+        ${SUPER?`<button class="btn-sm" onclick="openOfficeModal(${r.id})">Edit</button>`:''}
+      </div>
+    </td>
   </tr>`;
 }
 
@@ -698,6 +777,30 @@ function deleteOffice(){
   fetch('api/mls_offices_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})})
     .then(r=>r.json()).then(d=>{if(d.ok){closeOfficeModal();loadOffices();}else alert(d.error||'Delete failed.');});
 }
+
+/* Shared hover preview for .notes-btn — fixed-position so it's never clipped
+   by the table's scrolling wrapper (an ancestor with overflow-x:auto also
+   clips vertical overflow per the CSS overflow spec). */
+const notesTip=document.createElement('div');
+notesTip.id='notes-tip';
+document.body.appendChild(notesTip);
+document.addEventListener('mouseover',e=>{
+  const btn=e.target.closest && e.target.closest('.notes-btn');
+  if(!btn||!btn.dataset.note)return;
+  notesTip.textContent=btn.dataset.note;
+  notesTip.style.display='block';
+  const r=btn.getBoundingClientRect();
+  let top=r.top-notesTip.offsetHeight-8;
+  if(top<4) top=r.bottom+8;
+  let left=Math.min(r.left, window.innerWidth-notesTip.offsetWidth-8);
+  if(left<4) left=4;
+  notesTip.style.top=top+'px';
+  notesTip.style.left=left+'px';
+});
+document.addEventListener('mouseout',e=>{
+  const btn=e.target.closest && e.target.closest('.notes-btn');
+  if(btn) notesTip.style.display='none';
+});
 
 load();
 loadOffices();

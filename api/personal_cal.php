@@ -4,6 +4,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/personal_calendar.php';
 header('Content-Type: application/json');
 
 $agent = current_agent();
@@ -55,28 +56,19 @@ if ($url === '') {
     echo json_encode(['events'=>[],'has_url'=>false]); exit;
 }
 
-$ctx = stream_context_create(['http'=>[
-    'timeout'       => 10,
-    'ignore_errors' => true,
-    'user_agent'    => 'AgentEdge-CalSync/1.0',
-]]);
-$ics = @file_get_contents($url, false, $ctx);
+$ics = pcal_fetch_ics($url, 10);
 
-if ($ics === false || $ics === '') {
+if ($ics === null) {
     echo json_encode(['events'=>[],'has_url'=>true,'error'=>'Could not fetch calendar. Check the URL and make sure it is public or use the secret ICS address.']);
     exit;
 }
 
-// Unfold RFC 5545 line continuations
-$ics = preg_replace("/\r\n[ \t]/", '', $ics);
-$ics = preg_replace("/\n[ \t]/", '', $ics);
-
 $events = [];
-preg_match_all('/BEGIN:VEVENT(.+?)END:VEVENT/s', $ics, $matches);
+$blocks = pcal_split_vevents($ics);
 
 [$y, $m] = array_map('intval', explode('-', $month));
 
-foreach ($matches[1] as $block) {
+foreach ($blocks as $block) {
     // DTSTART — handle date-only (YYYYMMDD) and datetime (YYYYMMDDTHHmmss)
     $date = null;
     if (preg_match('/^DTSTART(?:;[^:]*)?:(\d{8})/m', $block, $mm)) {

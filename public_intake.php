@@ -82,6 +82,9 @@ if ($qid > 0) {
     .form-grid .field.full { grid-column: 1 / -1; }
     @media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
 
+    .tbd-note { font-size: 11px; color: #888; margin: -6px 0 12px; }
+    .tbd-note strong { color: #b26a00; }
+
     /* Office checkbox list */
     .office-checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; max-height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 7px; padding: 10px 12px; }
     @media (max-width: 520px) { .office-checklist { grid-template-columns: 1fr; } }
@@ -155,6 +158,7 @@ if ($qid > 0) {
 
       <!-- Contact Information -->
       <div class="form-section-h">Contact Information</div>
+      <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
       <div class="form-grid">
         <div class="field">
           <label>Email Address</label>
@@ -186,6 +190,7 @@ if ($qid > 0) {
 
       <!-- License & Certifications -->
       <div class="form-section-h">License &amp; Certifications</div>
+      <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
       <div class="form-grid">
         <div class="field">
           <label>Real Estate License #</label>
@@ -209,6 +214,7 @@ if ($qid > 0) {
 
       <!-- MLS Information -->
       <div class="form-section-h">MLS Information</div>
+      <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
       <div class="form-grid">
         <div class="field">
           <label>MLS Board</label>
@@ -259,8 +265,9 @@ if ($qid > 0) {
           </select>
         </div>
         <div class="field">
-          <label>Career Start Date <span class="opt">(optional)</span></label>
-          <input type="date" id="f-career_start" name="career_start">
+          <label>Initial License Year <span class="opt">(optional)</span></label>
+          <input type="text" id="f-career_start" name="career_start" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="YYYY">
+          <div style="font-size:12px;color:#999;margin-top:4px;">The year you got your real estate license</div>
         </div>
         <div class="field">
           <label>Prior Occupation <span class="opt">(optional)</span></label>
@@ -547,6 +554,7 @@ if ($qid > 0) {
     });
     return out;
   }
+
 
   // Office checklist — clear invalid styling once at least one box is checked
   document.querySelectorAll('#office-checklist input').forEach(function(node) {

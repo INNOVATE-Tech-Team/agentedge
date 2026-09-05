@@ -44,22 +44,15 @@ function fathom_request(string $method, string $path, ?array $query = null): arr
     return ['ok' => $code >= 200 && $code < 300, 'code' => $code, 'data' => $d];
 }
 
-// Fetches a single meeting with its transcript inlined.
-function fathom_get_meeting(string $meetingId): array {
-    return fathom_request('GET', "/meetings/{$meetingId}", ['include_transcript' => 'true']);
+// Fetches the AI-generated summary for a recording — verified against live
+// API. Returns {"summary": {"template_name":..., "markdown_formatted":...}}.
+function fathom_get_summary(string $recordingId): array {
+    return fathom_request('GET', "/recordings/{$recordingId}/summary");
 }
 
 // Kicks off async generation of a downloadable video file for a recording.
-// Expected response includes a 'download_id' to poll — see note above.
 function fathom_request_recording_download(string $recordingId): array {
     return fathom_request('POST', "/recordings/{$recordingId}/download");
-}
-
-// Polls the status of a previously requested download. When status is
-// 'completed', the response is expected to include a short-lived signed URL
-// for the generated file — see note above.
-function fathom_get_download_status(string $downloadId): array {
-    return fathom_request('GET', "/recordings/download/{$downloadId}");
 }
 
 // Verifies an inbound Fathom webhook — Svix-style signing: HMAC-SHA256 of
@@ -87,11 +80,117 @@ function fathom_verify_webhook(string $rawBody, array $headers): bool {
     return false;
 }
 
+// Converts Fathom's markdown_formatted summary into safe, simple HTML.
+// Handles just what Fathom summaries actually use: ## / ### headers,
+// **bold**, [text](url) links, and "- " bullet lists. Escapes everything
+// else so no raw HTML can be injected from the summary content.
+function fathom_markdown_to_html(string $md): string {
+    $lines = explode("\n", $md);
+    $html = '';
+    $inList = false;
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+
+        if ($trimmed === '') {
+            if ($inList) { $html .= "</ul>\n"; $inList = false; }
+            continue;
+        }
+
+        if (preg_match('/^(#{1,6})\s+(.*)$/', $trimmed, $m)) {
+            if ($inList) { $html .= "</ul>\n"; $inList = false; }
+            $level = min(strlen($m[1]) + 2, 6); // ## -> h4, ### -> h5, etc.
+            $text = fathom_md_inline(htmlspecialchars($m[2], ENT_QUOTES));
+            $html .= "<h{$level}>{$text}</h{$level}>\n";
+            continue;
+        }
+
+        if (preg_match('/^-\s+(.*)$/', $trimmed, $m)) {
+            if (!$inList) { $html .= "<ul>\n"; $inList = true; }
+            $text = fathom_md_inline(htmlspecialchars($m[1], ENT_QUOTES));
+            $html .= "<li>{$text}</li>\n";
+            continue;
+        }
+
+        if ($inList) { $html .= "</ul>\n"; $inList = false; }
+        $text = fathom_md_inline(htmlspecialchars($trimmed, ENT_QUOTES));
+        $html .= "<p>{$text}</p>\n";
+    }
+    if ($inList) $html .= "</ul>\n";
+
+    return $html;
+}
+
+// Applies inline markdown (bold, links) to already-escaped text.
+function fathom_md_inline(string $text): string {
+    $text = preg_replace('/\*\*(.+?)\*\*/', '<strong>$1</strong>', $text);
+    $text = preg_replace('/\[(.+?)\]\((https?:\/\/[^\s)]+)\)/', '<a href="$2" target="_blank" rel="noopener">$1</a>', $text);
+    return $text;
+}
+
+// Derives tags and a learning objective straight from Fathom's own summary
+// HTML (fathom_markdown_to_html() output) — no external API call, no cost.
+// Fathom's summary template is consistent across recordings: an "H4 Meeting
+// Purpose" section (one sentence, used as the learning objective) and an
+// "H4 Topics" section containing one "H5" sub-heading per topic discussed
+// (used as tags). Used in place of the generic 'training-call' / 'Review
+// this recorded training call.' placeholders api/fathom_webhook.php sets at
+// ingestion time. Returns null if the expected sections aren't found (e.g.
+// a differently-templated summary) so callers fall back to whatever the
+// lesson already has. Difficulty has no real signal in a meeting summary,
+// so this always returns 'beginner' rather than guess.
+function fathom_extract_lesson_metadata(string $summaryHtml): ?array {
+    if (trim($summaryHtml) === '') return null;
+
+    $doc = new DOMDocument();
+    libxml_use_internal_errors(true);
+    $doc->loadHTML('<?xml encoding="utf-8"?><div>' . $summaryHtml . '</div>');
+    libxml_clear_errors();
+    $headings = $doc->getElementsByTagName('h4');
+
+    $objective = '';
+    $topicsHeading = null;
+    foreach ($headings as $h) {
+        $label = strtolower(trim($h->textContent));
+        if ($label === 'meeting purpose') {
+            $p = $h->nextSibling;
+            while ($p && $p->nodeType !== XML_ELEMENT_NODE) $p = $p->nextSibling;
+            if ($p && strtolower($p->nodeName) === 'p') {
+                $objective = trim(preg_replace('/\s+/', ' ', $p->textContent));
+            }
+        } elseif ($label === 'topics') {
+            $topicsHeading = $h;
+        }
+    }
+
+    $tags = [];
+    if ($topicsHeading) {
+        for ($sib = $topicsHeading->nextSibling; $sib; $sib = $sib->nextSibling) {
+            if ($sib->nodeType !== XML_ELEMENT_NODE) continue;
+            if ($sib->nodeName === 'h4') break; // reached the next top-level section
+            if ($sib->nodeName === 'h5') {
+                $slug = fathom_slugify($sib->textContent);
+                if ($slug) $tags[] = $slug;
+            }
+        }
+    }
+    $tags = array_slice(array_values(array_unique(array_merge($tags, ['training-call']))), 0, 5);
+
+    if (!$tags || $objective === '') return null;
+    return ['tags' => $tags, 'learning_objective' => $objective, 'difficulty' => 'beginner'];
+}
+
+function fathom_slugify(string $text): string {
+    $text = strtolower(trim($text));
+    $text = preg_replace('/[\'’]/', '', $text); // "Estate's" -> "estates", not "estate-s"
+    $text = preg_replace('/[^a-z0-9]+/', '-', $text);
+    return trim($text, '-');
+}
+
 // All Fathom-ingested lessons land in this one always-published holding
-// course. University has no "move lesson to another course" UI today, so
-// rather than build one, ingestion always targets this course and
-// pending_review gates per-lesson visibility until an admin reviews and
-// publishes it — see the "known v1 limitation" note in the project plan.
+// course; an admin sorts them into the right course afterward via the
+// "Move / Transfer to Another Course" control in admin_university_course.php's
+// lesson editor. pending_review gates per-lesson visibility until then.
 function fathom_get_or_create_holding_course(): int {
     $db = local_db();
     $id = $db->query("SELECT id FROM uni_courses WHERE title='Recorded Training Calls'")->fetchColumn();

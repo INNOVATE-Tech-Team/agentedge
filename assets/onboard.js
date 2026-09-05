@@ -170,6 +170,10 @@
   function loadQueue() {
     const container = document.getElementById('ob-queue');
     if (!container) return;
+    // Blanking the container to "Loading…" collapses the page height and
+    // clamps window scroll to top while the fetch is in flight — restore it
+    // once real content is back so a save mid-list doesn't snap you to top.
+    const scrollY = window.scrollY;
     container.innerHTML = '<div class="ob-empty">Loading…</div>';
 
     fetch('api/onboard_action.php?action=list_queue&filter=' + encodeURIComponent(currentFilter), {
@@ -179,6 +183,7 @@
       .then(d => {
         if (!d.ok) { container.innerHTML = `<div class="ob-empty">Error: ${esc(d.error)}</div>`; return; }
         renderQueue(container, d.queue || []);
+        window.scrollTo(0, scrollY);
       })
       .catch(err => {
         container.innerHTML = '<div class="ob-empty">Could not load queue.</div>';
@@ -287,11 +292,16 @@
       </select>` : '';
     const mcSelectHtml = `${mcChips}${assignedNames.length ? '' : (IS_ADMIN && entry.status === 'active' ? '' : '—')}${addMcSelectHtml}`;
 
+    // The "skip" override below reuses mark_intake_submitted (api/onboard_action.php)
+    // regardless of whether an intake was ever sent -- previously it only appeared
+    // after "Send Intake" had been clicked at least once, which left no path to
+    // clear the completion gate for agents whose info was typed in manually and
+    // were never going to be sent a real intake form at all.
     const intakeStatusHtml = entry.intake_submitted
       ? `<button class="ob-btn-sm ob-btn-done" onclick="toggleIntake(${entry.id})">${intakeOpenIds.has(entry.id) ? 'Hide' : 'View'} Intake Form</button>`
       : entry.intake_sent_at
-        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button>`
-        : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button>`;
+        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this)">Mark Submitted</button>`
+        : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this, true)">Skip — Entered Manually</button>`;
 
     const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
       <div class="ob-footer">
@@ -318,7 +328,7 @@
               <div class="ob-progress-bar"><div class="ob-progress-fill" style="width:${pct}%"></div></div>
               <span>${done}/${total}</span>
             </div>
-            <span style="font-size:12px;color:#888;margin-left:4px">${isOpen ? '▲' : '▼'}</span>
+            <span class="ob-toggle-arrow" style="font-size:12px;color:#888;margin-left:4px">${isOpen ? '▲' : '▼'}</span>
           </div>
         </div>
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
@@ -407,7 +417,7 @@
       expandedIds.delete(queueId);
     }
     // Flip the arrow
-    const arrow = head?.querySelector('span:last-child');
+    const arrow = head?.querySelector('.ob-toggle-arrow');
     if (arrow) arrow.textContent = open ? '▲' : '▼';
   };
 
@@ -651,6 +661,20 @@
     if (!confirm('Send the intake form link to this agent by email?')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=send_intake', { queue_id: queueId })
+      .then(d => {
+        if (d.ok) { loadQueue(); }
+        else { btn.disabled = false; alert(d.error || 'Error'); }
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
+  window.markIntakeSubmitted = function (queueId, btn, manual) {
+    const msg = manual
+      ? 'Skip the intake form for this agent? Use this only when you\'ve already entered their info manually and they don\'t need to fill one out themselves. This will notify staff.'
+      : 'Mark this agent\'s intake form as submitted? This will notify staff.';
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    post('api/onboard_action.php?action=mark_intake_submitted', { queue_id: queueId })
       .then(d => {
         if (d.ok) { loadQueue(); }
         else { btn.disabled = false; alert(d.error || 'Error'); }

@@ -79,6 +79,8 @@ $agent = require_login();
     .ag-card.no-kids{opacity:.7;cursor:default}
     .ag-card.vacant{border-style:dashed;border-color:#ccc;background:#fafafa}
     .ag-card.vacant.selected{border-color:#999;background:#f3f3f3}
+    .ag-card.pending{border-color:#e0c34a}
+    .pending-badge{display:block;font-size:8px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:#a67c00;margin-top:1px}
     .ag-avatar{width:34px;height:34px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .ag-avatar.vacant{background:#e8e8e8;color:#999}
     .ag-card.selected .ag-avatar{background:#82C112;color:#000}
@@ -253,14 +255,16 @@ function drillFromFlat(level, node) {
 // Build one agent card (shared by the drill-down strips and the flat line view)
 function buildAgentCard(kid, opts) {
   opts = opts || {};
-  const hasKids  = (kid.children||[]).length > 0;
-  const isVacant = !!kid.vacant;
-  const vol      = fmtMoney(kid.volume);
-  const deals    = kid.deals || 0;
+  const hasKids   = (kid.children||[]).length > 0;
+  const isVacant  = !!kid.vacant;
+  const isPending = !!kid.pending;
+  const vol       = fmtMoney(kid.volume);
+  const deals     = kid.deals || 0;
 
   const card = document.createElement('div');
-  card.className = 'ag-card' + (opts.selected ? ' selected' : '') + (!opts.clickable ? ' no-kids' : '') + (isVacant ? ' vacant' : '');
+  card.className = 'ag-card' + (opts.selected ? ' selected' : '') + (!opts.clickable ? ' no-kids' : '') + (isVacant ? ' vacant' : '') + (isPending ? ' pending' : '');
   const sponsorLine = opts.sponsorName ? `<div class="ag-sponsor">under ${esc(opts.sponsorName)}</div>` : '';
+  const pendingBadge = isPending ? '<span class="pending-badge">pending Perfex</span>' : '';
   card.innerHTML = isVacant ? `
     <div class="ag-avatar vacant">${esc(initials(kid.name))}</div>
     <div class="ag-name vacant-label">${esc(kid.name)}</div>
@@ -270,6 +274,7 @@ function buildAgentCard(kid, opts) {
     <div class="ag-count">${kid.children.length} recruit${kid.children.length===1?'':'s'}</div>` : `
     <div class="ag-avatar">${esc(initials(kid.name))}</div>
     <div class="ag-name">${esc(kid.name)}</div>
+    ${pendingBadge}
     <div class="ag-vol${vol ? '' : ' zero'}">${vol || '—'}</div>
     <div class="ag-deals"><span>${deals}</span> deal${deals===1?'':'s'}</div>
     ${sponsorLine}

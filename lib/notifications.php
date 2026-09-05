@@ -153,7 +153,7 @@ function process_notification_queue(int $limit = 100): void {
 
     $db   = local_db();
     $rows = $db->prepare(
-        "SELECT id, recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name, reply_to
+        "SELECT id, recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name, reply_to, company_email_id
          FROM notification_queue
          WHERE status='pending' AND attempts < 3
          ORDER BY id
@@ -206,7 +206,7 @@ function process_notification_queue(int $limit = 100): void {
                     if (!isset($attachCache[$attIds])) $attachCache[$attIds] = resolve_email_attachments($attIds);
                     $attachments = $attachCache[$attIds];
                 }
-                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false), $attachments, $item['from_email'] ?? '', $item['from_name'] ?? '', trim($item['reply_to'] ?? ''));
+                $ok = send_email_sendgrid($item['recipient'], $item['subject'], $item['body'], $c, (bool)($item['is_html'] ?? false), $attachments, $item['from_email'] ?? '', $item['from_name'] ?? '', trim($item['reply_to'] ?? ''), (int)($item['company_email_id'] ?? 0));
             } elseif ($item['channel'] === 'sms') {
                 $ok = send_sms_twilio($item['phone'], $item['body'], $c);
             }
@@ -1466,7 +1466,7 @@ function notify_suggestion_created(int $suggestionId, string $title, string $bod
 
 // ── SendGrid email ────────────────────────────────────────────────────────────
 
-function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false, array $attachments = [], string $fromEmail = '', string $fromName = '', string $replyTo = ''): bool {
+function send_email_sendgrid(string $to, string $subject, string $body, array $c, bool $isHtml = false, array $attachments = [], string $fromEmail = '', string $fromName = '', string $replyTo = '', int $companyEmailId = 0): bool {
     $key  = $c['sendgrid_key']  ?? '';
     // A specific AgentEdge user triggered this email (e.g. replied to a
     // ticket, sent a Company Email) — send from them; otherwise fall back
@@ -1503,6 +1503,22 @@ function send_email_sendgrid(string $to, string $subject, string $body, array $c
     ];
     if ($attachments) $payloadArr['attachments'] = $attachments;
     if ($replyTo && filter_var($replyTo, FILTER_VALIDATE_EMAIL)) $payloadArr['reply_to'] = ['email' => $replyTo];
+    // Only Company Email sends carry a company_email_id (every other caller of
+    // this function -- tickets, password resets, etc. -- passes the default 0)
+    // -- omit both keys entirely rather than sending an empty custom_args so a
+    // non-Company-Email send's payload is untouched. custom_args values must be
+    // strings; SendGrid echoes them back verbatim as top-level fields on each
+    // Event Webhook event (api/sendgrid_events_webhook.php casts back to int on
+    // the way in). tracking_settings is set explicitly here rather than relying
+    // on the account-level dashboard default, so Company Email opens/clicks
+    // don't silently stop working if that toggle ever changes.
+    if ($companyEmailId > 0) {
+        $payloadArr['custom_args'] = ['company_email_id' => (string)$companyEmailId];
+        $payloadArr['tracking_settings'] = [
+            'open_tracking'  => ['enable' => true],
+            'click_tracking' => ['enable' => true],
+        ];
+    }
     $payload = json_encode($payloadArr);
 
     $ch = curl_init('https://api.sendgrid.com/v3/mail/send');

@@ -131,6 +131,44 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 header('Content-Type: application/json');
 $postAction = $_GET['action'] ?? ($_POST['action'] ?? '');
 
+// Headshots come straight off phones (up to the 10 MB cap enforced below) but
+// are only ever displayed as a small avatar/thumbnail, and are served inline
+// on every profile page view — an unresized upload made agent_profile.php
+// painfully slow to load. Downscale in place so what's stored on disk is
+// close to what's actually rendered.
+function resize_headshot_in_place(string $path, string $mime, int $maxDim = 1200): void {
+    $create = [
+        'image/jpeg' => 'imagecreatefromjpeg',
+        'image/png'  => 'imagecreatefrompng',
+        'image/webp' => 'imagecreatefromwebp',
+    ][$mime] ?? null;
+    if (!$create || !function_exists($create)) return; // leave GIFs (animation) and anything unhandled alone
+
+    $src = @$create($path);
+    if (!$src) return;
+    $w = imagesx($src);
+    $h = imagesy($src);
+    if ($w <= $maxDim && $h <= $maxDim) { imagedestroy($src); return; }
+
+    $scale = $maxDim / max($w, $h);
+    $nw = max(1, (int)round($w * $scale));
+    $nh = max(1, (int)round($h * $scale));
+    $dst = imagecreatetruecolor($nw, $nh);
+    if ($mime === 'image/png') {
+        imagealphablending($dst, false);
+        imagesavealpha($dst, true);
+    }
+    imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
+
+    switch ($mime) {
+        case 'image/jpeg': imagejpeg($dst, $path, 85); break;
+        case 'image/png':  imagepng($dst, $path, 6); break;
+        case 'image/webp': imagewebp($dst, $path, 85); break;
+    }
+    imagedestroy($src);
+    imagedestroy($dst);
+}
+
 // ── POST: upload headshot ─────────────────────────────────────────────────────
 if ($postAction === 'upload') {
     $targetEmail = $myEmail;
@@ -162,15 +200,18 @@ if ($postAction === 'upload') {
 
     $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION)) ?: 'jpg';
     $key = bin2hex(random_bytes(16)) . '.' . $ext;
-    if (!move_uploaded_file($f['tmp_name'], $hsDir . '/' . $key)) {
+    $destPath = $hsDir . '/' . $key;
+    if (!move_uploaded_file($f['tmp_name'], $destPath)) {
         intake_json_out(['ok' => false, 'error' => 'Could not save uploaded file'], 500);
     }
+    resize_headshot_in_place($destPath, $mime);
+    $sizeBytes = @filesize($destPath) ?: $f['size'];
     $pdo->prepare(
         "INSERT INTO agent_intake_files (agent_email, file_key, orig_name, mime_type, size_bytes)
          VALUES (?, ?, ?, ?, ?)"
-    )->execute([$targetEmail, $key, basename($f['name']), $mime, $f['size']]);
+    )->execute([$targetEmail, $key, basename($f['name']), $mime, $sizeBytes]);
 
-    intake_json_out(['ok' => true, 'file_key' => $key, 'orig_name' => basename($f['name']), 'size_bytes' => $f['size']]);
+    intake_json_out(['ok' => true, 'file_key' => $key, 'orig_name' => basename($f['name']), 'size_bytes' => $sizeBytes]);
 }
 
 // ── POST: delete headshot ─────────────────────────────────────────────────────
@@ -208,9 +249,16 @@ if ($isAdmin && !empty($body['email'])) $email = strtolower(trim($body['email'])
 // field check) keeps working against whichever membership the agent listed
 // first -- without every other reader needing to learn about the new table.
 if (is_array($body['mls_memberships'] ?? null)) {
-    $firstMembership = $body['mls_memberships'][0] ?? [];
-    $body['mls_board'] = trim($firstMembership['mls_association'] ?? '');
-    $body['mls_id']    = trim($firstMembership['mls_number'] ?? '');
+    // Mirror the first membership that actually names an association -- not
+    // just array index 0 -- so a row with only an ID number sitting before it
+    // in list order doesn't blank out mls_board (see api/intake_public.php).
+    $primaryMembership = null;
+    foreach ($body['mls_memberships'] as $membership) {
+        if (trim($membership['mls_association'] ?? '') !== '') { $primaryMembership = $membership; break; }
+    }
+    $primaryMembership = $primaryMembership ?? ($body['mls_memberships'][0] ?? []);
+    $body['mls_board'] = trim($primaryMembership['mls_association'] ?? '');
+    $body['mls_id']    = trim($primaryMembership['mls_number'] ?? '');
 }
 
 $fv = fn($k) => trim($body[$k] ?? '');
@@ -237,7 +285,23 @@ $fields = [
 // already-stored encrypted value — only overwrite it when a new value is typed.
 $preserveIfBlank = ['personal_tax_id_enc', 'corporate_tax_id_enc'];
 
-$resolveField = function (string $f) use ($fv, $body): string {
+// Fetched here (before $resolveField needs it) rather than at its original
+// spot further down, so a field this specific caller's form doesn't even
+// include can fall back to what's already stored instead of being silently
+// blanked. Real incident, 2026-09-02: agent_profile.php's Edit Profile modal
+// only ever sent a subset of $fields (missing mailing_address/instagram/
+// twitter/youtube/tiktok/blog, among others) — every save through it wiped
+// whichever of those columns already had data, since the old default case
+// below just did $fv($f), which is '' for any key never sent at all. A
+// caller that DOES send a field (even as an intentionally-cleared empty
+// string, e.g. the self-service Intake Form which sends the whole form
+// every time) still gets that clear applied — this only protects columns
+// the request never mentions.
+$prev = $pdo->prepare("SELECT * FROM agent_intake WHERE email=?");
+$prev->execute([$email]);
+$pr = $prev->fetch(PDO::FETCH_ASSOC) ?: [];
+
+$resolveField = function (string $f) use ($fv, $body, $pr): string {
     switch ($f) {
         case 'full_time':
         case 'show_on_internet':
@@ -247,21 +311,18 @@ $resolveField = function (string $f) use ($fv, $body): string {
         case 'corporate_tax_id_enc':
             return tax_id_encrypt($fv('corporate_tax_id'));
         default:
-            return $fv($f);
+            return array_key_exists($f, $body) ? $fv($f) : (string)($pr[$f] ?? '');
     }
 };
 
 $required = [
-    'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
+    'full_name', 'phone', 'license_number', 'nar_number',
     'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
     'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
 ];
 $complete = true;
 foreach ($required as $r) if ($fv($r) === '') { $complete = false; break; }
 
-$prev = $pdo->prepare("SELECT * FROM agent_intake WHERE email=?");
-$prev->execute([$email]);
-$pr          = $prev->fetch(PDO::FETCH_ASSOC) ?: [];
 $wasSubmitted = !empty($pr['submitted']);
 $isSubmitted  = $complete || $wasSubmitted;
 

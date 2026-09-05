@@ -6,6 +6,7 @@ define('AGENTEDGE_NAV_LOADED', true);
 // `adminOnly => true` hides the item from non-admins (super/retention admin).
 require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
+require_once __DIR__ . '/lib/feature_flags.php';
 
 function nav_items(): array {
     // External links come from the DB (editable by super_admin in admin_links.php).
@@ -41,7 +42,13 @@ function nav_items(): array {
         'roster'           => ['key' => 'roster',           'label' => 'Agent Roster',        'href' => 'roster.php'],
         'calendar'         => ['key' => 'calendar',         'label' => 'Company Calendar',    'href' => 'calendar.php'],
         // 'event_planner' hidden from the sidebar for now — page still exists at event_planner.php.
+        // Admin Work OS (V0) — admin-only collapsible, rendered above the
+        // personalized Assets section below. 'adminOnly' is enough to hide it
+        // from non-admins: the generic adminOnly filter in render_sidebar()
+        // runs before the sentinel is special-cased, same as any other item.
+        '__admin_os__'     => ['key' => '__admin_os__',     'label' => 'Admin OS',             'href' => '', 'adminOnly' => true],
         '__assets__'       => ['key' => '__assets__',       'label' => '',                    'href' => ''],
+        'who_does_what'    => ['key' => 'who_does_what',    'label' => 'Who Does What',        'href' => 'who_does_what.php'],
         'industry_events'  => ['key' => 'industry_events',  'label' => 'Industry Events',     'href' => 'industry_events.php'],
         'university'       => ['key' => 'university',       'label' => 'INNOVATE University', 'href' => 'university.php'],
         'leaderboard'      => ['key' => 'leaderboard',      'label' => 'LAUNCH Leaderboard',  'href' => 'leaderboard.php'],
@@ -66,6 +73,15 @@ function nav_items(): array {
         // plain member. Not shown to agents with no team at all.
         ['key' => 'team_dashboard',    'label' => 'Team Dashboard',      'href' => 'team_dashboard.php',    'group_label' => 'My Resources', 'teamOnly' => true],
     ]);
+}
+
+// Items that appear under the admin-only "Admin OS" collapsible. Add more
+// entries here as Admin Work OS grows — mirrors agent_assets_items() below.
+function admin_os_nav_items(): array {
+    return [
+        ['key' => 'admin_work_os', 'label' => 'Work Dashboard', 'href' => 'admin_work_os.php'],
+        ['key' => 'admin_work_routines', 'label' => 'Routines', 'href' => 'admin_work_routines.php'],
+    ];
 }
 
 // Items that appear under the personalized "[FirstName]'s Assets" collapsible.
@@ -104,22 +120,16 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
         ['key'=>'admin_step_notify',         'label'=>'Step Notifications',  'href'=>'admin_step_notify.php',         'dept'=>'Operations'],
+        ["key"=>"admin_notification_triggers", "label"=>"Notification Triggers", "href"=>"admin_notification_triggers.php", "dept"=>"Operations"],
         ['key'=>'intake',                    'label'=>'Intake Form',         'href'=>'intake.php',                    'dept'=>'Operations'],
         ['key'=>'backoffice_roster',         'label'=>'Agent Roster',        'href'=>'backoffice_roster.php',         'dept'=>'Operations', 'leaderVisible'=>true],
         // Company-wide cross-MC list — intentionally admin-only, no 'leaderVisible'
         // (see project_mc_leader_bic_operations_access memory).
         ['key'=>'backoffice_production_ranking', 'label'=>'Production Ranking', 'href'=>'backoffice_production_ranking.php', 'dept'=>'Operations'],
-        ['key'=>'recruit_prospects',         'label'=>'Recruiting Prospects','href'=>'backoffice_prospects.php',      'dept'=>'Operations', 'superOnly'=>true],
-        // ── My Team (team_leader role) ──────────────────────────────────────────
-        // Its own dept so it never entangles with the mc_leader/bic-only
-        // 'leaderVisible' filtering already applied to Operations below.
-        // Team Dashboard itself moved to nav_items()'s 'My Resources' group —
-        // every agent has some form of team status to see there now (leader,
-        // member, or "not on a team yet"), not just leaders.
-        ['key'=>'team_recruiting',           'label'=>'Recruiting (Advantage)', 'href'=>'https://advantage.innovateonline.com', 'dept'=>'My Team', 'teamLeaderOnly'=>true, 'external'=>true],
         ['key'=>'backoffice_state_rosters',  'label'=>'State Rosters',       'href'=>'backoffice_state_rosters.php',  'dept'=>'Operations'],
         ['key'=>'backoffice_roster_changes', 'label'=>'Roster Changes',      'href'=>'backoffice_roster_changes.php', 'dept'=>'Operations'],
         ['key'=>'admin_import',              'label'=>'Import Agents',       'href'=>'admin_import.php',              'dept'=>'Operations'],
+        ['key'=>'conference_rooms',          'label'=>'Conference Rooms',    'href'=>'admin_conference_rooms.php',    'dept'=>'Operations'],
         // ── Broker Files ────────────────────────────────────────────────────────
         ['key'=>'bo_docs',                   'label'=>'Documents',           'href'=>'backoffice_docs.php',           'dept'=>'Broker Files'],
         ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
@@ -127,6 +137,12 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
+        // 'mc_events' existed and worked (own API, own_mc_slugs+mc_slugs-scoped
+        // permission checks, feeds the Company Calendar's Market Center tab via
+        // mc_events_cal.php) but had no menu entry anywhere -- same orphaned-page
+        // gap as listing_intel.php (see agent_assets_items() above). Confirmed
+        // 2026-09-03 chasing a real MC Leader's "North Wales calendar" ticket.
+        ['key'=>'mc_events',                 'label'=>'Market Center Events', 'href'=>'mc_events.php',                'dept'=>'Agent Communications'],
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
         ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Agent Communications'],
         ['key'=>'bo_google_audit',           'label'=>'Google Business Audit','href'=>'backoffice_google_audit.php',  'dept'=>'Agent Communications'],
@@ -134,11 +150,9 @@ function backoffice_nav_items(bool $superAdmin): array {
         // ── Events ──────────────────────────────────────────────────────────────
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
-        ['key'=>'press_release',             'label'=>'Press Release',       'href'=>'press_release.php',             'dept'=>'Events'],
         // ── Agent Development ───────────────────────────────────────────────────
         ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
-        ['key'=>'bo_workflows',              'label'=>'Workflows',           'href'=>'backoffice_workflows.php',      'dept'=>'Agent Development'],
-        ['key'=>'launch_cohorts',            'label'=>'LAUNCH Cohorts',      'href'=>'launch_cohorts.php',            'dept'=>'Agent Development'],
+        ['key'=>'admin_university_templates','label'=>'On Demand',           'href'=>'admin_university_templates.php','dept'=>'Agent Development', 'superOnly'=>true],
         ['key'=>'launch_curriculum',         'label'=>'LAUNCH Curriculum',   'href'=>'launch_curriculum.php',         'dept'=>'Agent Development'],
         ['key'=>'launch_schedule',           'label'=>'Launch Schedule',     'href'=>'launch_schedule.php',           'dept'=>'Agent Development'],
         ['key'=>'launch_coaching',           'label'=>'Launch Coaching',     'href'=>'launch_coaching.php',           'dept'=>'Agent Development'],
@@ -157,12 +171,19 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'admin_agent_login',         'label'=>'Agent Login Access',  'href'=>'admin_agent_login.php',         'dept'=>'Technology'],
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
+        ['key'=>'admin_who_does_what',       'label'=>'Who Does What',       'href'=>'admin_who_does_what.php',       'dept'=>'Technology'],
+        ['key'=>'bo_referral',               'label'=>'Referral',            'href'=>'backoffice_referral.php',       'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'teams',                     'label'=>'Teams',               'href'=>'teams.php',                     'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_links',               'label'=>'Link Settings',       'href'=>'admin_links.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_backoffice',          'label'=>'Menu Builder',        'href'=>'admin_backoffice.php',          'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_dotloop_tokens',      'label'=>'DotLoop Tokens',      'href'=>'admin_dotloop_tokens.php',      'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_pandadoc_templates',  'label'=>'PandaDoc Templates',  'href'=>'admin_pandadoc_templates.php',  'dept'=>'Technology', 'superOnly'=>true],
+        // Controlled per-staff rollout of internal feature flags (currently
+        // just Admin Work OS) — see lib/feature_flags.php and
+        // staff_feature_flags in local_db.php. super_admin-only, same as
+        // every other Technology settings surface above.
+        ['key'=>'staff_feature_access',      'label'=>'Staff Feature Access','href'=>'staff_feature_access.php',      'dept'=>'Technology', 'superOnly'=>true],
     ];
     foreach (backoffice_items_all() as $r) {
         $item = ['key'=>'bo_'.$r['id'], 'label'=>$r['label'], 'href'=>$r['url'], 'dept'=>($r['department'] ?? 'Operations')];
@@ -190,6 +211,7 @@ function nav_all_items_by_key(): array {
     foreach (nav_items() as $it) $map[$it['key']] = $it;
     foreach (backoffice_nav_items(true) as $it) $map[$it['key']] = $it;
     foreach (agent_assets_items() as $it) $map[$it['key']] = $it;
+    foreach (admin_os_nav_items() as $it) $map[$it['key']] = $it;
     return $map;
 }
 
@@ -240,6 +262,27 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['launchCoachOnly']) && !is_launch_coach() && !$admin) continue;
         if (!empty($it['staffOnly']) && in_array(my_role(), ['agent', 'launch_agent'], true)) continue;
         if (!empty($it['teamOnly']) && !$admin && !is_team_leader() && my_own_team_id() === null) continue;
+
+        // Sentinel — inject the admin-only Admin OS collapsible inline, above
+        // the personalized Assets section below. Reaching this point already
+        // means $admin is true (the generic adminOnly filter above skipped
+        // this item entirely otherwise); also requires the admin_work_os
+        // Staff Feature Access flag (super_admin always passes) — a staff
+        // member with the feature OFF gets no Admin OS nav section at all,
+        // same as a non-admin.
+        if ($it['key'] === '__admin_os__') {
+            if (!feature_enabled_for_current_user('admin_work_os')) continue;
+            echo '<button class="sb-links-toggle" data-group="admin-os" onclick="toggleSbLinks(this)" aria-expanded="false">'
+               . 'Admin OS <span class="sb-links-arrow">&#9660;</span></button>';
+            echo '<div class="sb-links-sub" hidden>';
+            foreach (admin_os_nav_items() as $ai) {
+                $act = $ai['key'] === $current ? ' sb-active' : '';
+                echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($ai['href']) . '">'
+                   . htmlspecialchars($ai['label']) . '</a>';
+            }
+            echo '</div>';
+            continue;
+        }
 
         // Sentinel — inject the personalized assets collapsible inline.
         if ($it['key'] === '__assets__') {
@@ -312,7 +355,7 @@ function render_sidebar(string $current, array $agent): void {
         $boItems    = backoffice_nav_items($superAdmin);
         $standalone = array_values(array_filter($boItems, fn($it) => !empty($it['standalone'])));
         $deptItems  = array_values(array_filter($boItems, fn($it) => empty($it['standalone'])));
-        $deptOrder  = ['My Team','Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources'];
+        $deptOrder  = ['Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources'];
         $byDept     = array_fill_keys($deptOrder, []);
         foreach ($deptItems as $it) {
             $d = $it['dept'] ?? 'Operations';
@@ -355,6 +398,9 @@ function render_sidebar(string $current, array $agent): void {
             }
             if (!$admin && $financeChecklistBypass) {
                 $visible = array_values(array_filter($visible, fn($it) => !empty($it['financeChecklistItem'])));
+            }
+            if ($deptName === 'Technology') {
+                usort($visible, fn($a, $b) => strcasecmp($a['label'], $b['label']));
             }
             echo '<button class="sb-dept-toggle" data-group="dept-' . htmlspecialchars($deptName) . '" onclick="toggleSbLinks(this)" aria-expanded="false">'
                . htmlspecialchars($deptName) . ' <span class="sb-links-arrow">&#9660;</span></button>';

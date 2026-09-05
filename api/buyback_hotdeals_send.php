@@ -4,6 +4,7 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../lib/agent_profile.php';
+require_once __DIR__ . '/../lib/crm_email_assertion.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -23,7 +24,7 @@ if ($listingKey === '' || !is_array($personIds) || empty($personIds)) {
 $c     = cfg();
 $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
 $token = $c['crm_token'] ?? '';
-$qs    = http_build_query(['token' => $token, 'email' => $agent['email']]);
+$qs    = http_build_query(['token' => $token, 'email' => crm_signed_email($agent['email'])]);
 $url   = $base . '/public/agentedge/buyback/hotdeals/send?' . $qs;
 
 $rationale = trim($body['rationale'] ?? '');
@@ -38,11 +39,14 @@ $sender  = [
     'phone' => $profile['phone'] ?? '',
 ];
 
+$savedDealId = trim($body['saved_deal_id'] ?? '');
+
 $payload = json_encode([
-    'listing_key' => $listingKey,
-    'person_ids'  => array_values(array_map('intval', $personIds)),
-    'rationale'   => $rationale !== '' ? $rationale : null,
-    'sender'      => $sender,
+    'listing_key'   => $listingKey,
+    'person_ids'    => array_values(array_map('intval', $personIds)),
+    'rationale'     => $rationale !== '' ? $rationale : null,
+    'sender'        => $sender,
+    'saved_deal_id' => $savedDealId !== '' ? $savedDealId : null,
 ]);
 
 $ch = curl_init($url);

@@ -4,10 +4,6 @@
   var container = document.getElementById('mc-resources');
   if (!container) return;
 
-  function slugify(s) {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  }
-
   function escHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
@@ -15,9 +11,12 @@
   fetch('api/profile.php')
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      var mc = d && d.profile && d.profile.marketCenter ? d.profile.marketCenter : '';
-      if (!mc) return null;
-      return fetch('api/mc_links.php?mc=' + encodeURIComponent(slugify(mc)));
+      // An agent can be assigned to more than one market center — fetch
+      // resources for all of them, not just the first.
+      var mcs = (d && d.profile && d.profile.marketCenters) || [];
+      if (!mcs.length) return null;
+      var qs = mcs.map(function (mc) { return 'mc[]=' + encodeURIComponent(mc); }).join('&');
+      return fetch('api/mc_links.php?' + qs);
     })
     .then(function (r) { return r ? r.json() : null; })
     .then(function (links) {

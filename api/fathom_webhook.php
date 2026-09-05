@@ -34,12 +34,12 @@ if (!fathom_verify_webhook($raw, $hdrs)) {
 }
 
 $evt = json_decode($raw, true) ?: [];
-if (($evt['type'] ?? $evt['event'] ?? '') !== 'new-meeting-content-ready') {
+if (!empty($evt['is_test_event'])) {
     json_out(['ok'=>true,'skipped'=>true]); // ack, ignore other event types
 }
 
 $data      = $evt['data'] ?? $evt;
-$meetingId = (string)($data['meeting_id'] ?? $data['id'] ?? '');
+$meetingId = (string)($data['recording_id'] ?? '');
 if ($meetingId === '') json_out(['ok'=>false,'error'=>'no meeting id in payload'], 400);
 
 $db = local_db();
@@ -56,13 +56,18 @@ $mo = $db->prepare("SELECT COALESCE(MAX(sort_ord),0) FROM uni_lessons WHERE cour
 $mo->execute([$courseId]);
 $nextOrd = ((int)$mo->fetchColumn()) + 10;
 
+$transcript     = $data['transcript'] ?? '';
+$transcriptHtml = $transcript !== ''
+    ? '<pre style="white-space:pre-wrap;font-family:inherit">' . htmlspecialchars($transcript) . '</pre>'
+    : 'Processing transcript…';
+
 $db->prepare(
     "INSERT INTO uni_lessons
         (course_id, title, sort_ord, type, content_html, tags, learning_objective, difficulty, related_lessons, pending_review, fathom_meeting_id, fathom_status)
      VALUES (?, ?, ?, 'video', ?, ?, ?, 'beginner', '[]', 1, ?, 'pending')"
 )->execute([
     $courseId, $title, $nextOrd,
-    'Processing transcript…',
+    $transcriptHtml,
     json_encode(['training-call']),
     'Review this recorded training call.',
     $meetingId,

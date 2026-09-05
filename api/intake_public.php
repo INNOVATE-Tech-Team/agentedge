@@ -54,14 +54,22 @@ try {
     // here, before the required-field check and the UPSERT below, both of
     // which read $body['mls_board']/['mls_id'] directly.
     if (is_array($body['mls_memberships'] ?? null)) {
-        $firstMembership = $body['mls_memberships'][0] ?? [];
-        $body['mls_board'] = trim($firstMembership['mls_association'] ?? '');
-        $body['mls_id']    = trim($firstMembership['mls_number'] ?? '');
+        // Mirror the first membership that actually names an association --
+        // not just array index 0. The client only requires *some* row to have
+        // an association selected (mlsChecked()), so a row with just an ID
+        // number sitting before it in DOM order must not blank out mls_board.
+        $primaryMembership = null;
+        foreach ($body['mls_memberships'] as $membership) {
+            if (trim($membership['mls_association'] ?? '') !== '') { $primaryMembership = $membership; break; }
+        }
+        $primaryMembership = $primaryMembership ?? ($body['mls_memberships'][0] ?? []);
+        $body['mls_board'] = trim($primaryMembership['mls_association'] ?? '');
+        $body['mls_id']    = trim($primaryMembership['mls_number'] ?? '');
     }
 
     // ── Required fields check ─────────────────────────────────────────────────
     $required = [
-        'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
+        'full_name', 'phone', 'license_number', 'nar_number',
         'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
         'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
     ];

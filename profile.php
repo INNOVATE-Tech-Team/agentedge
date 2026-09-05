@@ -165,7 +165,7 @@ $agent = require_login();
               <div id="phone-field" style="margin-top:10px;display:none">
                 <input type="tel" id="notif-phone" placeholder="(843) 555-1234"
                   style="padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box">
-                <div style="font-size:11px;color:#aaa;margin-top:6px">By checking this box and providing your number, you agree to receive recurring automated SMS announcement alerts from INNOVATE Real Estate. This is entirely optional and is not a condition of using AgentEdge or any other service. US numbers only. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="privacy.php#sms" target="_blank" style="color:#82C112">SMS terms</a>.</div>
+                <div style="font-size:11px;color:#aaa;margin-top:6px">By checking this box and providing your number, you agree to receive recurring automated SMS announcement alerts from INNOVATE Real Estate. This is entirely optional and is not a condition of using AgentEdge or any other service. US numbers only. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="terms.php" target="_blank" style="color:#82C112">SMS terms</a>.</div>
               </div>
             </div>
           </div>

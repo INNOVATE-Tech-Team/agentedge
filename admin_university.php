@@ -209,6 +209,36 @@ $courses = $db->query(
   </div>
 </div>
 
+<!-- New course modal -->
+<div class="modal-overlay" id="new-course-modal">
+  <div class="modal">
+    <h3>New Course</h3>
+    <div class="field"><label>Title</label><input type="text" id="nc-title" placeholder="e.g. Contract Training — South Carolina"></div>
+    <div class="field">
+      <label>How should this course start?</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+        <label style="font-weight:400;text-transform:none;font-size:13px"><input type="radio" name="nc-mode" value="blank" checked onchange="ncModeChanged()"> Blank Course — Start from scratch</label>
+        <label style="font-weight:400;text-transform:none;font-size:13px"><input type="radio" name="nc-mode" value="template" onchange="ncModeChanged()"> From Template — Pre-fill course structure and settings from a saved template</label>
+      </div>
+    </div>
+    <div class="field" id="nc-layout-wrap">
+      <label>Layout</label>
+      <select id="nc-layout">
+        <option value="standard">Standard — Lesson list, how courses look today</option>
+        <option value="on_demand_hero">On-Demand layout — Full-screen hero page and one-lesson-at-a-time player</option>
+      </select>
+    </div>
+    <div class="field" id="nc-template-wrap" style="display:none">
+      <label>Template</label>
+      <select id="nc-template"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('new-course-modal')">Cancel</button>
+      <button class="btn-primary" onclick="ncCreate()">Create</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function api(body){return fetch('api/uni_action.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());}
 function reload(){location.reload();}
@@ -247,7 +277,36 @@ function deleteCat(id,name){
   api({action:'delete_category',id}).then(()=>reload());
 }
 
-function newCourse(){location.href='admin_university_course.php?new=1';}
+function newCourse(){
+  document.getElementById('new-course-modal').classList.add('open');
+  api({action:'list_templates'}).then(d=>{
+    const sel=document.getElementById('nc-template');
+    sel.innerHTML = (d.templates||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join('') || '<option value="">No templates yet</option>';
+  });
+}
+function ncModeChanged(){
+  const isTemplate = document.querySelector('input[name="nc-mode"]:checked').value === 'template';
+  document.getElementById('nc-template-wrap').style.display = isTemplate ? 'block' : 'none';
+  // Layout is a blank-course choice only -- a template-instantiated course's layout comes from
+  // the template's own layout_style field (kept independent, not forced by "started from a template").
+  document.getElementById('nc-layout-wrap').style.display = isTemplate ? 'none' : 'block';
+}
+function ncCreate(){
+  const title = document.getElementById('nc-title').value.trim();
+  if (!title) { alert('Title required'); return; }
+  const isTemplate = document.querySelector('input[name="nc-mode"]:checked').value === 'template';
+  if (!isTemplate) {
+    const layout = document.getElementById('nc-layout').value;
+    location.href = 'admin_university_course.php?new=1&layout=' + encodeURIComponent(layout);
+    return;
+  }
+  const templateId = parseInt(document.getElementById('nc-template').value);
+  if (!templateId) { alert('Choose a template'); return; }
+  api({action:'create_course_from_template', template_id:templateId, title}).then(d=>{
+    if (d.ok) location.href = 'admin_university_course.php?id=' + d.id;
+    else alert(d.error);
+  });
+}
 function togglePublish(id,pub,label){
   if(!confirm(`${label} this course?`))return;
   api({action:'update_course',id,published:pub}).then(d=>{if(d.ok)reload();else alert(d.error);});

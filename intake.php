@@ -42,6 +42,9 @@ $intakeMarketCenters = local_db()
     .office-checklist label { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; text-transform: none; font-weight: 400; }
     .office-checklist input[type=checkbox] { width: auto; margin: 0; }
     .office-checklist.invalid { border-color: #e53935; }
+    #intake-form input.invalid, #intake-form select.invalid, #intake-form textarea.invalid { border-color: #e53935; }
+    .tbd-note { grid-column: 1 / -1; font-size: 11px; color: var(--faint); margin: -8px 0 8px; }
+    .tbd-note strong { color: #b26a00; }
 
     .license-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0 10px; align-items: end; margin-bottom: 10px; }
     @media (max-width: 520px) { .license-row { grid-template-columns: 1fr; } }
@@ -75,6 +78,7 @@ $intakeMarketCenters = local_db()
 
             <div class="form-grid">
               <div class="section-h">Contact Information</div>
+              <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
 
               <div class="field"><label>Full Name</label><input id="f-full_name" type="text" required></div>
               <div class="field"><label>Business Email</label><input id="f-email" type="email" value="<?= $myEmail ?>" disabled readonly></div>
@@ -97,6 +101,7 @@ $intakeMarketCenters = local_db()
 
             <div class="form-grid">
               <div class="section-h">License &amp; Certifications</div>
+              <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
 
               <div class="field"><label>Real Estate License Number</label><input id="f-license_number" type="text" required></div>
               <div class="field"><label>License State</label><input id="f-license_state" type="text" placeholder="e.g. SC, NC" required></div>
@@ -110,6 +115,7 @@ $intakeMarketCenters = local_db()
 
             <div class="form-grid">
               <div class="section-h">MLS Information</div>
+              <div class="tbd-note">Don't have this yet? Enter <strong>TBD</strong> — but keep in mind, writing TBD will delay your onboarding setup.</div>
 
               <div class="field"><label>MLS Board Name</label><input id="f-mls_board" type="text" required></div>
               <div class="field"><label>MLS ID Number</label><input id="f-mls_id" type="text" required></div>
@@ -148,7 +154,11 @@ $intakeMarketCenters = local_db()
                   <option value="Other">Other</option>
                 </select>
               </div>
-              <div class="field"><label>Career Start Date <span style="font-weight:400;color:var(--faint)">(optional)</span></label><input id="f-career_start" type="date"></div>
+              <div class="field">
+                <label>Initial License Year <span style="font-weight:400;color:var(--faint)">(optional)</span></label>
+                <input id="f-career_start" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="YYYY">
+                <div style="font-size:12px;color:var(--faint);margin-top:4px;">The year you got your real estate license</div>
+              </div>
               <div class="field"><label>Prior Occupation <span style="font-weight:400;color:var(--faint)">(optional)</span></label><input id="f-prior_occupation" type="text" placeholder="What did you do before real estate?"></div>
               <div class="field"><label>Prior Affiliation <span style="font-weight:400;color:var(--faint)">(optional)</span></label><input id="f-prior_affiliation" type="text" placeholder="Previous brokerage, if any"></div>
               <div class="field"><label><input type="checkbox" id="f-full_time" checked style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle">Full-Time Agent</label></div>
@@ -353,6 +363,7 @@ $intakeMarketCenters = local_db()
 
     el('btn-add-license').addEventListener('click', function() { addLicenseRow(); });
 
+
     document.querySelectorAll('#office-checklist input').forEach(function(node) {
       node.addEventListener('change', function() {
         el('office-checklist').classList.toggle('invalid', !officeChecked());
@@ -454,10 +465,25 @@ $intakeMarketCenters = local_db()
     el('intake-form').addEventListener('submit', function(e) {
       e.preventDefault();
 
+      let firstInvalid = null;
+      const missingMsgs = [];
+
       if (!officeChecked()) {
         el('office-checklist').classList.add('invalid');
-        el('office-checklist').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el('form-msg').textContent = 'Please select at least one office.';
+        firstInvalid = firstInvalid || el('office-checklist');
+        missingMsgs.push('select at least one office');
+      }
+
+      if (!mlsChecked()) {
+        const firstMlsAssoc = document.querySelector('#mls-memberships .mls-assoc');
+        if (firstMlsAssoc) firstMlsAssoc.classList.add('invalid');
+        firstInvalid = firstInvalid || firstMlsAssoc || el('mls-memberships');
+        missingMsgs.push('add an MLS / Association');
+      }
+
+      if (firstInvalid) {
+        firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el('form-msg').textContent = 'Please ' + missingMsgs.join(' and ') + '.';
         return;
       }
 

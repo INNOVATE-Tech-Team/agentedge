@@ -41,7 +41,27 @@ function lastNameFirst(string $full): string {
     return $last . ', ' . implode(' ', $parts);
 }
 
-$intakeAgents = local_db()->query(
+// agent_admin is joined in PHP rather than SQL. Its email column isn't fully
+// normalized (a handful of legacy rows are mixed-case), so the join used to
+// be `ON LOWER(aa.email) = i.email` — correct, but LOWER() on the joined
+// column stops SQLite from using agent_admin's own PRIMARY KEY index, forcing
+// a full scan of agent_admin for every single agent_intake row. Fetching
+// agent_admin once and matching by lowercased email in PHP keeps the exact
+// same (case-insensitive) matching behavior — including the row-multiplying
+// LEFT JOIN semantics for the few emails that currently have more than one
+// agent_admin row on file, a pre-existing data duplication this isn't
+// attempting to resolve — while turning an O(agents × admin rows) scan into
+// one O(admin rows) pass plus O(1) lookups.
+$agentAdminByEmail = [];
+foreach (local_db()->query(
+    "SELECT email, tax_1099_type, gets_1099, terminated_date, agent_team, coached_by, managed_by, recruit_source_email
+     FROM agent_admin ORDER BY email"
+)->fetchAll(PDO::FETCH_ASSOC) as $admRow) {
+    $agentAdminByEmail[strtolower(trim($admRow['email']))][] = $admRow;
+}
+$noAdminMatch = ['tax_1099_type' => null, 'gets_1099' => null, 'terminated_date' => null, 'agent_team' => null, 'coached_by' => null, 'managed_by' => null, 'recruit_source_email' => null];
+
+$intakeAgentsBase = local_db()->query(
     "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
             i.license_exp, i.nar_number, i.mls_board, i.mls_id, i.office_location,
             i.birthday, i.mailing_address, i.spouse_name, i.emergency_name, i.emergency_phone,
@@ -58,15 +78,29 @@ $intakeAgents = local_db()->query(
             i.personal_tax_id_enc, i.corporate_tax_id_enc,
             i.submitted, i.submitted_at, i.updated_at,
             e.hire_date, e.license_renewal,
-            ar.role,
-            aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by,
-            aa.recruit_source_email
+            ar.role
      FROM agent_intake i
      LEFT JOIN agent_extra e ON e.email = i.email
      LEFT JOIN agent_roles ar ON ar.email = i.email
      LEFT JOIN agent_admin aa ON aa.email = i.email
      ORDER BY i.full_name"
 )->fetchAll(PDO::FETCH_ASSOC);
+
+$intakeAgents = [];
+foreach ($intakeAgentsBase as $baseRow) {
+    $matches = $agentAdminByEmail[strtolower(trim($baseRow['email']))] ?? [$noAdminMatch];
+    foreach ($matches as $admMatch) {
+        $intakeAgents[] = array_merge($baseRow, [
+            'tax_1099_type'        => $admMatch['tax_1099_type'] ?? null,
+            'gets_1099'            => $admMatch['gets_1099'] ?? null,
+            'terminated_date'      => $admMatch['terminated_date'] ?? null,
+            'agent_team'           => $admMatch['agent_team'] ?? null,
+            'coached_by'           => $admMatch['coached_by'] ?? null,
+            'managed_by'           => $admMatch['managed_by'] ?? null,
+            'recruit_source_email' => $admMatch['recruit_source_email'] ?? null,
+        ]);
+    }
+}
 // Drop anyone currently offboarding or already offboarded — terminated_date
 // is stamped the moment an agent enters the Offboarding Queue (and cleared
 // only if that offboarding is cancelled), so this page stays focused on
@@ -99,14 +133,26 @@ foreach (local_db()->query(
 
 $pendingAgents = local_db()->query(
     "SELECT q.agent_email as email, q.agent_name as full_name, q.market_center as office_location,
-            q.agent_phone as phone, q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at
+            q.agent_phone as phone, q.start_date, q.role, q.sponsor as referring_agent, q.status, q.added_at,
+            COALESCE(r.retention_notes, '') as retention_notes
      FROM onboard_queue q
+     LEFT JOIN innovate_roster r ON LOWER(r.email) = LOWER(q.agent_email)
      WHERE q.status = 'active'
        AND LOWER(q.agent_email) NOT IN (SELECT LOWER(email) FROM agent_intake)
      ORDER BY q.added_at DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
 if ($myMcSlugs !== null) {
     $pendingAgents = array_values(array_filter($pendingAgents, fn($p) => in_array(slugify_mc($p['office_location'] ?? ''), $myMcSlugs, true)));
+}
+// Already tracked in the Pending queue above — exclude from Missing below so
+// an agent who's mid-onboarding (queued, no intake yet) doesn't also show up
+// as "no profile" under a second name-matched roster row. Matched the same
+// two ways (email, then name) as $missingAgents itself.
+$pendingEmails = [];
+$pendingNames  = [];
+foreach ($pendingAgents as $p) {
+    if ($p['email'])     $pendingEmails[strtolower(trim($p['email']))]    = true;
+    if ($p['full_name']) $pendingNames[strtolower(trim($p['full_name']))] = true;
 }
 
 // Active roster agents with no agent_intake row at all — never started a
@@ -116,10 +162,11 @@ if ($myMcSlugs !== null) {
 $missingAgents = [];
 
 $rosterRows = local_db()->query(
-    "SELECT agent_name, email, state_code, market_center FROM innovate_roster WHERE active=1"
+    "SELECT agent_name, email, state_code, market_center, COALESCE(retention_notes, '') as retention_notes FROM innovate_roster WHERE active=1"
 )->fetchAll(PDO::FETCH_ASSOC);
 
 $byRosterName = [];
+$rosterNotesByEmail = [];
 foreach ($rosterRows as $r) {
     $key = strtolower(trim($r['agent_name']));
     if ($key === '') continue;
@@ -129,6 +176,7 @@ foreach ($rosterRows as $r) {
     if ($r['email'] && !$byRosterName[$key]['email']) $byRosterName[$key]['email'] = $r['email'];
     if ($r['state_code'])    $byRosterName[$key]['states'][] = $r['state_code'];
     if ($r['market_center']) $byRosterName[$key]['mcs'][]    = $r['market_center'];
+    if (!empty($r['retention_notes'])) $rosterNotesByEmail[strtolower(trim($r['email'] ?? ''))] = $r['retention_notes'];
 }
 
 $intakeEmails = [];
@@ -140,14 +188,15 @@ foreach ($intakeAgents as $ia) {
 
 foreach ($byRosterName as $key => $r) {
     $email = strtolower(trim($r['email'] ?? ''));
-    $hasByEmail = $email !== '' && isset($intakeEmails[$email]);
-    $hasByName  = isset($intakeNames[$key]);
+    $hasByEmail = $email !== '' && (isset($intakeEmails[$email]) || isset($pendingEmails[$email]));
+    $hasByName  = isset($intakeNames[$key]) || isset($pendingNames[$key]);
     if (!$hasByEmail && !$hasByName) {
         $missingAgents[] = [
-            'full_name'       => $r['agent_name'],
-            'email'           => $r['email'] ?: '',
-            'office_location' => implode(', ', array_unique($r['mcs'])),
-            'state_code'      => implode(', ', array_unique($r['states'])),
+            'full_name'         => $r['agent_name'],
+            'email'             => $r['email'] ?: '',
+            'office_location'   => implode(', ', array_unique($r['mcs'])),
+            'state_code'        => implode(', ', array_unique($r['states'])),
+            'retention_notes'   => $rosterNotesByEmail[strtolower(trim($r['email'] ?? ''))] ?? '',
         ];
     }
 }
@@ -161,26 +210,17 @@ if ($myMcSlugs !== null) {
     }));
 }
 
-$hsCount = [];
-foreach (local_db()->query("SELECT agent_email, COUNT(*) as cnt FROM agent_intake_files GROUP BY agent_email")->fetchAll(PDO::FETCH_ASSOC) as $r) {
-    $hsCount[strtolower($r['agent_email'])] = (int)$r['cnt'];
-}
-
-// Most recently uploaded headshot per agent, used as their displayed photo.
+// Most recently uploaded headshot per agent, used as their displayed photo
+// in the always-visible collapsed row. (The full per-agent headshot list
+// used to also be preloaded here for the detail card's Photo section, but
+// that card is now fetched on demand — see api/agent_detail.php — so only
+// this summary-row avatar lookup is still needed on initial page load.)
 $hsLatest = [];
 foreach (local_db()->query(
     "SELECT agent_email, file_key FROM agent_intake_files
      WHERE id IN (SELECT MAX(id) FROM agent_intake_files GROUP BY agent_email)"
 )->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $hsLatest[strtolower($r['agent_email'])] = $r['file_key'];
-}
-
-// Full headshot list per agent, used to render inline thumbnails in the detail card.
-$hsAll = [];
-foreach (local_db()->query(
-    "SELECT agent_email, file_key, orig_name FROM agent_intake_files ORDER BY uploaded_at"
-)->fetchAll(PDO::FETCH_ASSOC) as $r) {
-    $hsAll[strtolower($r['agent_email'])][] = $r;
 }
 
 function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): string {
@@ -352,11 +392,10 @@ $missingCount = count($missingAgents);
   $rowId = 'row-' . $idx;
   $detailId = 'detail-' . $idx;
   $emailLower = strtolower($a['email']);
-  $hs = $hsCount[$emailLower] ?? 0;
 ?>
           <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>"
               data-search="<?= h(strtolower($a['full_name'] . ' ' . $a['email'] . ' ' . $a['office_location'])) ?>">
-            <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this)">&#9658;</button></td>
+            <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this,'<?= h($a['email']) ?>')">&#9658;</button></td>
             <td><?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'row-avatar') ?><strong><?= h($a['full_name'] ? lastNameFirst($a['full_name']) : '—') ?></strong></td>
             <td><?= h($a['email']) ?></td>
             <td><?= h($a['office_location'] ?: '—') ?></td>
@@ -364,231 +403,12 @@ $missingCount = count($missingAgents);
             <td><?php if (!$isSubmitted): ?><span class="st-badge <?= $statusClass ?>"><?= $statusLabel ?></span><?php endif; ?></td>
             <td><?= h($updated) ?></td>
           </tr>
+          <?php /* Detail panel content is fetched on demand by toggleDetail() from
+                    api/agent_detail.php the first time this row is expanded — see
+                    that file for the query/markup this used to inline here for
+                    every agent on every page load. */ ?>
           <tr class="detail-row" id="<?= $detailId ?>" style="display:none" data-tab="<?= $tabAttr ?>">
-            <td colspan="7">
-              <div class="detail-grid">
-
-                <div class="dg-section">Contact</div>
-                <div class="dg-field"><span class="dg-label">Full Name</span><?= dv($a['full_name']) ?></div>
-                <div class="dg-field"><span class="dg-label">Email</span><?= dv($a['email']) ?></div>
-                <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
-                <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
-                <?php
-                  $addrParts = array_filter([$a['address_line1'] ?? '', $a['address_line2'] ?? '']);
-                  $cityStZip = array_filter([$a['city'] ?? '', $a['state'] ?? '', $a['zip'] ?? '']);
-                  $structuredAddr = trim(implode(', ', $addrParts) . ($addrParts && $cityStZip ? ', ' : '') . implode(', ', $cityStZip) . (!empty($a['country']) ? ', ' . $a['country'] : ''));
-                  $addrDisplay = $structuredAddr !== '' ? $structuredAddr : ($a['mailing_address'] ?? '');
-                ?>
-                <div class="dg-field" style="grid-column:1/-1"><span class="dg-label">Address</span><?= dv($addrDisplay) ?></div>
-                <div class="dg-field"><span class="dg-label">Spouse / SO</span><?= dv($a['spouse_name']) ?></div>
-                <div class="dg-field"><span class="dg-label">Gender</span><?= dv($a['gender'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Driver's License #</span><?= dv($a['drivers_license'] ?? '') ?></div>
-
-                <div class="dg-section">Professional Background</div>
-                <div class="dg-field"><span class="dg-label">Specialty</span><?= dv($a['specialty'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Career Start</span><?= dv($a['career_start'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Prior Occupation</span><?= dv($a['prior_occupation'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Prior Affiliation</span><?= dv($a['prior_affiliation'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Full-Time</span><?= dvBool($a['full_time'] ?? 1) ?></div>
-                <div class="dg-field"><span class="dg-label">Show on Website</span><?= dvBool($a['show_on_internet'] ?? 1) ?></div>
-
-                <div class="dg-section">Business Entity &amp; Tax IDs</div>
-                <div class="dg-field"><span class="dg-label">Corporation Start</span><?= dv($a['corporation_start'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Corporation End</span><?= dv($a['corporation_end'] ?? '') ?></div>
-                <?php
-                  $personalLast4  = tax_id_last4($a['personal_tax_id_enc'] ?? '');
-                  $corporateLast4 = tax_id_last4($a['corporate_tax_id_enc'] ?? '');
-                ?>
-                <?php if ($isAdmin): ?>
-                <div class="dg-field">
-                  <span class="dg-label">Personal Tax ID</span>
-                  <?php if ($personalLast4 !== ''): ?>
-                    <span class="dg-value tax-id-mask" id="ptax-<?= $idx ?>">•••••<?= h($personalLast4) ?>
-                      <button type="button" class="btn-detail-link" style="padding:2px 8px;font-size:10px" onclick="revealTaxId('<?= h($a['email']) ?>','personal','ptax-<?= $idx ?>')">Reveal</button>
-                    </span>
-                  <?php else: ?>
-                    <span class="dg-value empty">—</span>
-                  <?php endif; ?>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Corporate Tax ID (EIN)</span>
-                  <?php if ($corporateLast4 !== ''): ?>
-                    <span class="dg-value tax-id-mask" id="ctax-<?= $idx ?>">•••••<?= h($corporateLast4) ?>
-                      <button type="button" class="btn-detail-link" style="padding:2px 8px;font-size:10px" onclick="revealTaxId('<?= h($a['email']) ?>','corporate','ctax-<?= $idx ?>')">Reveal</button>
-                    </span>
-                  <?php else: ?>
-                    <span class="dg-value empty">—</span>
-                  <?php endif; ?>
-                </div>
-                <?php endif; ?>
-
-                <div class="dg-section">License &amp; Certs</div>
-                <div class="dg-field"><span class="dg-label">License Number</span><?= dv($a['license_number']) ?></div>
-                <div class="dg-field"><span class="dg-label">License State</span><?= dv($a['license_state']) ?></div>
-                <div class="dg-field"><span class="dg-label">License Expiration</span><?= dv($a['license_exp']) ?></div>
-                <div class="dg-field"><span class="dg-label">NAR Number</span><?= dv($a['nar_number']) ?></div>
-                <div class="dg-field"><span class="dg-label">Hire Date</span><?= dv($a['hire_date'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">License Renewal</span><?= dv($a['license_renewal'] ?? '') ?></div>
-                <?php $extraLicenses = $additionalLicensesByEmail[$emailLower] ?? []; ?>
-                <?php if ($extraLicenses): ?>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <span class="dg-label">Additional Licenses</span>
-                  <span class="dg-value">
-                    <?php foreach ($extraLicenses as $lic): ?>
-                      <?= h(trim($lic['license_number'] . ' — ' . $lic['license_state'] . ' ' . ($lic['license_exp'] ? '(exp. ' . $lic['license_exp'] . ')' : ''))) ?><br>
-                    <?php endforeach; ?>
-                  </span>
-                </div>
-                <?php endif; ?>
-
-                <div class="dg-section">MLS</div>
-                <div class="dg-field"><span class="dg-label">MLS Board</span><?= dv($a['mls_board']) ?></div>
-                <div class="dg-field"><span class="dg-label">MLS ID</span><?= dv($a['mls_id']) ?></div>
-
-                <div class="dg-section">Personal</div>
-                <div class="dg-field"><span class="dg-label">T-Shirt Size</span><?= dv($a['tshirt_size']) ?></div>
-                <div class="dg-field"><span class="dg-label">Military</span><?= dvBool($a['is_military']) ?></div>
-                <div class="dg-field"><span class="dg-label">First Responder</span><?= dvBool($a['first_responder']) ?></div>
-                <div class="dg-field"><span class="dg-label">Teacher</span><?= dvBool($a['is_teacher']) ?></div>
-                <div class="dg-field"><span class="dg-label">Languages</span><?= dv($a['languages']) ?></div>
-                <div class="dg-field"><span class="dg-label">Phone Last 4</span><?= dv($a['phone_last4']) ?></div>
-
-                <div class="dg-section">Emergency Contact</div>
-                <div class="dg-field"><span class="dg-label">Name</span><?= dv($a['emergency_name']) ?></div>
-                <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['emergency_phone']) ?></div>
-
-                <div class="dg-section">Online Presence</div>
-                <div class="dg-field"><span class="dg-label">Website</span><?= dv($a['website'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Additional Websites</span><?= dv($a['additional_websites'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Facebook</span><?= dv($a['facebook'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">LinkedIn</span><?= dv($a['linkedin'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Instagram</span><?= dv($a['instagram'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Skype</span><?= dv($a['skype'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Twitter / X</span><?= dv($a['twitter'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">YouTube</span><?= dv($a['youtube'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">TikTok</span><?= dv($a['tiktok'] ?? '') ?></div>
-                <div class="dg-field"><span class="dg-label">Blog</span><?= dv($a['blog'] ?? '') ?></div>
-
-                <div class="dg-section">Bio &amp; Marketing</div>
-                <div class="dg-field"><span class="dg-label">Referring Agent</span><?= dv($a['referring_agent']) ?></div>
-                <div class="dg-field dg-bio" style="grid-column:1/-1"><span class="dg-label">Bio</span>
-                  <?php if (!empty($a['bio'])): ?>
-                    <div class="dg-value" style="white-space:pre-wrap;font-size:12px;line-height:1.55;max-height:140px;overflow-y:auto"><?= h($a['bio']) ?></div>
-                  <?php else: ?>
-                    <span class="dg-value empty">—</span>
-                  <?php endif; ?>
-                </div>
-
-                <div class="dg-section">Photo</div>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                    <?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'detail-avatar') ?>
-                    <div class="hs-grid" id="hs-grid-<?= $idx ?>" style="display:flex;gap:8px;flex-wrap:wrap">
-                      <?php foreach (($hsAll[$emailLower] ?? []) as $hsFile): ?>
-                        <div class="hs-thumb" style="position:relative;width:70px;height:70px">
-                          <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                            <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>" style="width:70px;height:70px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
-                          </a>
-                          <a class="hs-dl" href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>&dl=1" download="<?= h($hsFile['orig_name'] ?: 'headshot.jpg') ?>" title="Download">&#8681;</a>
-                          <?php if ($isAdmin): ?>
-                          <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>')" title="Delete">✕</button>
-                          <?php endif; ?>
-                        </div>
-                      <?php endforeach; ?>
-                      <?php if ($hs === 0): ?>
-                        <span class="dg-value empty">No headshot uploaded yet</span>
-                      <?php endif; ?>
-                    </div>
-                  </div>
-                  <?php if ($isAdmin): ?>
-                  <div style="margin-top:8px">
-                    <label class="hs-upload-label" for="hs-file-<?= $idx ?>">&#43; Upload Headshot</label>
-                    <input type="file" id="hs-file-<?= $idx ?>" accept="image/*" style="display:none" onchange="uploadHeadshot('<?= h($a['email']) ?>', <?= $idx ?>, this)">
-                    <span style="font-size:11px;color:var(--faint);margin-left:8px" id="hs-msg-<?= $idx ?>"></span>
-                  </div>
-                  <?php endif; ?>
-                </div>
-
-                <div class="dg-section">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0">(admin/BIC/ML only — not visible to the agent)</span></div>
-                <div class="dg-field" style="grid-column:1/-1" id="bo-notes-<?= $idx ?>" data-email="<?= h($a['email']) ?>">
-                  <div class="bo-notes-list" id="bo-notes-list-<?= $idx ?>" style="font-size:12px;color:var(--faint)">Loading notes…</div>
-                  <div style="display:flex;gap:8px;margin-top:8px">
-                    <textarea id="bo-notes-input-<?= $idx ?>" placeholder="Add a note…" rows="1"
-                              oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
-                              style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
-                    <button type="button" class="btn-detail-link" onclick="addAgentNote(<?= $idx ?>)">Add Note</button>
-                  </div>
-                </div>
-
-                <?php if ($isAdmin): ?>
-                <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
-                <div class="dg-field">
-                  <span class="dg-label">1099 Type</span>
-                  <select id="admin-1099type-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                    <?php foreach (['1099-NEC', '1099-MISC', 'W-2', 'N/A'] as $opt): ?>
-                      <option value="<?= h($opt) ?>" <?= ($a['tax_1099_type'] ?? '') === $opt ? 'selected' : '' ?>><?= h($opt) ?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Gets 1099?</span>
-                  <label style="font-size:12px"><input type="checkbox" id="admin-gets1099-<?= $idx ?>" style="width:auto;vertical-align:middle;margin-right:6px" <?= !empty($a['gets_1099']) || $a['gets_1099'] === null ? 'checked' : '' ?>> Yes</label>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Terminated Date</span>
-                  <input type="date" id="admin-terminated-<?= $idx ?>" value="<?= h($a['terminated_date'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Agent Team</span>
-                  <input type="text" id="admin-team-<?= $idx ?>" value="<?= h($a['agent_team'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Coached By</span>
-                  <select id="admin-coached-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                    <?php foreach ($launchCoaches as $lc): ?>
-                      <option value="<?= h($lc['email']) ?>" <?= ($a['coached_by'] ?? '') === $lc['email'] ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Managed By</span>
-                  <input type="text" id="admin-managed-<?= $idx ?>" value="<?= h($a['managed_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                </div>
-                <div class="dg-field">
-                  <span class="dg-label">Recruit Source</span>
-                  <select id="admin-recruitsrc-<?= $idx ?>" class="rs-select" data-current="<?= h($a['recruit_source_email'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
-                    <option value="">— none —</option>
-                  </select>
-                </div>
-                <div class="dg-field" style="grid-column:1/-1">
-                  <button type="button" class="btn-detail-link" onclick="saveAdminFields('<?= h($a['email']) ?>', <?= $idx ?>)">Save Staff-Managed Fields</button>
-                  <span id="admin-save-msg-<?= $idx ?>" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
-                </div>
-                <?php endif; ?>
-
-                <div class="detail-actions">
-                  <?php if ($isSubmitted): ?>
-                    <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? fmt_dt_et($a['submitted_at'], 'M j, Y') : '—') ?></span>
-                  <?php else: ?>
-                    <span style="font-size:11px;color:var(--faint)">Last updated <?= h($updated) ?></span>
-                  <?php endif; ?>
-                  <?php if ($isAdmin): ?>
-                  <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
-                  <?php endif; ?>
-                  <a href="intake.php" target="_blank" class="btn-detail-link">View Intake Form →</a>
-                  <?php if ($isAdmin): ?>
-                  <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
-                  <a href="agent_profile.php?email=<?= h($a['email']) ?>" class="btn-detail-link">View Full Profile →</a>
-                  <button type="button" class="btn-detail-link" id="send-link-<?= $idx ?>" onclick="sendCompletionLink('<?= h($a['email']) ?>', 'send-link-<?= $idx ?>')">Send Completion Link →</button>
-                  <?php endif; ?>
-                </div>
-
-              </div>
-            </td>
+            <td colspan="7"></td>
           </tr>
 <?php endforeach; ?>
 
@@ -623,6 +443,12 @@ $missingCount = count($missingAgents);
                   <span class="dg-label">Intake Form</span>
                   <span class="dg-value empty">No intake form submitted yet</span>
                 </div>
+                <?php if (!empty($p['retention_notes'])): ?>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">Retention Notes</span>
+                  <span class="dg-value" style="white-space:pre-line"><?= dv($p['retention_notes']) ?></span>
+                </div>
+                <?php endif; ?>
                 <div class="detail-actions">
                   <?php if ($isAdmin): ?>
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
@@ -661,6 +487,12 @@ $missingCount = count($missingAgents);
                   <span class="dg-label">Intake Form</span>
                   <span class="dg-value empty">No profile started — never submitted an intake form</span>
                 </div>
+                <?php if (!empty($m['retention_notes'])): ?>
+                <div class="dg-field" style="grid-column:1/-1">
+                  <span class="dg-label">Retention Notes</span>
+                  <span class="dg-value" style="white-space:pre-line"><?= dv($m['retention_notes']) ?></span>
+                </div>
+                <?php endif; ?>
                 <div class="detail-actions">
                   <?php if ($isAdmin): ?>
                   <button type="button" class="btn-detail-link" onclick="createMissingProfile('<?= h($m['email']) ?>', '<?= h($m['full_name']) ?>', '<?= h($m['office_location']) ?>')">Create Profile →</button>
@@ -813,8 +645,66 @@ $missingCount = count($missingAgents);
   </div>
 </div>
 
+<div class="modal-overlay" id="mergeModalOverlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Merge Duplicate — <span id="mg-agent-name"></span></h3>
+      <button type="button" class="modal-close" onclick="closeMergeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+
+      <div id="mg-step-pick">
+        <p style="font-size:12px;color:var(--faint);margin-top:0">
+          Find the other record for the same person. Everything below is a preview — nothing changes until you confirm.
+        </p>
+        <div class="em-field em-full">
+          <label>Duplicate record</label>
+          <input type="text" id="mg-search" placeholder="Search by name or email…" autocomplete="off">
+          <div id="mg-search-results" style="border:1px solid var(--border);border-radius:6px;margin-top:4px;max-height:180px;overflow:auto;display:none"></div>
+        </div>
+      </div>
+
+      <div id="mg-step-preview" style="display:none">
+        <div class="em-field em-full" style="display:flex;gap:10px;align-items:flex-start">
+          <label style="min-width:0;flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;cursor:pointer">
+            <input type="radio" name="mg-survivor" id="mg-radio-a" value="a" checked>
+            <strong id="mg-a-name"></strong>
+            <div id="mg-a-detail" style="font-size:11px;color:var(--faint);margin-top:4px"></div>
+          </label>
+          <label style="min-width:0;flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;cursor:pointer">
+            <input type="radio" name="mg-survivor" id="mg-radio-b" value="b">
+            <strong id="mg-b-name"></strong>
+            <div id="mg-b-detail" style="font-size:11px;color:var(--faint);margin-top:4px"></div>
+          </label>
+        </div>
+        <p style="font-size:11px;color:var(--faint)">The record on the left starts selected to keep. Pick whichever should survive — its data wins wherever both sides have a value; blank fields get filled in from the other side.</p>
+
+        <div class="em-field em-full">
+          <label>What will happen</label>
+          <div id="mg-table-preview" style="font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow:auto"></div>
+        </div>
+
+        <div class="em-field em-full">
+          <label>Type the surviving email to confirm</label>
+          <input type="text" id="mg-confirm-email" placeholder="">
+        </div>
+      </div>
+
+      <div id="mg-msg" style="font-size:12px;margin-top:8px"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-save" id="mg-merge-btn" style="display:none" onclick="submitMerge()">Merge</button>
+      <button type="button" class="btn-detail-link" onclick="closeMergeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/language_options.js"></script>
 <script>
 (function () {
+  initLanguageChecklist('em-languages-checks', 'em-languages');
+  var MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
+  var MERGE_AGENTS = <?= json_encode(array_map(fn($a) => ['email' => $a['email'], 'full_name' => $a['full_name']], $intakeAgents)) ?>;
   var searchEl = document.getElementById('agSearch');
   var tabs = document.querySelectorAll('.ag-tab');
   var activeTab = 'all';
@@ -1299,7 +1189,7 @@ $missingCount = count($missingAgents);
     });
   };
 
-  window.toggleDetail = function (detailId, btn) {
+  window.toggleDetail = function (detailId, btn, email) {
     var detailRow = document.getElementById(detailId);
     if (!detailRow) return;
     var dataRow = btn.closest('tr');
@@ -1315,8 +1205,50 @@ $missingCount = count($missingAgents);
       btn.classList.add('open');
       if (dataRow) dataRow.classList.add('expanded');
       var m = /^detail-(\d+)$/.exec(detailId);
-      if (m) loadAgentNotes(m[1]);
+      if (!m) return;
+      // Pending/missing-profile rows render their (small, cheap) detail panel
+      // inline already and never pass an email — nothing to fetch for those,
+      // just load notes as before. Intake rows pass their email and their
+      // panel content lives entirely in api/agent_detail.php, fetched here
+      // the first time the row opens; loadAgentNotes runs only after that
+      // markup (which is where the notes widget itself lives) is in the DOM.
+      if (email) {
+        loadAgentDetail(detailId, m[1], email).then(function () { loadAgentNotes(m[1]); });
+      } else {
+        loadAgentNotes(m[1]);
+      }
     }
+  };
+
+  // ── Lazy-loaded agent detail panel (intake rows only) ───────────────────
+  var detailLoadedIdx = {};
+
+  window.loadAgentDetail = function (detailId, idx, email, force) {
+    if (detailLoadedIdx[idx] && !force) return Promise.resolve();
+    var detailRow = document.getElementById(detailId);
+    var td = detailRow && detailRow.querySelector('td');
+    if (!td) return Promise.resolve();
+    td.innerHTML = '<div style="padding:20px;color:var(--faint);font-size:12px">Loading…</div>';
+    return fetch('api/agent_detail.php?email=' + encodeURIComponent(email) + '&idx=' + encodeURIComponent(idx), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (d) { return { status: r.status, body: d }; }); })
+      .then(function (res) {
+        if (res.status !== 200 || !res.body.ok) throw new Error(res.body.error || 'load failed');
+        td.innerHTML = res.body.html;
+        detailLoadedIdx[idx] = true;
+      })
+      .catch(function () {
+        td.innerHTML = '';
+        var msg = document.createElement('div');
+        msg.style.cssText = 'padding:20px;color:#b3261e;font-size:12px';
+        msg.textContent = 'Could not load this agent’s details. ';
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn-detail-link';
+        retry.textContent = 'Retry';
+        retry.onclick = function () { loadAgentDetail(detailId, idx, email, true); };
+        msg.appendChild(retry);
+        td.appendChild(msg);
+      });
   };
 
   // ── Notes (admin/BIC/ML only — enforced server-side by api/agent_notes.php,
@@ -1370,6 +1302,159 @@ $missingCount = count($missingAgents);
         else { alert(d.error || 'Could not save note.'); }
       })
       .catch(function () { alert('Network error saving note.'); });
+  };
+
+  // ── Merge Duplicate ────────────────────────────────────────────────────
+  var mgA = null; // { email, name } — the row the modal was opened from
+  var mgPreview = null; // last GET response: { a, b, tables }
+
+  window.openMergeModal = function (email, name) {
+    mgA = { email: email, name: name };
+    mgPreview = null;
+    document.getElementById('mg-agent-name').textContent = name;
+    document.getElementById('mg-search').value = '';
+    document.getElementById('mg-search-results').style.display = 'none';
+    document.getElementById('mg-step-pick').style.display = '';
+    document.getElementById('mg-step-preview').style.display = 'none';
+    document.getElementById('mg-merge-btn').style.display = 'none';
+    document.getElementById('mg-msg').textContent = '';
+    document.getElementById('mergeModalOverlay').style.display = 'flex';
+    setTimeout(function () { document.getElementById('mg-search').focus(); }, 0);
+  };
+
+  window.closeMergeModal = function () {
+    document.getElementById('mergeModalOverlay').style.display = 'none';
+  };
+
+  document.getElementById('mg-search').addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase();
+    var box = document.getElementById('mg-search-results');
+    if (q.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var matches = MERGE_AGENTS.filter(function (ag) {
+      // Exact-string compare, not case-insensitive: two intake rows can share the
+      // same email in different case (the bug this tool cleans up after), and
+      // each side needs to be able to find the other in this search.
+      return ag.email !== mgA.email &&
+        ((ag.full_name || '').toLowerCase().indexOf(q) !== -1 || ag.email.toLowerCase().indexOf(q) !== -1);
+    }).slice(0, 8);
+    if (!matches.length) {
+      box.style.display = 'block';
+      box.innerHTML = '<div style="padding:6px 8px;color:var(--faint);font-size:12px">No matches</div>';
+      return;
+    }
+    box.style.display = 'block';
+    box.innerHTML = matches.map(function (ag, i) {
+      return '<div class="mg-result" data-i="' + i + '" style="padding:6px 8px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)">' +
+        '<strong>' + escHtml(ag.full_name || ag.email) + '</strong> — ' + escHtml(ag.email) + '</div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.mg-result'), function (el) {
+      el.addEventListener('click', function () { loadMergePreview(matches[+el.dataset.i]); });
+      el.addEventListener('mouseenter', function () { el.style.background = 'var(--hover, #f2f2f2)'; });
+      el.addEventListener('mouseleave', function () { el.style.background = ''; });
+    });
+  });
+
+  function intakeDetailLine(row) {
+    var bits = [];
+    bits.push(row.submitted ? 'Submitted' : 'Draft');
+    if (row.license_number) bits.push('Lic #' + row.license_number);
+    if (row.phone) bits.push(row.phone);
+    bits.push('Updated ' + (row.updated_at || '—'));
+    return bits.join(' · ');
+  }
+
+  function loadMergePreview(other) {
+    document.getElementById('mg-msg').textContent = 'Loading…';
+    fetch('api/admin_merge_agents.php?a=' + encodeURIComponent(mgA.email) + '&b=' + encodeURIComponent(other.email), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (d) { return { status: r.status, body: d }; }); })
+      .then(function (res) {
+        document.getElementById('mg-msg').textContent = '';
+        if (res.status !== 200 || !res.body.ok) {
+          document.getElementById('mg-msg').textContent = res.body.error || 'Could not load preview.';
+          return;
+        }
+        mgPreview = res.body;
+        document.getElementById('mg-step-pick').style.display = 'none';
+        document.getElementById('mg-step-preview').style.display = '';
+        document.getElementById('mg-merge-btn').style.display = '';
+        document.getElementById('mg-a-name').textContent = mgPreview.a.full_name || mgPreview.a.email;
+        document.getElementById('mg-a-detail').textContent = mgPreview.a.email + ' — ' + intakeDetailLine(mgPreview.a);
+        document.getElementById('mg-b-name').textContent = mgPreview.b.full_name || mgPreview.b.email;
+        document.getElementById('mg-b-detail').textContent = mgPreview.b.email + ' — ' + intakeDetailLine(mgPreview.b);
+        document.getElementById('mg-radio-a').checked = true;
+        renderMergeTablePreview();
+        updateMergeConfirmPlaceholder();
+      })
+      .catch(function () {
+        document.getElementById('mg-msg').textContent = 'Network error loading preview.';
+      });
+  }
+
+  function renderMergeTablePreview() {
+    var el = document.getElementById('mg-table-preview');
+    if (!mgPreview.tables.length) {
+      el.innerHTML = '<span style="color:var(--faint)">No linked records on either side — just the duplicate profile itself will be removed.</span>';
+      return;
+    }
+    var survivorIsA = document.getElementById('mg-radio-a').checked;
+    el.innerHTML = mgPreview.tables.map(function (t) {
+      var survCount = survivorIsA ? t.count_a : t.count_b;
+      var loseCount = survivorIsA ? t.count_b : t.count_a;
+      var line = t.table + ': ';
+      if (t.conflict) {
+        line += '<span style="color:#b45309">both sides have a row — the surviving side\'s is kept, the other side\'s (' + loseCount + ') is discarded</span>';
+      } else if (loseCount > 0) {
+        line += loseCount + ' row(s) move over';
+      } else {
+        line += 'nothing to move';
+      }
+      return '<div style="padding:2px 0">' + line + '</div>';
+    }).join('');
+  }
+
+  function updateMergeConfirmPlaceholder() {
+    var survivorIsA = document.getElementById('mg-radio-a').checked;
+    var survivorEmail = survivorIsA ? mgPreview.a.email : mgPreview.b.email;
+    document.getElementById('mg-confirm-email').placeholder = survivorEmail;
+    document.getElementById('mg-confirm-email').value = '';
+  }
+
+  document.getElementById('mg-radio-a').addEventListener('change', function () { renderMergeTablePreview(); updateMergeConfirmPlaceholder(); });
+  document.getElementById('mg-radio-b').addEventListener('change', function () { renderMergeTablePreview(); updateMergeConfirmPlaceholder(); });
+
+  window.submitMerge = function () {
+    if (!mgPreview) return;
+    var survivorIsA = document.getElementById('mg-radio-a').checked;
+    var survivor = survivorIsA ? mgPreview.a.email : mgPreview.b.email;
+    var duplicate = survivorIsA ? mgPreview.b.email : mgPreview.a.email;
+    var typed = document.getElementById('mg-confirm-email').value.trim().toLowerCase();
+    if (typed !== survivor.toLowerCase()) {
+      document.getElementById('mg-msg').textContent = 'Type the surviving email exactly to confirm.';
+      return;
+    }
+    var btn = document.getElementById('mg-merge-btn');
+    btn.disabled = true;
+    document.getElementById('mg-msg').textContent = 'Merging…';
+    fetch('api/admin_merge_agents.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ survivor: survivor, duplicate: duplicate })
+    })
+      .then(function (r) { return r.json().then(function (d) { return { status: r.status, body: d }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (res.status !== 200 || !res.body.ok) {
+          document.getElementById('mg-msg').textContent = res.body.error || 'Merge failed.';
+          return;
+        }
+        document.getElementById('mg-msg').style.color = 'green';
+        document.getElementById('mg-msg').textContent = 'Merged. Reloading…';
+        setTimeout(function () { location.reload(); }, 700);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        document.getElementById('mg-msg').textContent = 'Network error merging.';
+      });
   };
 }());
 </script>

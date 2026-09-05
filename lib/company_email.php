@@ -137,6 +137,46 @@ function ce_resolve_leaders(PDO $db, array $types): array {
     return array_values($out);
 }
 
+// Every enabled team's leader(s) (team_leaders joined to teams — a disabled
+// team's leader isn't pulled in, same enabled-team gate fetch_perms() uses to
+// grant the team_leader role in roles.php; a team can have more than one
+// leader) UNIONed with anyone carrying the standalone agent_extra
+// is_team_leader_tag (set from an agent's profile — see agent_profile.php).
+// The tag is deliberately independent of teams/team_leaders: it doesn't
+// affect is_team_leader()/My Team access, it only adds someone to this one
+// Company Email audience for people who lead a team without a "Team" record.
+function ce_resolve_team_leaders(PDO $db): array {
+    $rows = $db->query(
+        "SELECT DISTINCT tl.agent_email AS email FROM team_leaders tl
+         JOIN teams t ON t.id = tl.team_id
+         WHERE t.enabled = 1
+         UNION
+         SELECT email FROM agent_extra WHERE is_team_leader_tag = 1"
+    )->fetchAll(PDO::FETCH_COLUMN);
+
+    $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
+    $optOutSet = array_flip(array_map(fn($e) => strtolower(trim($e)), $optOut));
+
+    $nameByEmail = [];
+    foreach (ce_fetch_crm_roster() as $a) {
+        $e = strtolower(trim($a['email'] ?? ''));
+        if ($e) $nameByEmail[$e] = $a['fullName'] ?? '';
+    }
+
+    $out = [];
+    foreach ($rows as $email) {
+        $email = strtolower(trim($email));
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL) || isset($optOutSet[$email])) continue;
+        $name = $nameByEmail[$email] ?? '';
+        if ($name === '') {
+            $localPart = strstr($email, '@', true) ?: $email;
+            $name = ucwords(str_replace(['.', '_'], ' ', $localPart));
+        }
+        $out[$email] = ['email' => $email, 'name' => $name];
+    }
+    return array_values($out);
+}
+
 // Recipients across one or more audiences, as [['email'=>..,'name'=>..], ...],
 // deduped by email (a person matching more than one selected audience is only
 // emailed once). Each audience is resolved independently by
@@ -228,6 +268,10 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 
     if ($audience === 'leaders') {
         return ce_resolve_leaders($db, $leaderTypes);
+    }
+
+    if ($audience === 'team_leader') {
+        return ce_resolve_team_leaders($db);
     }
 
     if ($audience === 'admin') {
@@ -340,7 +384,7 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEmail, array $leaderTypes = []): ?string {
     if (!$audiences) return 'Pick at least one audience';
 
-    $validKeys = ['all', 'admin', 'mc', 'person', 'leaders', 'mc_leader', 'bic', 'launch_agents', 'launch_coaches'];
+    $validKeys = ['all', 'admin', 'mc', 'person', 'leaders', 'mc_leader', 'bic', 'team_leader', 'launch_agents', 'launch_coaches'];
     foreach ($audiences as $audience) {
         if (!in_array($audience, $validKeys, true)) return 'Invalid audience';
 
@@ -357,7 +401,7 @@ function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEm
         } elseif ($audience === 'leaders') {
             if (!is_admin()) return 'Forbidden';
             if (!array_intersect($leaderTypes, ['mc_leader', 'bic'])) return 'Pick Market Center Leaders, BICs, or both';
-        } elseif (in_array($audience, ['mc_leader', 'bic'], true)) {
+        } elseif (in_array($audience, ['mc_leader', 'bic', 'team_leader'], true)) {
             if (!is_admin()) return 'Forbidden';
         } elseif (in_array($audience, ['launch_agents', 'launch_coaches'], true)) {
             if (!can_manage_cohorts()) return 'Forbidden';
@@ -389,27 +433,71 @@ function ce_log_to_agent_records(array $recipients, string $subject, string $bod
     }
 }
 
-// {{merge_var}} substitution, personalized per recipient. $recipient is one
+// Mints (and persists) a per-email one-click unsubscribe link for
+// {{unsubscribe_url}}. Stored random token (same pattern as
+// agent_extra.cal_token) rather than a signed URL, so no new secret is
+// needed in config.php. Landing on unsubscribe.php sets
+// notification_prefs.notify_email=0, which every Company Email audience
+// already checks before sending (see ce_resolve_single_audience()) — no
+// separate suppression list needed.
+function ce_unsubscribe_url(PDO $db, string $host, string $email): string {
+    $email = strtolower(trim($email));
+    if ($email === '') return '';
+    $stmt = $db->prepare("SELECT unsub_token FROM notification_prefs WHERE email=?");
+    $stmt->execute([$email]);
+    $token = $stmt->fetchColumn();
+    if (!$token) {
+        $token = bin2hex(random_bytes(16));
+        $db->prepare(
+            "INSERT INTO notification_prefs (email, unsub_token) VALUES (?, ?)
+             ON CONFLICT(email) DO UPDATE SET
+                 unsub_token = CASE WHEN notification_prefs.unsub_token = ''
+                                    THEN excluded.unsub_token ELSE notification_prefs.unsub_token END"
+        )->execute([$email, $token]);
+        $stmt->execute([$email]);
+        $token = $stmt->fetchColumn() ?: $token;
+    }
+    return 'https://' . $host . '/unsubscribe.php?email=' . urlencode($email) . '&t=' . urlencode($token);
+}
+
+// {{merge_var}} substitution, personalized per recipient, with an optional
+// {{token|fallback text}} syntax — falls back to that text (or, for tokens
+// with a sensible built-in default like first_name, to that default) when
+// the token has no value for this recipient. A token actually written with
+// an explicit fallback always wins over the built-in one. $recipient is one
 // row from ce_resolve_recipients() (email/name plus the ce_enrich_recipients
-// fields) — any field missing on a given recipient just renders blank.
-function ce_apply_merge_vars(string $html, array $recipient): string {
+// fields).
+function ce_apply_merge_vars(PDO $db, string $host, string $html, array $recipient): string {
     $name  = trim($recipient['name'] ?? '');
-    $full  = $name !== '' ? $name : 'there';
-    $first = $name !== '' ? preg_split('/\s+/', $name)[0] : 'there';
+    $parts = $name !== '' ? preg_split('/\s+/', $name) : [];
+    $first = $parts[0] ?? '';
+    $last  = count($parts) > 1 ? end($parts) : '';
 
     $vars = [
-        '{{first_name}}'     => $first,
-        '{{full_name}}'      => $full,
-        '{{market_center}}'  => $recipient['market_center']  ?? '',
-        '{{brokerage}}'      => $recipient['brokerage']      ?? '',
-        '{{phone}}'          => $recipient['phone']          ?? '',
-        '{{license_number}}' => $recipient['license_number'] ?? '',
-        '{{license_state}}'  => $recipient['license_state']  ?? '',
-        '{{office}}'         => $recipient['office']         ?? '',
+        'first_name'      => $first,
+        'last_name'       => $last,
+        'full_name'       => $name,
+        'email'           => $recipient['email'] ?? '',
+        'market_center'   => $recipient['market_center']  ?? '',
+        'brokerage'       => $recipient['brokerage']      ?? '',
+        'phone'           => $recipient['phone']          ?? '',
+        'license_number'  => $recipient['license_number'] ?? '',
+        'license_state'   => $recipient['license_state']  ?? '',
+        'office'          => $recipient['office']         ?? '',
+        'company_name'    => 'INNOVATE Real Estate',
+        'company_address' => '3103 S Hwy 17 Bus, Unit F, Murrells Inlet, SC 29576',
+        'unsubscribe_url' => ce_unsubscribe_url($db, $host, $recipient['email'] ?? ''),
     ];
-    return str_replace(
-        array_keys($vars),
-        array_map(fn($v) => htmlspecialchars($v, ENT_QUOTES), array_values($vars)),
+    $builtinFallback = ['first_name' => 'there'];
+
+    return preg_replace_callback(
+        '/\{\{\s*([a-z_]+)(?:\s*\|\s*([^}]*))?\s*\}\}/i',
+        function ($m) use ($vars, $builtinFallback) {
+            $key      = strtolower($m[1]);
+            $fallback = array_key_exists(2, $m) ? trim($m[2]) : ($builtinFallback[$key] ?? '');
+            $value    = $vars[$key] ?? '';
+            return htmlspecialchars($value !== '' ? $value : $fallback, ENT_QUOTES);
+        },
         $html
     );
 }

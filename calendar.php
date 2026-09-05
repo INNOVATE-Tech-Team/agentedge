@@ -2,12 +2,18 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/roles.php';
+require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 $agent    = require_login();
 $is_admin = is_admin();
 $is_leader = is_leader();
 $cal_id   = cfg()['gcal_calendar_id'] ?? 'training@innovateonline.com';
 $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
+// For the "Restrict to Market Center(s)" picker on the Events-tab admin
+// modal — only admins ever see that modal, so no MC-scoping needed here.
+$mcOptsAll = $is_admin
+    ? local_db()->query("SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 ?>
 <!doctype html>
 <html lang="en">
@@ -107,6 +113,14 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
             <button id="cal-add-events-btn" class="cal-rsvp-btn cal-rsvp-active">+ Add Event</button>
             <?php endif; ?>
           </div>
+          <!-- Market Center tab actions — shown/hidden by JS; MC leaders/BICs
+               manage their own MC's events on the dedicated page (own
+               create/edit/delete UI, already scoped to the MCs they lead). -->
+          <?php if ($is_leader): ?>
+          <div id="cal-mc-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+            <a class="cal-rsvp-btn cal-rsvp-active" href="mc_events.php" style="text-decoration:none">+ Add Event</a>
+          </div>
+          <?php endif; ?>
           <div class="cal-grid" id="cal-grid"></div>
         </section>
         <section class="card" style="margin-top:16px">
@@ -225,6 +239,15 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
         <label class="cal-field-label">Capacity <span style="color:#888;font-weight:400">(optional — extra RSVPs are waitlisted)</span>
           <input type="number" min="0" id="cal-ev2-capacity" class="cal-field-input" placeholder="No limit">
         </label>
+        <label class="cal-field-label">Restrict to Market Center(s) <span style="color:#888;font-weight:400">(optional — leave all unchecked to show this to everyone)</span></label>
+        <div id="cal-ev2-mc-list" style="display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <?php foreach ($mcOptsAll as $opt): ?>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;cursor:pointer">
+            <input type="checkbox" class="cal-ev2-mc-check" value="<?= htmlspecialchars($opt['slug']) ?>">
+            <?= htmlspecialchars(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?>
+          </label>
+          <?php endforeach; ?>
+        </div>
         <div id="cal-ev2-modal-err" class="cal-modal-err" style="display:none"></div>
         <div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px">
           <div class="cal-field-label" style="margin-bottom:6px">Attendees</div>
@@ -241,6 +264,18 @@ $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
     </div>
   </div>
   <?php endif; ?>
+
+  <!-- Day events popover — opened by clicking a "+X more" chip on the grid;
+       not admin-gated since any signed-in agent can see the day's full list. -->
+  <div id="cal-day-modal-overlay" class="cal-modal-overlay" style="display:none">
+    <div class="cal-modal" style="width:min(420px,100%)">
+      <div class="cal-modal-header">
+        <span id="cal-day-modal-title">Events</span>
+        <button id="cal-day-modal-close" class="cal-modal-close">&times;</button>
+      </div>
+      <div class="cal-modal-body" id="cal-day-modal-body"></div>
+    </div>
+  </div>
 
   <script>const CAL_IS_ADMIN = <?= $is_admin ? 'true' : 'false' ?>;</script>
   <script src="assets/calendar.js"></script>

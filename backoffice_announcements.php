@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 if (!can_post_announcements()) { header('Location: index.php'); exit; }
@@ -8,6 +9,11 @@ if (!can_post_announcements()) { header('Location: index.php'); exit; }
 $myMcSlugs = my_mc_slugs();
 $isMcOnly  = is_mc_leader() && !is_bic() && !is_admin();
 $isBicOnly = is_bic() && !is_admin();
+$allMcs    = local_db()
+    ->query("SELECT slug, name FROM market_centers WHERE enabled=1 ORDER BY state_code, sort_ord, name")
+    ->fetchAll(PDO::FETCH_ASSOC);
+$mcNameMap = [];
+foreach ($allMcs as $mc) { $mcNameMap[$mc['slug']] = $mc['name']; }
 ?>
 <!doctype html>
 <html lang="en">
@@ -25,6 +31,8 @@ $isBicOnly = is_bic() && !is_admin();
     @media(max-width:900px){.ann-editor-layout{grid-template-columns:1fr}}
     .field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px}
     .field-full{margin-bottom:12px}
+    .mc-check-list{display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;background:#fff}
+    .mc-check{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;cursor:pointer}
     .field label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px}
     .field input,.field select{width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box}
     .field input:focus,.field select:focus{outline:2px solid #82C112;border-color:#82C112}
@@ -245,15 +253,28 @@ $isBicOnly = is_bic() && !is_admin();
               </div>
 
               <div class="field-full field" id="mc-target-row">
-                <label>Market Center</label>
+                <label>Market Center(s)</label>
                 <?php if (!empty($myMcSlugs) && !is_admin()): ?>
-                  <select id="ann-mc-slug">
+                  <div class="mc-check-list" id="mc-check-list">
                     <?php foreach ($myMcSlugs as $slug): ?>
-                      <option value="<?= htmlspecialchars($slug) ?>"><?= htmlspecialchars(ucwords(str_replace('-',' ',$slug))) ?></option>
+                      <label class="mc-check">
+                        <input type="checkbox" class="ann-mc" value="<?= htmlspecialchars($slug) ?>" checked
+                          <?= count($myMcSlugs) === 1 ? 'disabled' : '' ?>>
+                        <?= htmlspecialchars($mcNameMap[$slug] ?? ucwords(str_replace('-',' ',$slug))) ?>
+                      </label>
                     <?php endforeach; ?>
-                  </select>
+                  </div>
+                <?php elseif (!empty($allMcs)): ?>
+                  <div class="mc-check-list" id="mc-check-list">
+                    <?php foreach ($allMcs as $mc): ?>
+                      <label class="mc-check">
+                        <input type="checkbox" class="ann-mc" value="<?= htmlspecialchars($mc['slug']) ?>">
+                        <?= htmlspecialchars($mc['name']) ?>
+                      </label>
+                    <?php endforeach; ?>
+                  </div>
                 <?php else: ?>
-                  <input type="text" id="ann-mc-slug" placeholder="e.g. myrtle-beach">
+                  <input type="text" id="ann-mc-slug" placeholder="e.g. myrtle-beach, charlotte">
                 <?php endif; ?>
               </div>
 
@@ -298,6 +319,7 @@ $isBicOnly = is_bic() && !is_admin();
 <script>
 const IS_ADMIN = <?= is_admin()     ? 'true' : 'false' ?>;
 const MY_MCS   = <?= json_encode($myMcSlugs) ?>;
+const MC_NAME_MAP = <?= json_encode($mcNameMap) ?>;
 
 // ── Rich text editor ──────────────────────────────────────────────────────────
 // ── Custom toolbar dropdown (Style) ────────────────────────────────────────
@@ -465,14 +487,33 @@ function fmtDate(s){if(!s)return'—';return new Date(s).toLocaleDateString('en-
 function audLabel(a,mc){
   if(a==='all')   return '<span class="aud-badge aud-all">All Company</span>';
   if(a==='admin') return '<span class="aud-badge aud-admin">Admin &amp; Staff</span>';
-  if(a==='mc')    return '<span class="aud-badge aud-mc">MC: '+esc(mc||'?')+'</span>';
+  if(a==='mc'){
+    const names=String(mc||'').split(',').map(s=>s.trim()).filter(Boolean).map(s=>MC_NAME_MAP[s]||s);
+    return '<span class="aud-badge aud-mc">MC: '+esc(names.join(', ')||'?')+'</span>';
+  }
   if(a==='bic')   return '<span class="aud-badge aud-bic">My Agents (BIC)</span>';
   return esc(a);
 }
-function onAudienceChange(){
-  document.getElementById('mc-target-row').style.display=document.getElementById('ann-audience').value==='mc'?'':'none';
+function getMcSlugs(){
+  if(document.getElementById('mc-check-list')){
+    return Array.from(document.querySelectorAll('.ann-mc:checked')).map(b=>b.value);
+  }
+  const el=document.getElementById('ann-mc-slug');
+  return el ? el.value.split(',').map(s=>s.trim()).filter(Boolean) : [];
 }
-<?php if($isMcOnly): ?>document.getElementById('mc-target-row').style.display='';<?php endif; ?>
+function setMcSlugs(slugs){
+  if(document.getElementById('mc-check-list')){
+    const set=new Set(slugs);
+    document.querySelectorAll('.ann-mc').forEach(b=>{b.checked=set.has(b.value);});
+  } else {
+    const el=document.getElementById('ann-mc-slug');
+    if(el) el.value=slugs.join(',');
+  }
+}
+function onAudienceChange(){
+  document.getElementById('mc-target-row').style.display=document.getElementById('ann-audience').value==='mc'?'block':'none';
+}
+<?php if($isMcOnly): ?>document.getElementById('mc-target-row').style.display='block';<?php endif; ?>
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 let items=[];
@@ -505,18 +546,18 @@ function getPinnedVal(){const el=document.getElementById('ann-pinned');return el
 function saveAnn(){
   const id=document.getElementById('edit-id').value;
   const audience=getAudience();
-  const mcSlugEl=document.getElementById('ann-mc-slug');
+  const mcSlugs=audience==='mc'?getMcSlugs():[];
   const title=document.getElementById('ann-title').value.trim();
   const body=getBodyValue();
   if(!title||!body.replace(/<[^>]*>/g,'').trim()){alert('Title and message are required.');return;}
-  if(audience==='mc'&&!(mcSlugEl?mcSlugEl.value.trim():'')){alert('Select a Market Center.');return;}
+  if(audience==='mc'&&!mcSlugs.length){alert('Select at least one Market Center.');return;}
   const imageFile=document.getElementById('ann-image').files[0];
   const useFormData=!!imageFile||_removeCurImage;
   const fields={
     action:id?'update':'create', title, body, audience,
     pinned:getPinnedVal(),
     expires_at:document.getElementById('ann-expires').value||'',
-    target_mc_slug:audience==='mc'?(mcSlugEl?mcSlugEl.value.trim():''):'',
+    target_mc_slug:mcSlugs.join(','),
     image_position:_imgPosition, image_size:_imgSize,
   };
   if(id) fields.id=id;
@@ -544,8 +585,7 @@ function editAnn(id){
   if(audEl.tagName==='SELECT'){audEl.value=a.audience; onAudienceChange();}
   const pinEl=document.getElementById('ann-pinned');
   if(pinEl.type==='checkbox') pinEl.checked=!!a.pinned;
-  const mcEl=document.getElementById('ann-mc-slug');
-  if(mcEl) mcEl.value=a.target_mc_slug||'';
+  setMcSlugs(String(a.target_mc_slug||'').split(',').map(s=>s.trim()).filter(Boolean));
   _removeCurImage=false;
   clearNewImage();
   if(a.image_key){
@@ -573,6 +613,7 @@ function clearForm(){
   if(audEl.tagName==='SELECT'){audEl.value='all'; onAudienceChange();}
   const pinEl=document.getElementById('ann-pinned');
   if(pinEl.type==='checkbox') pinEl.checked=false;
+  document.querySelectorAll('.ann-mc').forEach(b=>{b.checked=b.defaultChecked;});
   const mcEl=document.getElementById('ann-mc-slug');
   if(mcEl) mcEl.value='';
   document.getElementById('edit-id').value='';

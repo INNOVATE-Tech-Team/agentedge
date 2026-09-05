@@ -14,12 +14,12 @@ $date   = trim($_GET['date'] ?? '');
 
 $room = $roomId ? room_booking_room($db, $roomId) : null;
 if (!$room) { echo json_encode(['ok'=>false,'error'=>'Room not found']); exit; }
-if (!room_booking_can_view_mc($room['mc_slug'])) { echo json_encode(['ok'=>false,'error'=>'Unauthorized']); exit; }
+if (!room_booking_can_view_room($db, $room)) { echo json_encode(['ok'=>false,'error'=>'Unauthorized']); exit; }
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { echo json_encode(['ok'=>false,'error'=>'Invalid date']); exit; }
 
 echo json_encode([
     'ok'    => true,
-    'room'  => ['id' => (int)$room['id'], 'name' => $room['name'], 'mc_slug' => $room['mc_slug']],
+    'room'  => ['id' => (int)$room['id'], 'name' => $room['name'], 'mc_slug' => $room['mc_slug'], 'schedule_type' => $room['schedule_type'] ?? 'flexible'],
     'date'  => $date,
-    'slots' => room_booking_slot_grid($db, $roomId, $date),
+    'slots' => room_booking_slot_grid($db, $room, $date),
 ]);

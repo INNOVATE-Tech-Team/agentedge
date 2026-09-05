@@ -95,7 +95,8 @@ function event_details_block_html(string $title, array $info): string {
 
 // Queues a branded HTML email — mirrors the direct notification_queue
 // INSERT pattern already used by notify_onboard_completed() etc. in
-// notifications.php, since queue_email_to() only supports plain text.
+// notifications.php, wrapping content in the shared branded shell rather
+// than passing raw HTML through queue_email_to()'s isHtml flag.
 function queue_branded_email(array $emails, string $subject, string $contentHtml, string $fromEmail = '', string $fromName = ''): void {
     $body = notification_email_html($contentHtml);
     $ins  = local_db()->prepare(

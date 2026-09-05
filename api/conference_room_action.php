@@ -45,6 +45,47 @@ if ($action === 'toggle') {
     exit;
 }
 
+if ($action === 'set_notify_email') {
+    $id    = (int)($in['id'] ?? 0);
+    $email = trim($in['notify_email'] ?? '');
+    if (!$id) { echo json_encode(['ok'=>false,'error'=>'Room required']); exit; }
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        echo json_encode(['ok'=>false,'error'=>'Invalid email address']); exit;
+    }
+    $db->prepare("UPDATE conference_rooms SET notify_email=? WHERE id=?")->execute([$email, $id]);
+    echo json_encode(['ok'=>true, 'notify_email'=>$email]);
+    exit;
+}
+
+if ($action === 'set_allowed_offices') {
+    $id      = (int)($in['id'] ?? 0);
+    $mcSlugs = is_array($in['mc_slugs'] ?? null) ? array_values(array_unique(array_map('trim', $in['mc_slugs']))) : [];
+    if (!$id) { echo json_encode(['ok'=>false,'error'=>'Room required']); exit; }
+
+    $room = $db->prepare("SELECT id FROM conference_rooms WHERE id=?");
+    $room->execute([$id]);
+    if (!$room->fetchColumn()) { echo json_encode(['ok'=>false,'error'=>'Room not found']); exit; }
+
+    if ($mcSlugs) {
+        $ph = implode(',', array_fill(0, count($mcSlugs), '?'));
+        $known = $db->prepare("SELECT slug FROM market_centers WHERE slug IN ($ph)");
+        $known->execute($mcSlugs);
+        $knownSlugs = $known->fetchAll(PDO::FETCH_COLUMN);
+        if (count($knownSlugs) !== count($mcSlugs)) {
+            echo json_encode(['ok'=>false,'error'=>'Unknown market center in list']); exit;
+        }
+    }
+
+    $db->exec('BEGIN');
+    $db->prepare("DELETE FROM room_allowed_offices WHERE room_id=?")->execute([$id]);
+    $insAllowed = $db->prepare("INSERT INTO room_allowed_offices (room_id, mc_slug) VALUES (?, ?)");
+    foreach ($mcSlugs as $slug) { $insAllowed->execute([$id, $slug]); }
+    $db->exec('COMMIT');
+
+    echo json_encode(['ok'=>true]);
+    exit;
+}
+
 if ($action === 'delete') {
     $id = (int)($in['id'] ?? 0);
     if (!$id) { echo json_encode(['ok'=>false,'error'=>'Room required']); exit; }
@@ -54,6 +95,7 @@ if ($action === 'delete') {
         echo json_encode(['ok'=>false,'error'=>'Cannot delete a room with active bookings -- disable it instead']);
         exit;
     }
+    $db->prepare("DELETE FROM room_allowed_offices WHERE room_id=?")->execute([$id]);
     $db->prepare("DELETE FROM conference_rooms WHERE id=?")->execute([$id]);
     echo json_encode(['ok'=>true]);
     exit;

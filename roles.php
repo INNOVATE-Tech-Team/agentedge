@@ -162,6 +162,23 @@ function my_own_mc_slug(): string { return current_perms()['own_mc_slug'] ?? '';
 // Every MC this agent belongs to (an agent can be in more than one, e.g.
 // licensed/working in bordering states).
 function my_own_mc_slugs(): array { return current_perms()['own_mc_slugs'] ?? []; }
+// The MC(s) this agent is actually rostered under (innovate_roster.market_center,
+// slugified) — most rank-and-file agents have no agent_roles row at all, so
+// mc_slugs/own_mc_slugs above (leader/staff-only, manually assigned) are empty
+// for them. Notification delivery already matches recipients this way (see
+// resolve_notification_recipients()'s 'mc' case); this lets in-app targeting
+// (e.g. the announcements feed) reach the same people, not just leaders/staff.
+function my_roster_mc_slugs(): array {
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    if ($email === '' || !function_exists('local_db')) return [];
+    $stmt = local_db()->prepare("SELECT market_center FROM innovate_roster WHERE LOWER(email)=? AND active=1");
+    $stmt->execute([$email]);
+    $slugs = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $mc) {
+        if ($mc !== '') $slugs[] = slugify_mc($mc);
+    }
+    return array_values(array_unique($slugs));
+}
 // The BIC email assigned to this agent.
 function my_bic_email(): string   { return current_perms()['bic_email'] ?? ''; }
 // The team this user leads (one team per leader, resolved live from the teams
@@ -172,6 +189,10 @@ function my_own_team_id(): ?int   { $t = current_perms()['own_team_id'] ?? null;
 
 function is_super_admin(): bool    { return !empty(current_perms()['isSuperAdmin']); }
 function is_admin(): bool          { return !empty(current_perms()['isAdmin']); }
+// Editing University master templates (On-Demand course scaffolding) is
+// intentionally a tighter gate than regular course editing (is_admin()) --
+// templates propagate structure into every course instantiated from them.
+function can_edit_uni_templates(): bool { return is_super_admin(); }
 function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
 function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
 // NOTE: deliberately not folded into is_leader() below — that gate is checked

@@ -48,6 +48,9 @@ $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) :
 $headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
 $headshots     = $targetEmail !== '' ? load_agent_headshots($targetEmail) : [];
 $queueStatus   = $targetEmail !== '' ? load_agent_queue_status($targetEmail) : ['onboarding' => null, 'offboarding' => null];
+$rosterNotesStmt = $targetEmail !== '' ? local_db()->prepare("SELECT COALESCE(retention_notes,'') AS retention_notes FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1") : null;
+if ($rosterNotesStmt) { $rosterNotesStmt->execute([$targetEmail]); }
+$retentionNotes = ($rosterNotesStmt ? ($rosterNotesStmt->fetchColumn() ?: '') : '');
 
 $notes = [];
 if ($targetEmail !== '') {
@@ -263,11 +266,12 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 
           <div class="dg-section">Professional Background</div>
           <div class="dg-field"><span class="dg-label">Specialty</span><?= dv($a['specialty'] ?? '') ?></div>
-          <div class="dg-field"><span class="dg-label">Career Start</span><?= dv($a['career_start'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Initial License Year</span><?= dv($a['career_start'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Prior Occupation</span><?= dv($a['prior_occupation'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Prior Affiliation</span><?= dv($a['prior_affiliation'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Full-Time</span><?= dvBool($a['full_time'] ?? 1) ?></div>
           <div class="dg-field"><span class="dg-label">Show on Website</span><?= dvBool($a['show_on_internet'] ?? 1) ?></div>
+          <div class="dg-field"><span class="dg-label">Team Leader (Company Email tag)</span><?= dvBool($a['is_team_leader_tag'] ?? 0) ?></div>
 
           <div class="dg-section">Business Entity &amp; Tax IDs</div>
           <div class="dg-field"><span class="dg-label">Corporation Start</span><?= dv($a['corporation_start'] ?? '') ?></div>
@@ -369,6 +373,13 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="hs-msg" id="hs-msg"></div>
           </div>
 
+          <?php if ($retentionNotes !== ''): ?>
+          <div class="dg-section">Advantage Notes</div>
+          <div class="dg-field" style="grid-column:1/-1">
+            <span class="dg-label">Retention Notes</span>
+            <span class="dg-value" style="white-space:pre-line"><?= dv($retentionNotes) ?></span>
+          </div>
+          <?php endif; ?>
           <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
           <div class="dg-field">
             <span class="dg-label">1099 Type</span>
@@ -585,6 +596,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
+            <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has you under a different email"></div>
             <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
             <div class="em-section">Address</div>
@@ -602,6 +614,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>NAR Number</label><input id="em-nar_number"></div>
             <div class="em-field"><label>Hire Date</label><input id="em-hire_date" type="date"></div>
             <div class="em-field"><label>License Renewal (MM-DD)</label><input id="em-license_renewal" placeholder="03-31" maxlength="5"></div>
+            <div class="em-field em-check"><label><input type="checkbox" id="em-is_team_leader_tag"> Team Leader (Company Email audience tag — doesn't affect Teams/My Team access)</label></div>
             <div class="em-field em-full">
               <label>Additional Licensed States</label>
               <div id="em-additional-licenses"></div>
@@ -630,7 +643,11 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
                 <option value="Other">Other</option>
               </select>
             </div>
-            <div class="em-field"><label>Career Start</label><input id="em-career_start" type="date"></div>
+            <div class="em-field">
+              <label>Initial License Year</label>
+              <input id="em-career_start" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="YYYY">
+              <div style="font-size:12px;color:var(--faint);font-weight:400;text-transform:none;margin-top:4px;">The year you got your real estate license</div>
+            </div>
             <div class="em-field"><label>Prior Occupation</label><input id="em-prior_occupation"></div>
             <div class="em-field"><label>Prior Affiliation</label><input id="em-prior_affiliation"></div>
             <div class="em-field em-check"><label><input type="checkbox" id="em-full_time"> Full-Time Agent</label></div>
@@ -1049,7 +1066,9 @@ window.openEditModal = function () {
     emRenderAdditionalLicenses(results[0].additional_licenses);
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
+    document.getElementById('em-is_team_leader_tag').checked = !!extra.is_team_leader_tag;
     document.getElementById('em-alt_email').value = extra.alt_email || '';
+    document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1091,7 +1110,9 @@ window.saveEditModal = function () {
     birthday: emExtraBirthday,
     hire_date: document.getElementById('em-hire_date').value,
     license_renewal: document.getElementById('em-license_renewal').value,
-    alt_email: document.getElementById('em-alt_email').value
+    alt_email: document.getElementById('em-alt_email').value,
+    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value,
+    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked
   };
 
   Promise.all([
@@ -1265,12 +1286,14 @@ function renderLevels() {
   }
 }
 
-function renderTree(tree, totalCount, sponsor) {
+function renderTree(tree, totalCount, sponsor, reason) {
   const wrap = document.getElementById('tree-wrap');
   wrap.innerHTML = '';
 
   if (!tree) {
-    wrap.innerHTML = '<div class="empty-prompt">No network data on file yet.</div>';
+    wrap.innerHTML = reason === 'not_in_perfex'
+      ? '<div class="empty-prompt">This agent hasn\'t been added to Perfex yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once a Perfex staff record is created for them.</div>'
+      : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
   }
 
@@ -1341,7 +1364,7 @@ window.loadNetworkTree = function () {
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(d => {
       if (d.error) { wrap.innerHTML = '<div class="error-msg">' + esc(d.error) + '</div>'; return; }
-      renderTree(d.tree, d.totalCount||0, d.sponsor||null);
+      renderTree(d.tree, d.totalCount||0, d.sponsor||null, d.reason||null);
     })
     .catch(() => { wrap.innerHTML = '<div class="error-msg">Could not load network data.</div>'; });
 };

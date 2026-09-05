@@ -36,6 +36,35 @@ function pandadoc_request(string $method, string $path, ?array $body = null): ar
     return ['ok' => $code >= 200 && $code < 300, 'code' => $code, 'data' => $d];
 }
 
+// Pulls a human-readable message out of a failed pandadoc_request() result.
+// PandaDoc uses at least two different error shapes: a flat {"message"|
+// "error"|"info_message": "..."} on some endpoints, and {"type":
+// "validation_error", "detail": {"field_name": ["reason", ...]}} on others
+// (confirmed 2026-08-14 -- a stale template_uuid came back as the latter,
+// and every one of the flat-shape checks missed it, so callers only ever
+// saw "Create failed: HTTP 400" instead of "template_uuid: Template is not
+// available."). Falls back to the bare HTTP code if neither shape matches.
+function pandadoc_error_message(array $result): string {
+    $data = $result['data'] ?? null;
+    if (is_array($data)) {
+        foreach (['message', 'error', 'info_message'] as $key) {
+            if (!empty($data[$key])) return (string)$data[$key];
+        }
+        if (!empty($data['detail'])) {
+            if (is_string($data['detail'])) return $data['detail'];
+            if (is_array($data['detail'])) {
+                $parts = [];
+                foreach ($data['detail'] as $field => $reasons) {
+                    $reasons = is_array($reasons) ? implode(', ', $reasons) : $reasons;
+                    $parts[] = is_string($field) ? "{$field}: {$reasons}" : $reasons;
+                }
+                if ($parts) return implode('; ', $parts);
+            }
+        }
+    }
+    return "HTTP {$result['code']}";
+}
+
 // Statuses a document can already be in if a prior attempt got far enough to
 // send it before this function (or the request handling it) was interrupted.
 const PANDADOC_ALREADY_SENT_STATUSES = [
@@ -104,8 +133,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
             'recipients'    => $recipients,
         ]);
         if (!$create['ok']) {
-            $err = $create['data']['message'] ?? $create['data']['error'] ?? $create['data']['info_message'] ?? "HTTP {$create['code']}";
-            return ['ok'=>false,'error'=>"Create failed: {$err}"];
+            return ['ok'=>false,'error'=>"Create failed: " . pandadoc_error_message($create)];
         }
         $docId  = $create['data']['id'] ?? null;
         $status = $create['data']['status'] ?? '';
@@ -132,8 +160,7 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
         'silent'  => false,
     ]);
     if (!$send['ok']) {
-        $err = $send['data']['message'] ?? $send['data']['error'] ?? $send['data']['info_message'] ?? "HTTP {$send['code']}";
-        return ['ok'=>false,'error'=>"Send failed: {$err}",'document_id'=>$docId];
+        return ['ok'=>false,'error'=>"Send failed: " . pandadoc_error_message($send),'document_id'=>$docId];
     }
 
     return ['ok'=>true,'document_id'=>$docId];

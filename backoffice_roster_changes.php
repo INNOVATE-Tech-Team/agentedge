@@ -30,6 +30,36 @@ $rows = $db->prepare(
 $rows->execute([$from, $to]);
 $changes = $rows->fetchAll(PDO::FETCH_ASSOC);
 
+// Two independent code paths can each log a 'removed' row for the same
+// real-world removal (backoffice_roster.php's "Remove" button vs. the
+// separate "Add to Offboarding Queue" form both call code that inserts into
+// roster_changes — see api/roster_agent.php and api/offboard_action.php).
+// Collapse any 'removed'/'added' entry for an agent that isn't separated
+// from the prior one by an intervening opposite-state entry, keeping only
+// the first (genuine) occurrence — this never hides a real distinct event,
+// since a true second removal always has a 'restored' row in between.
+function dedupe_roster_changes(array $changes): array {
+    $asc = $changes;
+    usort($asc, fn($a, $b) => strcmp($a['changed_at'], $b['changed_at']));
+
+    $keptIds = [];
+    $state   = []; // key => 'active' | 'removed'
+    foreach ($asc as $r) {
+        $key = strtolower($r['agent_name']) . '|' . $r['state_code'] . '|' . strtolower($r['market_center'] ?? '');
+        $cur = $state[$key] ?? null;
+        if ($r['action'] === 'removed') {
+            if ($cur === 'removed') continue;
+            $state[$key] = 'removed';
+        } elseif ($r['action'] === 'restored' || $r['action'] === 'added') {
+            if ($r['action'] === 'added' && $cur === 'active') continue;
+            $state[$key] = 'active';
+        }
+        $keptIds[$r['id']] = true;
+    }
+    return array_values(array_filter($changes, fn($r) => isset($keptIds[$r['id']])));
+}
+$changes = dedupe_roster_changes($changes);
+
 $added    = array_values(array_filter($changes, fn($r) => $r['action'] === 'added'));
 $removed  = array_values(array_filter($changes, fn($r) => $r['action'] === 'removed'));
 $restored = array_values(array_filter($changes, fn($r) => $r['action'] === 'restored'));
