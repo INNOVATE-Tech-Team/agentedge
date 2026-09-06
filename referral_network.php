@@ -79,7 +79,14 @@ $tab   = ($_GET['tab'] ?? 'partners') === 'requests' ? 'requests' : 'partners';
           <div class="rn-name" id="partner-form-title">Add Partner</div>
           <div class="rn-form" style="margin-top:12px">
             <input type="hidden" id="pf-id">
-            <div class="full"><label>Name</label><input id="pf-name" placeholder="Full name"></div>
+            <div class="full">
+              <label>Name</label>
+              <div style="display:flex;gap:8px">
+                <input id="pf-name" placeholder="Full name" style="flex:1">
+                <button type="button" class="btn-sm" id="pf-search-btn" onclick="searchPartnerContact()" style="flex-shrink:0">&#128269; Search the web</button>
+              </div>
+              <div id="pf-search-status" style="font-size:11.5px;margin-top:5px;color:var(--faint)"></div>
+            </div>
             <div><label>Company / Brokerage</label><input id="pf-company"></div>
             <div><label>Specialty</label><input id="pf-specialty" placeholder="e.g. Luxury, Relocation, New Construction"></div>
             <div><label>State</label><select id="pf-state"></select></div>
@@ -170,6 +177,79 @@ function openPartnerForm(partner) {
 }
 function closePartnerForm() { document.getElementById('partner-form-card').classList.add('hidden'); }
 
+// AI-assisted contact lookup — best-effort only. Every result is shown as
+// "please confirm" and never auto-saved; the agent still has to hit Save.
+async function searchPartnerContact() {
+  const name = document.getElementById('pf-name').value.trim();
+  const status = document.getElementById('pf-search-status');
+  const btn = document.getElementById('pf-search-btn');
+  if (!name) { status.textContent = 'Type a name first.'; status.style.color = '#c00'; return; }
+
+  const stateSel = document.getElementById('pf-state');
+  const metroSel = document.getElementById('pf-metro');
+  const stateHint = stateSel.value ? stateSel.options[stateSel.selectedIndex].textContent : '';
+  const metroHint = metroSel.value ? metroSel.options[metroSel.selectedIndex].textContent : '';
+
+  btn.disabled = true;
+  status.style.color = 'var(--faint)';
+  status.textContent = 'Searching the web for this person\u2019s contact info\u2026 (can take up to a minute)';
+
+  try {
+    const r = await fetch('api/referral_partner_lookup.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        state_hint: stateHint,
+        metro_hint: metroHint,
+        company_hint: document.getElementById('pf-company').value.trim(),
+      }),
+    });
+    const data = await r.json();
+    btn.disabled = false;
+    if (!data.ok) { status.textContent = data.error || 'Search failed.'; status.style.color = '#c00'; return; }
+    if (!data.found) {
+      status.textContent = 'Nothing confident found. ' + (data.note || 'Try adding more detail, or fill in manually.');
+      status.style.color = '#a06000';
+      return;
+    }
+    if (data.company) document.getElementById('pf-company').value = data.company;
+    if (data.specialty) document.getElementById('pf-specialty').value = data.specialty;
+    if (data.phone) document.getElementById('pf-phone').value = data.phone;
+    if (data.email) document.getElementById('pf-email').value = data.email;
+
+    // Best-effort match against the real state/metro list -- Claude's free-text
+    // city/state won't always line up exactly with our metro names.
+    if (data.state) {
+      populateStateSelect(stateSel);
+      const opt = [...stateSel.options].find(o => o.value.toUpperCase() === String(data.state).toUpperCase());
+      if (opt) {
+        stateSel.value = opt.value;
+        populateMetroSelect(metroSel, stateSel.value, null);
+        if (data.city) {
+          const cityLower = data.city.toLowerCase();
+          const metroOpts = [...metroSel.options];
+          const match = metroOpts.find(o => o.textContent.toLowerCase() === cityLower)
+                     || metroOpts.find(o => o.textContent.toLowerCase().includes(cityLower) || cityLower.includes(o.textContent.toLowerCase()));
+          if (match) metroSel.value = match.value;
+        }
+      }
+    }
+
+    const confColor = data.confidence === 'high' ? '#2d7a00' : (data.confidence === 'low' ? '#c00' : '#a06000');
+    let msg = `<span style="color:${confColor};font-weight:700">${(data.confidence || 'unverified').toUpperCase()} CONFIDENCE</span> \u2014 please confirm before saving.`;
+    if (data.note) msg += ' ' + esc(data.note);
+    if (data.sources && data.sources.length) {
+      msg += '<br>Sources: ' + data.sources.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>`).join(', ');
+    }
+    status.innerHTML = msg;
+  } catch (e) {
+    btn.disabled = false;
+    status.textContent = 'Network error.';
+    status.style.color = '#c00';
+  }
+}
+
 function savePartner() {
   const msg = document.getElementById('partner-form-msg');
   const body = {
@@ -201,34 +281,57 @@ function deletePartner(id, name) {
 
 const STATUS_LABELS = { sent: 'Sent', contacted: 'Contacted', under_contract: 'Under Contract', closed_won: 'Closed — Won', closed_lost: 'Closed — Lost' };
 
+// Collapsed-by-state view: a state header (with a partner count) opens to
+// reveal each partner as a compact City / Name / Company row; clicking a row
+// expands it further into the full card (edit/delete + referral history) --
+// two independent expand states so a state can be open with all its cards
+// still collapsed.
+const expandedStates = new Set();
+const expandedPartnerCards = new Set();
+
+function stateNameFor(code) {
+  const m = METROS.find(m => m.state_code === code);
+  return m ? m.state_name : (code || 'Unknown');
+}
+
+function toggleStateGroup(code) {
+  if (expandedStates.has(code)) expandedStates.delete(code); else expandedStates.add(code);
+  renderPartners();
+}
+
+function togglePartnerCard(id) {
+  if (expandedPartnerCards.has(id)) expandedPartnerCards.delete(id); else expandedPartnerCards.add(id);
+  renderPartners();
+}
+
 function renderPartners() {
   const wrap = document.getElementById('partners-list');
   if (!PARTNERS.length) { wrap.innerHTML = '<div class="rn-empty">No partners yet — add the people you\'ve connected with in markets you don\'t cover.</div>'; return; }
-  wrap.innerHTML = PARTNERS.map(p => {
-    const leadRows = (p.leads || []).map(l => `
-      <div class="rn-lead-row" data-lead-id="${l.id}">
-        <span style="min-width:70px;font-weight:700">${l.direction === 'received' ? 'Received' : 'Sent'}</span>
-        <span style="flex:1">${esc(l.client_name) || '<span style=\"color:#bbb\">No client name</span>'}${l.client_contact ? ' — ' + esc(l.client_contact) : ''}</span>
-        <select class="btn-sm" onchange="updateLeadStatus(${l.id}, ${p.id}, this.value)">
-          ${Object.entries(STATUS_LABELS).map(([k, v]) => `<option value="${k}"${k === l.status ? ' selected' : ''}>${v}</option>`).join('')}
-        </select>
-        <span class="rn-lead-status st-${l.status}">${STATUS_LABELS[l.status]}</span>
-        <button class="btn-sm danger" onclick="deleteLead(${l.id})">✕</button>
-      </div>`).join('') || '<div style="font-size:12px;color:var(--faint);padding:6px 0">No referrals logged yet.</div>';
 
-    return `
-    <div class="rn-card" data-partner-id="${p.id}">
-      <div class="rn-card-head">
-        <div>
-          <div class="rn-name">${esc(p.name)}</div>
-          <div class="rn-meta">${esc(p.company) || '—'} · ${esc(p.metro_name)}, ${esc(p.state_code)}${p.specialty ? ' · ' + esc(p.specialty) : ''}</div>
-          <div class="rn-meta">${esc(p.phone) || ''}${p.phone && p.email ? ' · ' : ''}${esc(p.email) || ''}</div>
-        </div>
-        <div class="rn-actions">
-          <button class="btn-sm" onclick='openPartnerForm(${JSON.stringify(p).replace(/'/g, "&#39;")})'>Edit</button>
-          <button class="btn-sm danger" onclick="deletePartner(${p.id}, '${esc(p.name).replace(/'/g, "\\'")}')">Delete</button>
-        </div>
-      </div>
+  const byState = new Map();
+  PARTNERS.forEach(p => {
+    const code = p.state_code || '';
+    if (!byState.has(code)) byState.set(code, []);
+    byState.get(code).push(p);
+  });
+  const sortedStates = [...byState.entries()].sort((a, b) => stateNameFor(a[0]).localeCompare(stateNameFor(b[0])));
+
+  wrap.innerHTML = sortedStates.map(([code, items]) => {
+    const isOpen = expandedStates.has(code);
+    const rows = !isOpen ? '' : items.map(p => {
+      const cardOpen = expandedPartnerCards.has(p.id);
+      const leadRows = (p.leads || []).map(l => `
+        <div class="rn-lead-row" data-lead-id="${l.id}">
+          <span style="min-width:70px;font-weight:700">${l.direction === 'received' ? 'Received' : 'Sent'}</span>
+          <span style="flex:1">${esc(l.client_name) || '<span style=\"color:#bbb\">No client name</span>'}${l.client_contact ? ' — ' + esc(l.client_contact) : ''}</span>
+          <select class="btn-sm" onchange="updateLeadStatus(${l.id}, ${p.id}, this.value)">
+            ${Object.entries(STATUS_LABELS).map(([k, v]) => `<option value="${k}"${k === l.status ? ' selected' : ''}>${v}</option>`).join('')}
+          </select>
+          <span class="rn-lead-status st-${l.status}">${STATUS_LABELS[l.status]}</span>
+          <button class="btn-sm danger" onclick="deleteLead(${l.id})">✕</button>
+        </div>`).join('') || '<div style="font-size:12px;color:var(--faint);padding:6px 0">No referrals logged yet.</div>';
+
+      const detail = !cardOpen ? '' : `
       <div class="rn-leads">
         <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:6px">Referral History</div>
         ${leadRows}
@@ -238,7 +341,31 @@ function renderPartners() {
           <input id="lead-contact-${p.id}" class="btn-sm" placeholder="Client phone/email" style="flex:1;min-width:140px">
           <button class="btn-sm" onclick="logLead(${p.id})">+ Log Referral</button>
         </div>
+      </div>`;
+
+      return `
+      <div class="rn-card" data-partner-id="${p.id}" style="margin-bottom:8px">
+        <div class="rn-card-head" style="cursor:pointer" onclick="togglePartnerCard(${p.id})">
+          <div>
+            <div class="rn-name">${esc(p.metro_name)} — ${esc(p.name)}${p.company ? ` <span style="font-weight:400;color:var(--faint);font-size:13px">${esc(p.company)}</span>` : ''}</div>
+            <div class="rn-meta">${p.specialty ? esc(p.specialty) + ' · ' : ''}${esc(p.phone) || ''}${p.phone && p.email ? ' · ' : ''}${esc(p.email) || ''}</div>
+          </div>
+          <div class="rn-actions" onclick="event.stopPropagation()">
+            <button class="btn-sm" onclick='openPartnerForm(${JSON.stringify(p).replace(/'/g, "&#39;")})'>Edit</button>
+            <button class="btn-sm danger" onclick="deletePartner(${p.id}, '${esc(p.name).replace(/'/g, "\\'")}')">Delete</button>
+          </div>
+        </div>
+        ${detail}
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="rn-state-group" style="margin-bottom:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <div class="rn-card-head" style="cursor:pointer;padding:12px 16px;background:${isOpen ? '#f9fdf5' : '#fff'}" onclick="toggleStateGroup('${code}')">
+        <div class="rn-name" style="font-size:14px">${esc(stateNameFor(code))} <span style="font-weight:400;color:var(--faint);font-size:12px">(${items.length})</span></div>
+        <span style="font-size:11px;color:var(--faint)">${isOpen ? '▲' : '▼'}</span>
       </div>
+      ${isOpen ? `<div style="padding:10px 16px 4px">${rows}</div>` : ''}
     </div>`;
   }).join('');
 }
