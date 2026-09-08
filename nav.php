@@ -68,6 +68,10 @@ function nav_items(): array {
         ['key' => 'coach_dashboard',   'label' => 'Coach Dashboard',    'href' => 'coach_dashboard.php',   'launchCoachOnly' => true],
         ['key' => 'crm',               'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
         ['key' => 'settings_signature','label' => 'My Email Signature', 'href' => 'settings_signature.php','group_label' => 'My Account', 'staffOnly' => true],
+        // Same login as this app (same innovate.users account/password) - just a
+        // different tool. Lets every agent find their way to the site CMS, which
+        // previously had no discovery path at all.
+        ['key' => 'agent_website',     'label' => 'My Agent Website',    'href' => 'https://website.innovateonline.com/admin/login', 'external' => true, 'group_label' => 'My Resources'],
         // Only for admins, team leaders, and agents who are on a team —
         // team_dashboard.php itself shows the right view for a leader vs. a
         // plain member. Not shown to agents with no team at all.
