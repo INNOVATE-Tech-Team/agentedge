@@ -5,6 +5,7 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/lib/agent_profile.php';
+require_once __DIR__ . '/lib/performance_client.php';
 
 // V1: super-admin-only, same gate as coach_dashboard.php. This is a
 // Coach-Dashboard-specific detail view — it does not replace or modify
@@ -54,6 +55,32 @@ if ($found && $targetEmail !== '') {
     $nst = local_db()->prepare("SELECT id, note, created_by, created_at FROM agent_notes WHERE email=? ORDER BY created_at DESC, id DESC");
     $nst->execute([$targetEmail]);
     $notes = $nst->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Phase 2A activity-only performance pilot. Signs the TARGET agent's
+// email, not the viewing coach's -- this page's own is_super_admin()
+// gate above already decides who may view whom; Advantage only answers
+// "is this person in the pilot, and if so what's their activity data".
+$perf = null;
+if ($found && $targetEmail !== '') {
+    $summary   = performance_api_get('summary', $targetEmail);
+    $goals     = performance_api_get('goals', $targetEmail);
+    $attention = performance_api_get('needs-attention', $targetEmail);
+    $streaks   = performance_api_get('streaks', $targetEmail);
+    if ($summary['ok'] && $summary['inPilot']) {
+        $myStreak = 0;
+        if ($streaks['ok'] && !empty($streaks['data']['agents'])) {
+            foreach ($streaks['data']['agents'] as $a) {
+                if (($a['userId'] ?? null) === ($streaks['data']['requestingUserId'] ?? null)) { $myStreak = (int)$a['currentStreak']; break; }
+            }
+        }
+        $perf = [
+            'week'      => $summary['data']['week']   ?? null,
+            'goals'     => ($goals['ok'] && $goals['data']['goals'])   ? $goals['data']['goals']   : [],
+            'reasons'   => ($attention['ok'])                          ? ($attention['data']['reasons'] ?? []) : [],
+            'streak'    => $myStreak,
+        ];
+    }
 }
 ?>
 <!doctype html>
@@ -164,8 +191,37 @@ if ($found && $targetEmail !== '') {
         </div>
 
         <div class="card">
-          <h2>Production</h2>
-          <div class="cad-stub">Production data isn't connected to Coach Dashboard yet.<br>See build report for candidate sources.</div>
+          <h2>Activity Performance <span style="font-size:10px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.05em">(pilot)</span></h2>
+          <?php if ($perf === null): ?>
+            <div class="cad-stub">This agent isn't part of the activity performance pilot yet.<br>Deal-based production (appointments/signed/closed) isn't tracked here yet either way — see the Phase 1 readiness report.</div>
+          <?php else: ?>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;margin-bottom:14px">
+              <div class="dg-field"><span class="dg-label">Dials (this week)</span><span class="dg-value"><?= $perf['week'] ? h($perf['week']['dials']) : '<span class="empty">—</span>' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Connects (this week)</span><span class="dg-value"><?= $perf['week'] ? h($perf['week']['connects']) : '<span class="empty">—</span>' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Current Streak</span><span class="dg-value"><?= h($perf['streak']) ?> day<?= $perf['streak'] === 1 ? '' : 's' ?></span></div>
+            </div>
+            <?php if ($perf['reasons']): ?>
+              <div style="margin-bottom:12px">
+                <?php foreach ($perf['reasons'] as $r): ?>
+                  <div class="cad-stub" style="padding:8px 0;text-align:left;color:#7a5c00"><?= h($r['detail']) ?></div>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+            <?php if ($perf['goals']): ?>
+              <div class="dg-label" style="margin-bottom:6px">Goal Pacing</div>
+              <?php foreach ($perf['goals'] as $g): $pct = $g['target'] > 0 ? min(100, round(100 * $g['actualToDate'] / $g['target'])) : 0; ?>
+                <div style="margin-bottom:8px">
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px">
+                    <span style="text-transform:capitalize"><?= h(str_replace('_', ' ', $g['metric'])) ?> (<?= h($g['period']) ?>ly)</span>
+                    <span style="color:var(--muted)"><?= h($g['actualToDate']) ?> / <?= h($g['target']) ?></span>
+                  </div>
+                  <div class="coach-progress-track"><div class="coach-progress-fill" style="width:<?= $pct ?>%<?= $g['behindPace'] ? ';background:#e0a030' : '' ?>"></div></div>
+                </div>
+              <?php endforeach; ?>
+            <?php else: ?>
+              <div class="cad-stub">No activity goals set for this agent yet.</div>
+            <?php endif; ?>
+          <?php endif; ?>
         </div>
 
         <div class="card">
