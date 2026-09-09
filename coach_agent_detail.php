@@ -63,11 +63,14 @@ if ($found && $targetEmail !== '') {
 // "is this person in the pilot, and if so what's their activity data".
 $perf = null;
 if ($found && $targetEmail !== '') {
-    $summary   = performance_api_get('summary', $targetEmail);
-    $goals     = performance_api_get('goals', $targetEmail);
-    $attention = performance_api_get('needs-attention', $targetEmail);
-    $streaks   = performance_api_get('streaks', $targetEmail);
+    // Check pilot membership with one call first -- the common case is
+    // "not in the pilot" (9 of ~675 agents are), so don't spend three
+    // more round trips finding that out.
+    $summary = performance_api_get('summary', $targetEmail);
     if ($summary['ok'] && $summary['inPilot']) {
+        $goals     = performance_api_get('goals', $targetEmail);
+        $attention = performance_api_get('needs-attention', $targetEmail);
+        $streaks   = performance_api_get('streaks', $targetEmail);
         $myStreak = 0;
         if ($streaks['ok'] && !empty($streaks['data']['agents'])) {
             foreach ($streaks['data']['agents'] as $a) {
