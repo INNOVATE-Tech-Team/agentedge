@@ -60,7 +60,7 @@ $html = <<<'HTML'
 </div>
 HTML;
 
-$recipients = ce_resolve_recipients(['all'], [], '');
+$recipients = ce_resolve_recipients(['all'], [], []);
 if (!$recipients) { fwrite(STDERR, "no recipients resolved for audience 'all'\n"); exit(1); }
 
 $ins = $db->prepare("INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, attachment_ids, from_email, from_name) VALUES (?, 'email', ?, ?, '', 1, '', ?, ?)");
