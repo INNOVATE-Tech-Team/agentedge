@@ -103,6 +103,11 @@ function agent_assets_items(): array {
         // starting from a stale local backup.
         ['key' => 'referral_network',   'label' => 'Referral Network',        'href' => 'referral_network.php'],
         ['key' => 'profile',            'label' => 'My Profile',              'href' => 'profile.php'],
+        // Phase 2A activity-only performance pilot (dials/connects/streak/
+        // goal pacing) — the page itself shows a plain "not turned on for
+        // you yet" state for agents outside the configured pilot team,
+        // same per-agent-book category as buyback.php/listing_intel.php.
+        ['key' => 'my_performance',      'label' => 'My Performance',          'href' => 'my_performance.php'],
         // Buy Back Your Time: every producing agent's own book of business,
         // not a backoffice/admin tool -- lives here, not in
         // backoffice_nav_items(), same as profile.php/network.php above.
