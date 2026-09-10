@@ -180,8 +180,12 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <?php if (is_admin()): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="all" onchange="onAudienceChange()"> Entire Company</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="admin" onchange="onAudienceChange()"> Admin &amp; Staff Only</label>
+          <?php endif; ?>
+          <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc_leader" onchange="onAudienceChange()"> Market Center Leaders</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="bic" onchange="onAudienceChange()"> BICs</label>
+          <?php endif; ?>
+          <?php if (is_admin()): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="team_leader" onchange="onAudienceChange()"> Team Leaders</label>
           <?php endif; ?>
           <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>

@@ -409,7 +409,9 @@ function ce_validate_audience(array $audiences, array $mcSlugs, array $targetEma
         } elseif ($audience === 'leaders') {
             if (!is_admin()) return 'Forbidden';
             if (!array_intersect($leaderTypes, ['mc_leader', 'bic'])) return 'Pick Market Center Leaders, BICs, or both';
-        } elseif (in_array($audience, ['mc_leader', 'bic', 'team_leader'], true)) {
+        } elseif (in_array($audience, ['mc_leader', 'bic'], true)) {
+            if (!is_admin() && !is_mc_leader() && !is_bic()) return 'Forbidden';
+        } elseif ($audience === 'team_leader') {
             if (!is_admin()) return 'Forbidden';
         } elseif (in_array($audience, ['launch_agents', 'launch_coaches'], true)) {
             if (!can_manage_cohorts()) return 'Forbidden';
