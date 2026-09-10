@@ -253,6 +253,25 @@ function can_access_finance_checklists(): bool {
     return $email !== '' && in_array($email, FINANCE_CHECKLIST_EMAILS, true);
 }
 
+// Closings Tracker (§8 of the spec: a team only ever sees its own closings).
+// Any member of the team can view — not just its leader — mirroring the
+// legacy per-agent tabs, which every team member could always see.
+function can_view_team_closings(int $teamId): bool {
+    return is_admin() || my_team_id() === $teamId || my_own_team_id() === $teamId;
+}
+// Editing a closing: admin, that team's leader, or the agent it belongs to
+// (the agent who "owns" the deal in the legacy sheet's per-tab model).
+function can_edit_closing(int $teamId, string $agentEmail): bool {
+    if (is_admin() || my_team_id() === $teamId) return true;
+    $me = strtolower(trim(current_agent()['email'] ?? ''));
+    return $me !== '' && $me === strtolower(trim($agentEmail));
+}
+// Configuring a team's default commission/DWT split — admin or that team's
+// own leader, not a plain member.
+function can_manage_split_rules(int $teamId): bool {
+    return is_admin() || my_team_id() === $teamId;
+}
+
 function require_admin_page(): void {
     if (!is_admin()) { header('Location: index.php'); exit; }
 }

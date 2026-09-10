@@ -76,6 +76,9 @@ function nav_items(): array {
         // team_dashboard.php itself shows the right view for a leader vs. a
         // plain member. Not shown to agents with no team at all.
         ['key' => 'team_dashboard',    'label' => 'Team Dashboard',      'href' => 'team_dashboard.php',    'group_label' => 'My Resources', 'teamOnly' => true],
+        // Closings Tracker — same audience/visibility rule as Team Dashboard
+        // (a team only ever sees its own closings, see can_view_team_closings()).
+        ['key' => 'closings',          'label' => 'Closings',            'href' => 'closings.php',          'group_label' => 'My Resources', 'teamOnly' => true],
     ]);
 }
 

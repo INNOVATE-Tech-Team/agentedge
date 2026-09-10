@@ -28,7 +28,7 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // (it also meant an agent's intake submission and a staff member's page load
 // racing that same lock could leave the just-submitted data slow to
 // appear — see the AgentEdge intake duplicate-agent investigation, Aug 2026).
-const LOCAL_DB_SCHEMA_VERSION = 1;
+const LOCAL_DB_SCHEMA_VERSION = 2;
 
 function local_db(): PDO {
     static $pdo = null;
@@ -3128,6 +3128,64 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
             $ins = $pdo->prepare("INSERT OR IGNORE INTO mls_referral_coverage (mls_name) VALUES (?)");
             foreach ($names as $n) { $ins->execute([$n]); }
         } catch (\Exception $e) {}
+    }
+
+    // ── version 2 — Closings Tracker (commission/closings module) ──────────
+    if ($fromVersion < 2) {
+    // Per-team (or per-agent-within-team) default commission % / DWT split.
+    // agent_email='' is the team-wide default row; a row with a specific
+    // agent_email overrides it for that one agent. Resolved by
+    // get_split_rule() in lib/closings.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS team_split_rules (
+        id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id                  INTEGER NOT NULL,
+        agent_email              TEXT    NOT NULL DEFAULT '',
+        default_commission_rate  REAL    NOT NULL DEFAULT 0,
+        default_dwt_percent      REAL    NOT NULL DEFAULT 0,
+        created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(team_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_team_split_rules_team ON team_split_rules(team_id)");
+
+    // One row per transaction. Commission math (gci, referral, payouts) is
+    // always derived at read time by closing_calc() in lib/closings.php from
+    // the raw inputs here, never stored -- so an edit to price/rate/split can
+    // never leave a stale computed value behind (the failure mode that made
+    // the legacy per-agent Closings sheet's hand-typed GCI/payout cells drift
+    // from their own formulas). commission_rate/dwt_percent/
+    // outgoing_referral_percent are stored as fractions (0.03, not 3).
+    // source_system/source_system_ref/fub_contact_id are unused by manual
+    // entry today but let a later Dotloop sync (spec §6.2) attach without a
+    // schema change.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS closings (
+        id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id                    INTEGER NOT NULL,
+        agent_email                TEXT    NOT NULL,
+        property_address           TEXT    NOT NULL DEFAULT '',
+        sale_price                 REAL    NOT NULL DEFAULT 0,
+        contract_date              TEXT    NOT NULL DEFAULT '',
+        closing_date_est           TEXT    NOT NULL DEFAULT '',
+        closing_date_actual        TEXT    NOT NULL DEFAULT '',
+        client_names               TEXT    NOT NULL DEFAULT '',
+        client_email               TEXT    NOT NULL DEFAULT '',
+        lead_source                TEXT    NOT NULL DEFAULT 'unknown',
+        lead_source_raw            TEXT    NOT NULL DEFAULT '',
+        commission_rate            REAL    NOT NULL DEFAULT 0,
+        bonus_amount               REAL    NOT NULL DEFAULT 0,
+        dwt_percent                REAL    NOT NULL DEFAULT 0,
+        outgoing_referral_percent  REAL    NOT NULL DEFAULT 0,
+        status                     TEXT    NOT NULL DEFAULT 'pending',
+        source_system              TEXT    NOT NULL DEFAULT 'manual',
+        source_system_ref          TEXT    NOT NULL DEFAULT '',
+        fub_contact_id             TEXT    NOT NULL DEFAULT '',
+        created_by                 TEXT    NOT NULL DEFAULT '',
+        created_at                 TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at                 TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_closings_team ON closings(team_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_closings_agent ON closings(agent_email)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_closings_status ON closings(status)");
     }
 }
 
