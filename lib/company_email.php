@@ -182,10 +182,10 @@ function ce_resolve_team_leaders(PDO $db): array {
 // emailed once). Each audience is resolved independently by
 // ce_resolve_single_audience() and the results are unioned, then enriched with
 // the extra fields the {{merge_var}} system supports (see ce_enrich_recipients).
-function ce_resolve_recipients(array $audiences, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
+function ce_resolve_recipients(array $audiences, array $mcSlugs, array $targetEmails = [], array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
     $merged = [];
     foreach ($audiences as $audience) {
-        foreach (ce_resolve_single_audience($audience, $mcSlugs, $targetEmail, $leaderTypes, $launchClassDate) as $r) {
+        foreach (ce_resolve_single_audience($audience, $mcSlugs, $targetEmails, $leaderTypes, $launchClassDate) as $r) {
             $email = strtolower(trim($r['email'] ?? ''));
             if ($email === '') continue;
             // Keep the first non-empty name seen for a given email across audiences.
@@ -259,7 +259,7 @@ function ce_enrich_recipients(array $recipients): array {
 // 'mc_leader'/'bic' are the modern, independently-selectable audiences; the
 // legacy combined 'leaders' audience (+ $leaderTypes) is still resolved here
 // so any scheduled_emails row written before this split still sends correctly.
-function ce_resolve_single_audience(string $audience, array $mcSlugs, string $targetEmail = '', array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
+function ce_resolve_single_audience(string $audience, array $mcSlugs, array $targetEmails = [], array $leaderTypes = ['mc_leader', 'bic'], string $launchClassDate = ''): array {
     $db = local_db();
 
     if ($audience === 'mc_leader' || $audience === 'bic') {
@@ -344,12 +344,17 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
     $roster = ce_fetch_crm_roster();
 
     if ($audience === 'person') {
-        foreach ($roster as $a) {
-            if (strtolower(trim($a['email'] ?? '')) === $targetEmail) {
-                return [['email' => $targetEmail, 'name' => $a['fullName'] ?? '']];
+        $out = [];
+        foreach ($targetEmails as $targetEmail) {
+            $targetEmail = strtolower(trim($targetEmail));
+            if ($targetEmail === '') continue;
+            $name = '';
+            foreach ($roster as $a) {
+                if (strtolower(trim($a['email'] ?? '')) === $targetEmail) { $name = $a['fullName'] ?? ''; break; }
             }
+            $out[] = ['email' => $targetEmail, 'name' => $name];
         }
-        return [['email' => $targetEmail, 'name' => '']];
+        return $out;
     }
 
     $names = [];
@@ -377,11 +382,11 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, string $ta
 // error string, or null if every audience checks out. Requires the caller to
 // be signed in (uses is_admin()/my_mc_slugs() from roles.php).
 // 'person' has no Market Center scoping — anyone with Company Email access
-// (admin/staff/mc_leader/bic) can 1:1 email any address, in or out of the roster.
+// (admin/staff/mc_leader/bic) can email any address(es), in or out of the roster.
 // 'mc_leader'/'bic' are the modern, independently-selectable audiences;
 // 'leaders' (+ $leaderTypes) is kept valid only so old, not-yet-sent
 // scheduled_emails rows still validate/resolve — new sends never write it.
-function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEmail, array $leaderTypes = []): ?string {
+function ce_validate_audience(array $audiences, array $mcSlugs, array $targetEmails, array $leaderTypes = []): ?string {
     if (!$audiences) return 'Pick at least one audience';
 
     $validKeys = ['all', 'admin', 'mc', 'person', 'leaders', 'mc_leader', 'bic', 'team_leader', 'launch_agents', 'launch_coaches'];
@@ -397,7 +402,10 @@ function ce_validate_audience(array $audiences, array $mcSlugs, string $targetEm
                 }
             }
         } elseif ($audience === 'person') {
-            if (!$targetEmail || !filter_var($targetEmail, FILTER_VALIDATE_EMAIL)) return 'A valid recipient email is required';
+            if (!$targetEmails) return 'Add at least one recipient';
+            foreach ($targetEmails as $e) {
+                if (!filter_var($e, FILTER_VALIDATE_EMAIL)) return 'One or more recipient emails are invalid';
+            }
         } elseif ($audience === 'leaders') {
             if (!is_admin()) return 'Forbidden';
             if (!array_intersect($leaderTypes, ['mc_leader', 'bic'])) return 'Pick Market Center Leaders, BICs, or both';

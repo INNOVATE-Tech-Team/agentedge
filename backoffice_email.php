@@ -87,6 +87,12 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .rte-body blockquote{margin:0 0 6px;padding:6px 12px;border-left:3px solid #82C112;background:#f9fdf5;font-style:italic;color:#555}
 .rte-body table{border-collapse:collapse}
 .reach-note{font-size:12px;color:var(--faint);margin:-4px 0 14px}
+.person-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.person-chips:empty{margin-bottom:0}
+.person-chip{display:inline-flex;align-items:center;gap:5px;background:#eef5e8;color:#3a6b1a;border:1px solid #d4edab;
+  border-radius:14px;padding:3px 6px 3px 10px;font-size:12px;white-space:nowrap}
+.person-chip button{background:none;border:none;color:#5b8e0d;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+.person-chip button:hover{color:#c0392b}
 .aud-checks{display:flex;flex-wrap:wrap;gap:10px 18px;padding-top:4px}
 .aud-check{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer}
 .mc-check-list{display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;background:#fff}
@@ -216,8 +222,9 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <?php endif; ?>
         </div>
         <div class="field" id="person-target-row" style="display:none">
-          <label>Recipient</label>
-          <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email…" autocomplete="off">
+          <label>Recipients</label>
+          <div id="em-person-chips" class="person-chips"></div>
+          <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email, press Enter to add…" autocomplete="off" onkeydown="onPersonKeydown(event)" onblur="addPersonFromInput()">
           <datalist id="em-person-list"></datalist>
         </div>
         <div class="field" id="launch-class-target-row" style="display:none">
@@ -591,6 +598,7 @@ const ME_EMAIL     = <?= json_encode(strtolower(trim($agent['email'] ?? ''))) ?>
 const MC_NAME_MAP  = <?= json_encode($mcNameMap) ?>;
 let PERSON_LIST_LOADED = false;
 let LAUNCH_CLASSES_LOADED = false;
+let PERSON_EMAILS = []; // [{email, label}] — added via the recipient picker below
 
 function focusBody(){ document.getElementById('em-body').focus(); }
 
@@ -628,6 +636,11 @@ function onAudienceChange() {
       const opt = sel.options[sel.selectedIndex];
       return sel.value ? `LAUNCH Agents, ${opt.textContent}` : 'LAUNCH Agents (all)';
     }
+    if (a === 'person') {
+      return PERSON_EMAILS.length
+        ? `${PERSON_EMAILS.length} ${PERSON_EMAILS.length === 1 ? 'Recipient' : 'Recipients'}`
+        : 'Specific People — none added yet';
+    }
     return AUD_LABELS[a] || a;
   });
   note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.';
@@ -646,6 +659,48 @@ function loadPersonList() {
     document.getElementById('em-person-list').innerHTML =
       d.agents.map(a => `<option value="${escapeHtml(a.name)} (${escapeHtml(a.email)})">`).join('');
   });
+}
+
+// ── Recipient picker (multiple "Specific Person" addresses) ────────────────────
+function onPersonKeydown(e) {
+  if (e.key !== 'Enter' && e.key !== ',') return;
+  e.preventDefault();
+  if (!addPersonFromInput() && e.key === 'Enter') {
+    const raw = document.getElementById('em-person').value.trim();
+    if (raw) alert('Enter a valid email address.');
+  }
+}
+
+// Returns true if a chip was added (or the input was empty/duplicate — nothing
+// left to complain about), false only when there's leftover text that isn't a
+// valid email — lets blur commit silently without nagging mid-navigation.
+function addPersonFromInput() {
+  const input = document.getElementById('em-person');
+  const raw = input.value.trim();
+  if (!raw) return true;
+  const m = raw.match(/\(([^()]+)\)\s*$/);
+  const email = (m ? m[1] : raw).trim().toLowerCase();
+  const label = m ? raw.replace(/\s*\([^()]+\)\s*$/, '').trim() : email;
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+  if (!PERSON_EMAILS.some(p => p.email === email)) {
+    PERSON_EMAILS.push({ email, label: label || email });
+    renderPersonChips();
+    onAudienceChange();
+  }
+  input.value = '';
+  return true;
+}
+
+function removePersonChip(i) {
+  PERSON_EMAILS.splice(i, 1);
+  renderPersonChips();
+  onAudienceChange();
+}
+
+function renderPersonChips() {
+  document.getElementById('em-person-chips').innerHTML = PERSON_EMAILS.map((p, i) => `
+    <span class="person-chip">${escapeHtml(p.label)}<button type="button" onclick="removePersonChip(${i})" title="Remove">&times;</button></span>
+  `).join('');
 }
 
 function loadLaunchClasses() {
@@ -690,7 +745,7 @@ function singleAudChip(audience, mcSlug, leaderTypes) {
                 : types.includes('bic') ? 'BICs Only' : 'Leaders &amp; BICs';
     return '<span class="aud-chip leaders">' + label + '</span>';
   }
-  if (audience === 'person') return '<span class="aud-chip person">1 Person</span>';
+  if (audience === 'person') return '<span class="aud-chip person">Specific People</span>';
   if (audience === 'launch_agents')  return '<span class="aud-chip launch">LAUNCH Agents</span>';
   if (audience === 'launch_coaches') return '<span class="aud-chip launch">LAUNCH Coaches</span>';
   if (audience === 'mc') {
@@ -1219,12 +1274,8 @@ function sendEmail() {
   const audiences = selectedAudiences();
   const mcSlugs    = audiences.includes('mc') ? selectedMcSlugs() : [];
 
-  let targetEmail = '';
-  if (audiences.includes('person')) {
-    const raw = document.getElementById('em-person').value.trim();
-    const m   = raw.match(/\(([^()]+)\)\s*$/);
-    targetEmail = (m ? m[1] : raw).trim().toLowerCase();
-  }
+  if (audiences.includes('person')) addPersonFromInput();
+  const targetEmails = audiences.includes('person') ? PERSON_EMAILS.map(p => p.email) : [];
 
   const subject  = document.getElementById('em-subject').value.trim();
   const bodyEl   = document.getElementById('em-body');
@@ -1237,7 +1288,7 @@ function sendEmail() {
   if (!subject || !hasText) { status.textContent = 'Subject and message are required.'; status.className = 'send-status err'; return; }
   if (!audiences.length) { status.textContent = 'Pick at least one audience.'; status.className = 'send-status err'; return; }
   if (audiences.includes('mc') && !mcSlugs.length) { status.textContent = 'Pick at least one Market Center.'; status.className = 'send-status err'; return; }
-  if (audiences.includes('person') && !targetEmail) { status.textContent = 'Pick a recipient.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('person') && !targetEmails.length) { status.textContent = 'Add at least one recipient.'; status.className = 'send-status err'; return; }
 
   let sendAtIso = '';
   if (isSchedule) {
@@ -1259,7 +1310,7 @@ function sendEmail() {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
-      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmail,
+      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmails,
       launch_class_date: audiences.includes('launch_agents') ? document.getElementById('em-launch-class').value : '',
       subject, body: bodyHtml, send_at: sendAtIso,
       attachment_tokens: ATTACHMENTS.map(a => a.token),
@@ -1275,6 +1326,8 @@ function sendEmail() {
     status.className = 'send-status ok';
     document.getElementById('em-subject').value = '';
     document.getElementById('em-person').value = '';
+    PERSON_EMAILS = [];
+    renderPersonChips();
     bodyEl.innerHTML = '';
     ATTACHMENTS = [];
     renderAttachments();

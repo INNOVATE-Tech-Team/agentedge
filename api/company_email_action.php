@@ -24,7 +24,7 @@ if ($action === 'send' || $action === 'schedule') {
     // stored CSV-joined in the TEXT columns, same pattern already used for leader_types.
     $audiences   = array_values(array_unique(array_filter(array_map('trim', (array)($body['audience'] ?? [])))));
     $mcSlugs     = array_values(array_unique(array_filter(array_map('trim', (array)($body['target_mc_slug'] ?? [])))));
-    $targetEmail = strtolower(trim($body['target_email'] ?? ''));
+    $targetEmails = array_values(array_unique(array_filter(array_map(fn($e) => strtolower(trim($e)), (array)($body['target_email'] ?? [])))));
     $subject     = trim($body['subject']          ?? '');
     $html        = trim($body['body']             ?? '');
     $hasText     = trim(strip_tags($html)) !== '';
@@ -33,7 +33,7 @@ if ($action === 'send' || $action === 'schedule') {
 
     if (!$subject || !$hasText) { echo json_encode(['ok'=>false,'error'=>'Subject and message are required']); exit; }
 
-    $err = ce_validate_audience($audiences, $mcSlugs, $targetEmail);
+    $err = ce_validate_audience($audiences, $mcSlugs, $targetEmails);
     if ($err) { echo json_encode(['ok'=>false,'error'=>$err]); exit; }
 
     // Attachment tokens -> ids owned by this sender. A token belonging to
@@ -49,9 +49,10 @@ if ($action === 'send' || $action === 'schedule') {
     }
     $attachIdsStr = implode(',', $attachIds);
 
-    $recipients   = ce_resolve_recipients($audiences, $mcSlugs, $targetEmail, ['mc_leader', 'bic'], $launchClassDate);
-    $audienceStr  = implode(',', $audiences);
-    $mcSlugsStr   = implode(',', $mcSlugs);
+    $recipients      = ce_resolve_recipients($audiences, $mcSlugs, $targetEmails, ['mc_leader', 'bic'], $launchClassDate);
+    $audienceStr     = implode(',', $audiences);
+    $mcSlugsStr      = implode(',', $mcSlugs);
+    $targetEmailsStr = implode(',', $targetEmails);
 
     if ($action === 'schedule') {
         $ts = $sendAt ? strtotime($sendAt) : false;
@@ -61,7 +62,7 @@ if ($action === 'send' || $action === 'schedule') {
         $db->prepare(
             "INSERT INTO scheduled_emails (sender_email, sender_role, audience, target_mc_slug, target_email, subject, body, send_at, recipient_count, attachment_ids, launch_class_date)
              VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-        )->execute([$me, my_role(), $audienceStr, $mcSlugsStr, $targetEmail, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients), $attachIdsStr, $launchClassDate]);
+        )->execute([$me, my_role(), $audienceStr, $mcSlugsStr, $targetEmailsStr, $subject, $html, gmdate('Y-m-d H:i:s', $ts), count($recipients), $attachIdsStr, $launchClassDate]);
 
         echo json_encode(['ok'=>true, 'scheduled'=>true, 'recipients'=>count($recipients)]);
         exit;
