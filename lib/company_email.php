@@ -370,6 +370,19 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, array $tar
         $names[$email] = $a['fullName'] ?? '';
     }
 
+    // "Entire Company" must reach admin/staff too — agent_roles' super_admin/
+    // staff rows are frequently non-agents (office/support staff, admins with
+    // no license), so they can be entirely absent from the CRM roster loop above.
+    if ($audience === 'all') {
+        $adminRows = $db->query("SELECT email FROM agent_roles WHERE role IN ('super_admin','staff')")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($adminRows as $email) {
+            $email = strtolower(trim($email));
+            if (!$email || isset($names[$email])) continue;
+            $localPart = strstr($email, '@', true) ?: $email;
+            $names[$email] = ucwords(str_replace(['.', '_'], ' ', $localPart));
+        }
+    }
+
     $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
     foreach ($optOut as $o) unset($names[strtolower(trim($o))]);
 
