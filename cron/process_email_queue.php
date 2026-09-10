@@ -25,10 +25,11 @@ foreach ($due as $row) {
         // Re-resolve recipients now, not at compose time — the roster may have changed.
         // audience/target_mc_slug are CSV-joined (one or more values each); leader_types
         // only matters for the legacy 'leaders' audience (see lib/company_email.php).
-        $audiences   = array_values(array_filter(explode(',', $row['audience'] ?? '')));
-        $mcSlugs     = array_values(array_filter(explode(',', $row['target_mc_slug'] ?? '')));
-        $leaderTypes = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
-        $recipients  = ce_resolve_recipients($audiences, $mcSlugs, $row['target_email'], $leaderTypes ?: ['mc_leader', 'bic'], $row['launch_class_date'] ?? '');
+        $audiences    = array_values(array_filter(explode(',', $row['audience'] ?? '')));
+        $mcSlugs      = array_values(array_filter(explode(',', $row['target_mc_slug'] ?? '')));
+        $leaderTypes  = array_values(array_filter(explode(',', $row['leader_types'] ?? 'mc_leader,bic')));
+        $targetEmails = array_values(array_filter(explode(',', $row['target_email'] ?? '')));
+        $recipients   = ce_resolve_recipients($audiences, $mcSlugs, $targetEmails, $leaderTypes ?: ['mc_leader', 'bic'], $row['launch_class_date'] ?? '');
 
         $attachIdsStr = $row['attachment_ids'] ?? '';
 
