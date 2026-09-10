@@ -40,6 +40,7 @@ function nav_items(): array {
     // Core pages — sorted by nav_core_order if set
     $coreMap = [
         'roster'           => ['key' => 'roster',           'label' => 'Agent Roster',        'href' => 'roster.php'],
+        'associate_paperwork' => ['key' => 'associate_paperwork', 'label' => 'Associate Paperwork', 'href' => 'associate_paperwork.php'],
         'calendar'         => ['key' => 'calendar',         'label' => 'Company Calendar',    'href' => 'calendar.php'],
         // 'event_planner' hidden from the sidebar for now — page still exists at event_planner.php.
         // Admin Work OS (V0) — admin-only collapsible, rendered above the
@@ -51,7 +52,7 @@ function nav_items(): array {
         'who_does_what'    => ['key' => 'who_does_what',    'label' => 'Who Does What',        'href' => 'who_does_what.php'],
         'industry_events'  => ['key' => 'industry_events',  'label' => 'Industry Events',     'href' => 'industry_events.php'],
         'university'       => ['key' => 'university',       'label' => 'INNOVATE University', 'href' => 'university.php'],
-        'leaderboard'      => ['key' => 'leaderboard',      'label' => 'LAUNCH Leaderboard',  'href' => 'leaderboard.php'],
+        'leaderboard'      => ['key' => 'leaderboard',      'label' => 'LAUNCH Leaderboard',  'href' => 'leaderboard.php', 'launchLeaderboardOnly' => true],
     ];
     try {
         $orderedKeys = local_db()->query("SELECT key FROM nav_core_order ORDER BY sort_ord")->fetchAll(PDO::FETCH_COLUMN);
@@ -269,6 +270,7 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['launchCoachOnly']) && !is_launch_coach() && !$admin) continue;
         if (!empty($it['staffOnly']) && in_array(my_role(), ['agent', 'launch_agent'], true)) continue;
         if (!empty($it['teamOnly']) && !$admin && !is_team_leader() && my_own_team_id() === null) continue;
+        if (!empty($it['launchLeaderboardOnly']) && !can_view_launch_leaderboard()) continue;
 
         // Sentinel — inject the admin-only Admin OS collapsible inline, above
         // the personalized Assets section below. Reaching this point already

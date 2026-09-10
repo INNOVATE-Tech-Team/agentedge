@@ -1,9 +1,10 @@
 <?php
 // Gamification data for leaderboard.php — live leaderboard on one KPI at a
 // time, cohort-vs-cohort framing, per-agent streaks, and a recent-wins feed
-// pulled straight from the milestones table. Read-only, visible to any
-// signed-in agent (motivational surface, not an admin tool) — no write path
-// here, all writes still go through api/weekly_activity.php.
+// pulled straight from the milestones table. Read-only — no write path here,
+// all writes still go through api/weekly_activity.php. Gated the same as
+// leaderboard.php: super_admin, launch coaching staff, or an agent currently
+// active in a LAUNCH cohort (see can_view_launch_leaderboard() in roles.php).
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
@@ -13,6 +14,7 @@ header('Content-Type: application/json');
 
 $agentSession = current_agent();
 if (!$agentSession) { http_response_code(401); echo json_encode(['ok' => false, 'error' => 'not signed in']); exit; }
+if (!can_view_launch_leaderboard()) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'not authorized']); exit; }
 
 $pdo = local_db();
 

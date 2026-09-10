@@ -174,10 +174,20 @@ function socialIcons(social) {
   }).join('') || '<span class="muted">—</span>';
 }
 
+// Formats a US 10-digit number as (XXX) XXX-XXXX. Anything else (extensions,
+// international numbers, partial/malformed data) is left exactly as stored
+// rather than risk mangling it.
+function formatPhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  if (digits.length === 11 && digits[0] === '1') return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  return raw;
+}
+
 function contactCell(a) {
   const bits = [];
   if (a.email) bits.push(`<a href="mailto:${esc(a.email)}">${esc(a.email)}</a>`);
-  if (a.phone) bits.push(`<a class="ph" href="tel:${esc(a.phone)}">${esc(a.phone)}</a>`);
+  if (a.phone) bits.push(`<a class="ph" href="tel:${esc(a.phone)}">${esc(formatPhone(a.phone))}</a>`);
   return bits.length ? bits.join('<br>') : '<span class="muted">—</span>';
 }
 
@@ -193,8 +203,11 @@ function roleBadge(email) {
 }
 
 function agentCells(a) {
+  const nameCell = (typeof CAN_VIEW_PROFILE !== 'undefined' && CAN_VIEW_PROFILE && a.email)
+    ? `<a href="agent_profile.php?email=${encodeURIComponent(a.email)}">${esc(a.name)}</a>`
+    : esc(a.name);
   return `
-    <td>${esc(a.name)}</td>
+    <td>${nameCell}</td>
     <td>${esc(a.marketCenter) || '<span class="muted">Unassigned</span>'}</td>
     <td>${contactCell(a)}</td>
     <td class="soc-cell">${socialIcons(a.social)}</td>

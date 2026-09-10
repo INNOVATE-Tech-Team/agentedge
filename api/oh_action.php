@@ -138,7 +138,14 @@ switch ($action) {
         $request_id = (int)($_POST['request_id'] ?? 0);
         if (!$request_id) { echo json_encode(['error' => 'Missing request_id']); exit; }
 
-        $req = $db->prepare("SELECT * FROM oh_requests WHERE id=?");
+        $req = $db->prepare("
+            SELECT r.*, l.listing_agent_email, l.address, l.city, l.state, l.zip,
+                   s.slot_date, s.start_time, s.end_time
+            FROM oh_requests r
+            JOIN oh_listings l ON l.id = r.listing_id
+            LEFT JOIN oh_slots s ON s.id = r.slot_id
+            WHERE r.id=?
+        ");
         $req->execute([$request_id]);
         $row = $req->fetch(PDO::FETCH_ASSOC);
         if (!$row) { echo json_encode(['error' => 'Request not found']); exit; }
@@ -152,6 +159,12 @@ switch ($action) {
         }
 
         $db->prepare("UPDATE oh_requests SET status='cancelled' WHERE id=?")->execute([$request_id]);
+
+        $whenLabel = empty($row['slot_date'])
+            ? date('M j, Y', strtotime($row['requested_date'])) . ' · ' . date('g:i A', strtotime($row['requested_time']))
+            : date('M j, Y', strtotime($row['slot_date'])) . ' · ' . date('g:i A', strtotime($row['start_time'])) . '–' . date('g:i A', strtotime($row['end_time']));
+        notify_oh_request_cancelled($row['listing_agent_email'], $name, $email, oh_address($row), $whenLabel);
+
         echo json_encode(['ok' => true]);
         break;
     }
@@ -166,7 +179,14 @@ switch ($action) {
             exit;
         }
 
-        $req = $db->prepare("SELECT r.*, l.listing_agent_email FROM oh_requests r JOIN oh_listings l ON l.id=r.listing_id WHERE r.id=?");
+        $req = $db->prepare("
+            SELECT r.*, l.listing_agent_email, l.listing_agent_name, l.address, l.city, l.state, l.zip,
+                   s.slot_date, s.start_time, s.end_time
+            FROM oh_requests r
+            JOIN oh_listings l ON l.id=r.listing_id
+            LEFT JOIN oh_slots s ON s.id = r.slot_id
+            WHERE r.id=?
+        ");
         $req->execute([$request_id]);
         $row = $req->fetch(PDO::FETCH_ASSOC);
         if (!$row) { echo json_encode(['error' => 'Request not found']); exit; }
@@ -179,7 +199,94 @@ switch ($action) {
 
         $newStatus = $decision === 'approve' ? 'approved' : 'declined';
         $db->prepare("UPDATE oh_requests SET status=?, reason=? WHERE id=?")->execute([$newStatus, $reason, $request_id]);
+
+        if ($newStatus === 'approved') {
+            $whenLabel = empty($row['slot_date'])
+                ? date('M j, Y', strtotime($row['requested_date'])) . ' · ' . date('g:i A', strtotime($row['requested_time']))
+                : date('M j, Y', strtotime($row['slot_date'])) . ' · ' . date('g:i A', strtotime($row['start_time'])) . '–' . date('g:i A', strtotime($row['end_time']));
+            notify_oh_request_approved($row['agent_email'], $row['agent_name'], $row['listing_agent_email'], $row['listing_agent_name'], oh_address($row), $whenLabel);
+        }
+
         echo json_encode(['ok' => true, 'status' => $newStatus]);
+        break;
+    }
+
+    // ── REQUEST FEEDBACK (listing owner asks the hosting agent) ──────────────
+    case 'request_feedback': {
+        $request_id = (int)($_POST['request_id'] ?? 0);
+        if (!$request_id) { echo json_encode(['error' => 'Missing request_id']); exit; }
+
+        $req = $db->prepare("
+            SELECT r.*, l.listing_agent_email, l.listing_agent_name, l.address, l.city, l.state, l.zip,
+                   s.slot_date, s.start_time, s.end_time
+            FROM oh_requests r
+            JOIN oh_listings l ON l.id=r.listing_id
+            LEFT JOIN oh_slots s ON s.id = r.slot_id
+            WHERE r.id=?
+        ");
+        $req->execute([$request_id]);
+        $row = $req->fetch(PDO::FETCH_ASSOC);
+        if (!$row) { echo json_encode(['error' => 'Request not found']); exit; }
+
+        $isOwner = strtolower($row['listing_agent_email']) === $email;
+        if (!$isOwner && !is_admin()) {
+            echo json_encode(['error' => 'Not authorized']);
+            exit;
+        }
+        if ($row['status'] !== 'approved') {
+            echo json_encode(['error' => 'Feedback can only be requested for approved requests']);
+            exit;
+        }
+
+        $db->prepare("UPDATE oh_requests SET feedback_requested_at=datetime('now') WHERE id=?")->execute([$request_id]);
+
+        $whenLabel = empty($row['slot_date'])
+            ? date('M j, Y', strtotime($row['requested_date'])) . ' · ' . date('g:i A', strtotime($row['requested_time']))
+            : date('M j, Y', strtotime($row['slot_date'])) . ' · ' . date('g:i A', strtotime($row['start_time'])) . '–' . date('g:i A', strtotime($row['end_time']));
+        notify_oh_feedback_requested($request_id, $row['agent_email'], $row['agent_name'], $row['listing_agent_email'], $row['listing_agent_name'], oh_address($row), $whenLabel);
+
+        echo json_encode(['ok' => true]);
+        break;
+    }
+
+    // ── SUBMIT FEEDBACK (hosting agent responds) ──────────────────────────────
+    case 'submit_feedback': {
+        $request_id = (int)($_POST['request_id'] ?? 0);
+        $feedback   = trim($_POST['feedback'] ?? '');
+        if (!$request_id || $feedback === '') { echo json_encode(['error' => 'Please enter your feedback']); exit; }
+
+        $req = $db->prepare("SELECT r.*, l.listing_agent_email, l.listing_agent_name, l.address, l.city, l.state, l.zip
+                              FROM oh_requests r JOIN oh_listings l ON l.id=r.listing_id WHERE r.id=?");
+        $req->execute([$request_id]);
+        $row = $req->fetch(PDO::FETCH_ASSOC);
+        if (!$row) { echo json_encode(['error' => 'Request not found']); exit; }
+        if (strtolower($row['agent_email']) !== $email) {
+            echo json_encode(['error' => 'Not your request']);
+            exit;
+        }
+        if ($row['feedback_requested_at'] === '') {
+            echo json_encode(['error' => 'No feedback was requested for this request']);
+            exit;
+        }
+
+        $db->prepare("UPDATE oh_requests SET feedback_text=?, feedback_submitted_at=datetime('now') WHERE id=?")
+           ->execute([$feedback, $request_id]);
+        notify_oh_feedback_submitted($row['listing_agent_email'], $name, $email, oh_address($row), $feedback);
+
+        echo json_encode(['ok' => true]);
+        break;
+    }
+
+    // ── SAVE MY OPEN HOUSE NOTIFICATION PREFS (any agent) ─────────────────────
+    case 'save_oh_notify_prefs': {
+        oh_notify_prefs_save(
+            $email,
+            !empty($_POST['notify_requested']),
+            !empty($_POST['notify_approved']),
+            !empty($_POST['notify_cancelled']),
+            !empty($_POST['auto_feedback_request'])
+        );
+        echo json_encode(['ok' => true]);
         break;
     }
 

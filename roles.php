@@ -236,6 +236,26 @@ function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coa
 function can_send_hot_deals(): bool { return is_admin() || is_bic(); }
 // Can manage the Launch Schedule / Launch Coaching roster (admin or coaching leadership).
 function can_manage_launch_roster(): bool { return is_admin() || is_launch_coach(); }
+// True if this agent has an active cohort_members row in a LAUNCH-program
+// cohort right now — the same "active member" definition api/leaderboard.php
+// itself uses to decide who appears on the board, not the static launch_agent
+// role (which is a manually-assigned tag in agent_roles and can go stale
+// after an agent graduates/drops instead of tracking live enrollment).
+function is_active_launch_agent(): bool {
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    if ($email === '' || !function_exists('local_db')) return false;
+    $stmt = local_db()->prepare(
+        "SELECT 1 FROM cohort_members cm JOIN cohorts c ON c.id = cm.cohort_id
+          WHERE LOWER(cm.agent_email)=? AND cm.status='active' AND c.program='launch' LIMIT 1"
+    );
+    $stmt->execute([$email]);
+    return (bool)$stmt->fetchColumn();
+}
+// LAUNCH Leaderboard: super_admin, launch coaching staff, or an agent
+// currently active in a LAUNCH cohort -- not agents generally.
+function can_view_launch_leaderboard(): bool {
+    return is_super_admin() || is_launch_coach() || is_active_launch_agent();
+}
 // Can search / view other agents' networks (super_admin, staff, recruiter)
 function can_search_network(): bool { return is_admin() || is_recruiter(); }
 function my_role(): string         { return current_perms()['role'] ?? 'agent'; }

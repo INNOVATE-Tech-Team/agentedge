@@ -35,7 +35,20 @@ const WDW_GROUPS = ['Leadership', 'Admins', 'Brokers'];
 // not tied to a specific topic or to onboarding). Licensing is distinct from
 // Compliance: a Broker-In-Charge's state license sponsorship/transfer/renewal
 // role is a different real question from company-wide contract/Dotloop review.
-const WDW_TAGS   = ['Onboarding', 'Training', 'Agent Development', 'Support', 'Leadership', 'Commission', 'Money', 'Accounting', 'Transactions', 'Compliance', 'Licensing', 'Contracts', 'Marketing', 'Tech'];
+// Role/system/region tags below (Recruiting .. DE) are backend-only
+// additions: selectable in Back Office Add/Edit and matched by the public
+// page's free-text search (who_does_what.php's matches() haystack is
+// name+title+groups+handles+tags, a plain lowercased substring check), but
+// deliberately left out of WDW_PUBLIC_TAGS so they don't grow the quick-filter
+// row. System tags spell out both the full name and abbreviation in one tag
+// string (e.g. "Follow Up Boss (FUB)") specifically so that substring search
+// already matches either "FUB" or "Follow Up Boss" once a tag is assigned --
+// no separate alias/keyword system needed. State tags (FL..DE) are plain
+// two-letter codes by explicit request, covering every Broker-In-Charge
+// region (including states like MD/DE/CT/RI/MA with no dedicated BIC row yet)
+// -- kept as a single consistent style rather than mixing bare codes with a
+// "Full Name (XX)" form.
+const WDW_TAGS   = ['Onboarding', 'Training', 'Agent Development', 'Support', 'Leadership', 'Commission', 'Money', 'Accounting', 'Transactions', 'Compliance', 'Licensing', 'Contracts', 'Marketing', 'Tech', 'Recruiting', 'Growth / Expansion', 'Broker Support', 'Coach Support', 'Market Center Support', 'Market Leader Support', 'MLS', 'Operations', 'Follow Up Boss (FUB)', 'Darwin', 'Dotloop', 'RealScout', 'Listings to Leads (L2L)', 'MAXA', 'Agent Edge', 'Agent Websites', 'FL', 'RI', 'CT', 'MA', 'MD', 'NC', 'SC', 'GA', 'VA', 'PA', 'NJ', 'TN', 'DE', 'NH', 'OH'];
 // Curated subset shown as quick-filter pills on the public page -- the full
 // WDW_TAGS list stays the Back Office editor's complete vocabulary and the
 // complete set of values search matches against; this only trims which ones

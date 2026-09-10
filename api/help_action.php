@@ -168,7 +168,33 @@ if ($action === 'search') {
         }, $nameStmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
-    echo json_encode(['ok'=>true,'results'=>$results,'agents'=>$agents]); exit;
+    // ── Who Does What people ("who can help") ───────────────────────────────
+    // Gated by the exact same wdw_is_available_to_current_user() check
+    // who_does_what.php itself uses, not a separate admin/role check --
+    // whenever that shared rule opens the directory to more people, this
+    // list starts appearing here too with no further changes. Directory is
+    // small (a few dozen rows), so a per-search PHP-side scan of the active
+    // roster is cheap; matches the full backend WDW_TAGS vocabulary via
+    // wdw_tags_decode(), not just the WDW_PUBLIC_TAGS quick-filter subset.
+    $people = [];
+    if (wdw_is_available_to_current_user()) {
+        $qLower = strtolower($q);
+        foreach (team_directory_list_active() as $r) {
+            $groups = wdw_groups_decode($r['group_label']);
+            $tags   = wdw_tags_decode($r['tags']);
+            $haystack = strtolower($r['name'] . ' ' . $r['title'] . ' ' . implode(' ', $groups) . ' ' . $r['handles'] . ' ' . implode(' ', $tags));
+            if (strpos($haystack, $qLower) === false) continue;
+            $people[] = [
+                'name'    => $r['name'],
+                'title'   => $r['title'],
+                'groups'  => $groups,
+                'handles' => $r['handles'],
+            ];
+            if (count($people) >= 8) break;
+        }
+    }
+
+    echo json_encode(['ok'=>true,'results'=>$results,'agents'=>$agents,'people'=>$people,'can_view_profile'=>$isAdminUser]); exit;
 }
 
 // ── Everything below requires super_admin ───────────────────────────────────

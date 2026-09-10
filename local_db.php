@@ -54,6 +54,108 @@ function local_db(): PDO {
         $pdo->exec("UPDATE local_db_schema_meta SET version = " . LOCAL_DB_SCHEMA_VERSION . " WHERE id=1");
     }
 
+    // NOTE: the live DB's stored schema version is already ahead of
+    // LOCAL_DB_SCHEMA_VERSION (a pre-existing drift — see git history of that
+    // constant), so the gate above is permanently closed and local_db_migrate()
+    // never actually runs on the deployed database. Bumping the constant to
+    // "fix" that would also replay every unguarded seed/backfill statement
+    // already baked into local_db_migrate()'s single unversioned block,
+    // duplicating rows in tables like conference_rooms/innovate_roster/
+    // press_contacts. Until that's untangled, new schema additions that must
+    // reliably apply go here instead: cheap, always-run, fully idempotent
+    // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_notify_prefs (
+        email            TEXT PRIMARY KEY,
+        notify_requested INTEGER NOT NULL DEFAULT 1,
+        notify_approved  INTEGER NOT NULL DEFAULT 1,
+        notify_cancelled INTEGER NOT NULL DEFAULT 1,
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    // Opt-in: automatically ask the hosting agent for feedback once an
+    // approved open house's scheduled time has passed, instead of requiring
+    // the listing owner to click "Ask for Feedback" themselves — see
+    // cron/oh_feedback_requests.php. Off by default, unlike the three emails
+    // above, since it's new automated behavior rather than an expected notification.
+    try { $pdo->exec("ALTER TABLE oh_notify_prefs ADD COLUMN auto_feedback_request INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // Feedback request/response on an open house request — set when the
+    // listing owner asks the hosting agent (an approved request) how it went;
+    // feedback_text/feedback_submitted_at are filled in when that agent responds.
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_requested_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_text TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_submitted_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Cross-system identity map for the Coach Dashboard production layer
+    // (backfill_agent_identity.php / lib/agent_identity.php). darwin_agent_person_id
+    // and perfex_staff_id sit alongside the existing canonical_agent_id as
+    // explicit, independently-matched IDs — never inferred from agent name.
+    // id_match_status: matched | partial | unmatched | conflict (see
+    // lib/agent_identity.php for the exact rollup rule). id_match_checked_at is the
+    // last time identity matching was *evaluated* for this row, regardless of
+    // outcome — not the last time it successfully matched. id_match_detail is a
+    // JSON audit trail (per-system source/candidates) for manual review.
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN darwin_agent_person_id INTEGER"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN perfex_staff_id        INTEGER"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN id_match_status TEXT NOT NULL DEFAULT 'unmatched'"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN id_match_checked_at TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE innovate_roster ADD COLUMN id_match_detail TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Coastline (INNOVATE Advantage) production mirror — Step 2 data layer for
+    // the Coach Dashboard production feature. Nightly-synced copies of
+    // GET /public/agentedge/production/aggregates and .../closed-sides
+    // (see innovate-advantage-server CLAUDE.md, "Coach Dashboard bulk
+    // production export"). No sync writes to these yet — schema only.
+    //
+    // These tables hold only rows Coastline actually returned; canonical_id
+    // here is a value copied from Coastline's response, never something this
+    // app computes or infers. Identity/match state stays owned entirely by
+    // innovate_roster.canonical_agent_id / id_match_status (above) — do not
+    // read "no row here" as "unmatched": an agent can be validly matched
+    // (id_match_status='matched') with zero qualifying Coastline production,
+    // which looks identical to an unmatched agent unless the caller checks
+    // innovate_roster.id_match_status first.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS coastline_agent_production_stats (
+        canonical_agent_id     TEXT PRIMARY KEY,
+        agent_name             TEXT,
+        is_active               INTEGER,
+        volume_12mo             REAL,
+        sides_12mo               INTEGER,
+        list_side_12mo           INTEGER,
+        buy_side_12mo            INTEGER,
+        avg_sale_price_12mo      REAL,
+        volume_24mo              REAL,
+        sides_24mo               INTEGER,
+        volume_prior_12mo        REAL,
+        sides_prior_12mo         INTEGER,
+        trend_pct_12mo           REAL,
+        active_listing_count     INTEGER,
+        active_listing_volume    REAL,
+        last_close_date          TEXT,
+        synced_at                TEXT
+    )");
+
+    // Closed-sides row-level mirror — one row per credited role (list/co_list/
+    // buy/co_buy) per closed MLS transaction, full close_price credit each, no
+    // split (same rule Coastline's own agent_production_stats uses). Unique
+    // key matches Coastline's own idempotent-sync key exactly: listing_key
+    // (each source MLS's enforced primary key), not listing_id ("MLS #"),
+    // which is not guaranteed stable/reused-free.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS coastline_closed_sides (
+        mls_source          TEXT NOT NULL,
+        listing_key         TEXT NOT NULL,
+        role                TEXT NOT NULL,
+        canonical_agent_id  TEXT NOT NULL,
+        side                TEXT NOT NULL,
+        close_price         REAL,
+        close_date          TEXT NOT NULL,
+        list_price          REAL,
+        property_type       TEXT,
+        property_sub_type   TEXT,
+        listing_id          TEXT,
+        synced_at           TEXT,
+        UNIQUE(mls_source, listing_key, role)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ccs_agent_date ON coastline_closed_sides(canonical_agent_id, close_date)");
+
     return $pdo;
 }
 

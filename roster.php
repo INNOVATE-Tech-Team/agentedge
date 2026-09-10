@@ -93,6 +93,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
   <script>
     const IS_ADMIN       = <?= json_encode(is_leader()) ?>;
     const IS_SUPER_ADMIN = <?= json_encode(is_super_admin()) ?>;
+    // Narrower than IS_ADMIN (is_leader — includes BICs/MC leaders): this must
+    // match agent_profile.php's own access check exactly, since it's used to
+    // decide whether the roster links a name to that page.
+    const CAN_VIEW_PROFILE = <?= json_encode(is_admin()) ?>;
     const IS_RECRUITER   = <?= json_encode(is_recruiter()) ?>;
     const CSRF           = <?= json_encode($csrf) ?>;
     const MC_OPTS       = <?= json_encode($mc_opts) ?>;
@@ -172,6 +176,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     </div>
   </div>
 
+  <script src="assets/language_options.js"></script>
   <script src="assets/roster.js"></script>
   <script>
     function openRoleModal(email, name, mc) {

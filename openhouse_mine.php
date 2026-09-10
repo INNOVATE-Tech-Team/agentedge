@@ -31,7 +31,8 @@ $lstQ->execute([$myEmail]);
 $listings = $lstQ->fetchAll(PDO::FETCH_ASSOC);
 
 // For each listing, load its pending requests (for the respond section)
-$pendingByListing = [];
+$pendingByListing  = [];
+$approvedByListing = [];
 if ($listings) {
     $ids  = array_column($listings, 'id');
     $inPH = implode(',', array_fill(0, count($ids), '?'));
@@ -45,6 +46,19 @@ if ($listings) {
     $rQ->execute($ids);
     foreach ($rQ->fetchAll(PDO::FETCH_ASSOC) as $req) {
         $pendingByListing[$req['listing_id']][] = $req;
+    }
+
+    // Approved requests, so the listing owner can ask the hosting agent for feedback.
+    $aQ = $db->prepare("
+        SELECT r.*, s.slot_date, s.start_time, s.end_time
+        FROM oh_requests r
+        LEFT JOIN oh_slots s ON s.id = r.slot_id
+        WHERE r.listing_id IN ({$inPH}) AND r.status = 'approved'
+        ORDER BY COALESCE(s.slot_date, r.requested_date) DESC, COALESCE(s.start_time, r.requested_time)
+    ");
+    $aQ->execute($ids);
+    foreach ($aQ->fetchAll(PDO::FETCH_ASSOC) as $req) {
+        $approvedByListing[$req['listing_id']][] = $req;
     }
 }
 ?>
@@ -169,6 +183,42 @@ if ($listings) {
                   <?php endforeach; ?>
                 </div>
               <?php endif; ?>
+              <?php if (!empty($approvedByListing[$lst['id']])): ?>
+                <button onclick="toggleApproved(<?= $lst['id'] ?>)"
+                        style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid #ccc;background:white;border-radius:4px;cursor:pointer">
+                  Ask for feedback (<?= count($approvedByListing[$lst['id']]) ?>)
+                </button>
+                <div id="approved-<?= $lst['id'] ?>" style="display:none;margin-top:8px">
+                  <?php foreach ($approvedByListing[$lst['id']] as $req):
+                    $isAdhoc = empty($req['slot_date']);
+                    if ($isAdhoc) {
+                      $fd = date('M j, Y', strtotime($req['requested_date']));
+                      $timeLabel = date('g:i A', strtotime($req['requested_time'])) . ' (requested)';
+                    } else {
+                      $fd = date('M j, Y', strtotime($req['slot_date']));
+                      $timeLabel = date('g:i A', strtotime($req['start_time'])) . '–' . date('g:i A', strtotime($req['end_time']));
+                    }
+                  ?>
+                  <div style="padding:8px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;margin-bottom:6px;font-size:12px" id="areq-<?= $req['id'] ?>">
+                    <div style="font-weight:700"><?= h($req['agent_name'] ?: $req['agent_email']) ?></div>
+                    <div style="color:#888"><?= h($fd) ?> &middot; <?= h($timeLabel) ?></div>
+                    <?php if ($req['feedback_submitted_at']): ?>
+                      <div style="margin-top:6px;padding:6px 8px;background:white;border:1px solid #ddd;border-radius:4px;color:#444">
+                        <em>"<?= nl2br(h($req['feedback_text'])) ?>"</em>
+                      </div>
+                    <?php elseif ($req['feedback_requested_at']): ?>
+                      <div style="margin-top:6px;color:#888;font-style:italic">Feedback requested — awaiting response.</div>
+                    <?php else: ?>
+                      <div style="margin-top:6px">
+                        <button style="padding:4px 10px;border:1px solid #ccc;background:white;border-radius:4px;font-size:11px;cursor:pointer"
+                                onclick="requestFeedback(<?= $req['id'] ?>)" id="fb-btn-<?= $req['id'] ?>">Ask for Feedback</button>
+                      </div>
+                    <?php endif; ?>
+                    <div id="fbmsg-<?= $req['id'] ?>" style="font-size:11px;margin-top:4px"></div>
+                  </div>
+                  <?php endforeach; ?>
+                </div>
+              <?php endif; ?>
             </td>
             <td>
               <button id="vis-btn-<?= $lst['id'] ?>"
@@ -198,6 +248,32 @@ if ($listings) {
 function togglePending(id) {
   const el = document.getElementById('pending-' + id);
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleApproved(id) {
+  const el = document.getElementById('approved-' + id);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function requestFeedback(reqId) {
+  const btn   = document.getElementById('fb-btn-' + reqId);
+  const msgEl = document.getElementById('fbmsg-' + reqId);
+  const fd = new FormData();
+  fd.append('action',     'request_feedback');
+  fd.append('request_id', reqId);
+  btn.disabled = true;
+  fetch('api/oh_action.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        btn.outerHTML = '<div style="color:#888;font-style:italic">Feedback requested — awaiting response.</div>';
+      } else {
+        btn.disabled = false;
+        msgEl.textContent = d.error || 'Error';
+        msgEl.style.color = '#c00';
+      }
+    })
+    .catch(() => { btn.disabled = false; msgEl.textContent = 'Network error.'; msgEl.style.color = '#c00'; });
 }
 
 function respondReq(reqId, decision) {
