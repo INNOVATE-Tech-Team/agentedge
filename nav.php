@@ -66,7 +66,13 @@ function nav_items(): array {
     // mc_leader/bic now see the Back Office section directly (department-filtered
     // in render_sidebar()), so no separate Agent Communications shortcut is needed here.
     return array_merge($core, $ext, [
-        ['key' => 'coach_dashboard',   'label' => 'Coach Dashboard',    'href' => 'coach_dashboard.php',   'launchCoachOnly' => true],
+        // Coach Dashboard — collapsible dropdown (Dashboard / Discussions /
+        // Resources), same sentinel-injection pattern as '__admin_os__'
+        // below. Discussions and Resources already existed as pages but had
+        // no nav entry at all (same missing-nav-entry issue Referral
+        // Network/Listing Intel had above) -- this is the first time either
+        // is reachable without typing the URL directly.
+        ['key' => '__coach_dashboard__', 'label' => 'Coach Dashboard', 'href' => '', 'launchCoachOnly' => true],
         ['key' => 'crm',               'label' => 'INNOVATE Advantage', 'href' => 'https://advantage.innovateonline.com', 'external' => true, 'adminOnly' => true],
         ['key' => 'settings_signature','label' => 'My Email Signature', 'href' => 'settings_signature.php','group_label' => 'My Account', 'staffOnly' => true],
         // Same login as this app (same innovate.users account/password) - just a
@@ -78,6 +84,16 @@ function nav_items(): array {
         // plain member. Not shown to agents with no team at all.
         ['key' => 'team_dashboard',    'label' => 'Team Dashboard',      'href' => 'team_dashboard.php',    'group_label' => 'My Resources', 'teamOnly' => true],
     ]);
+}
+
+// Items that appear under the "Coach Dashboard" collapsible. Add more
+// entries here as the Coach Dashboard area grows.
+function coach_dashboard_nav_items(): array {
+    return [
+        ['key' => 'coach_dashboard',   'label' => 'Dashboard',    'href' => 'coach_dashboard.php'],
+        ['key' => 'coach_discussions', 'label' => 'Discussions',  'href' => 'coach_discussions.php'],
+        ['key' => 'coach_resources',   'label' => 'Resources',    'href' => 'coach_resources.php'],
+    ];
 }
 
 // Items that appear under the admin-only "Admin OS" collapsible. Add more
@@ -276,6 +292,22 @@ function render_sidebar(string $current, array $agent): void {
         if (!empty($it['staffOnly']) && in_array(my_role(), ['agent', 'launch_agent'], true)) continue;
         if (!empty($it['teamOnly']) && !$admin && !is_team_leader() && my_own_team_id() === null) continue;
         if (!empty($it['launchLeaderboardOnly']) && !can_view_launch_leaderboard()) continue;
+
+        // Sentinel — inject the Coach Dashboard collapsible inline. Reaching
+        // this point already means the launchCoachOnly filter above passed
+        // (launch coach or admin).
+        if ($it['key'] === '__coach_dashboard__') {
+            echo '<button class="sb-links-toggle" data-group="coach-dashboard" onclick="toggleSbLinks(this)" aria-expanded="false">'
+               . 'Coach Dashboard <span class="sb-links-arrow">&#9660;</span></button>';
+            echo '<div class="sb-links-sub" hidden>';
+            foreach (coach_dashboard_nav_items() as $ci) {
+                $act = $ci['key'] === $current ? ' sb-active' : '';
+                echo '<a class="sb-item' . $act . '" href="' . htmlspecialchars($ci['href']) . '">'
+                   . htmlspecialchars($ci['label']) . '</a>';
+            }
+            echo '</div>';
+            continue;
+        }
 
         // Sentinel — inject the admin-only Admin OS collapsible inline, above
         // the personalized Assets section below. Reaching this point already

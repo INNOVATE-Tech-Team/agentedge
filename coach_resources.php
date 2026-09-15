@@ -17,30 +17,23 @@ if (!is_super_admin()) { header('Location: index.php'); exit; }
   <title>Coach Resources — AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/app.css">
-  <style>
-    .bo-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
-    .content-sub{font-size:13px;color:var(--faint);margin-top:2px}
-    .empty-state{text-align:center;padding:50px 20px;color:var(--faint);font-size:14px}
-    .empty-state .es-icon{font-size:28px;margin-bottom:10px}
-  </style>
+  <link rel="stylesheet" href="assets/coach-dashboard.css">
 </head>
 <body>
-<div class="layout">
+<div class="layout coachdash">
   <?php render_sidebar('coach_resources', $agent); ?>
   <div class="content">
     <header class="content-top">
       <div>
-        <div class="bo-eyebrow">Coaching</div>
+        <div class="cd-eyebrow">Coach Dashboard</div>
         <div class="content-title">Resources</div>
         <div class="content-sub">Coaching resources and reference materials — coming soon.</div>
       </div>
     </header>
-    <main class="wrap" style="max-width:1100px">
-      <div class="card">
-        <div class="empty-state">
-          <div class="es-icon">📚</div>
-          Resources aren't built yet — this page is a placeholder.
-        </div>
+    <main class="cd-page">
+      <div class="cd-card cd-empty">
+        <div class="cd-empty-icon">&#128218;</div>
+        Resources aren't built yet — this page is a placeholder.
       </div>
     </main>
   </div>
