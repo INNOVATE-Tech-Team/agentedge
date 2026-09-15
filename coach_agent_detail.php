@@ -6,6 +6,7 @@ require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/lib/agent_profile.php';
 require_once __DIR__ . '/lib/performance_client.php';
+require_once __DIR__ . '/lib/coach_production.php';
 
 // V1: super-admin-only, same gate as coach_dashboard.php. This is a
 // Coach-Dashboard-specific detail view — it does not replace or modify
@@ -22,7 +23,7 @@ $profile   = null;
 $headshotKey = null;
 if ($targetEmail !== '') {
     $st = local_db()->prepare(
-        "SELECT agent_name, email, phone, market_center, state_code, license_exp
+        "SELECT id, agent_name, email, phone, market_center, state_code, license_exp
          FROM innovate_roster WHERE LOWER(TRIM(email))=? LIMIT 1"
     );
     $st->execute([$targetEmail]);
@@ -84,6 +85,45 @@ if ($found && $targetEmail !== '') {
             'streak'    => $myStreak,
         ];
     }
+}
+
+// Coach Production (Step 6) -- entirely separate data source from the Phase
+// 2A Activity Performance pilot above; deliberately not intertwined with it.
+// Server-side, direct lib/coach_production.php calls (same pattern as this
+// page already uses for $profile/$perf) rather than an HTTP round-trip to
+// api/coach_production_summary.php, since this page is fully server-rendered
+// already. No production calculations happen here -- just calls + display.
+$production = null;
+$productionMtd = null;
+if ($rosterRow) {
+    $prodDb = local_db();
+    $mirrorHealth = coach_mirror_health($prodDb);
+    $production = coach_selected_agent_production($prodDb, (int)$rosterRow['id'], 'ltm', [], null, $mirrorHealth);
+    $productionMtd = coach_mtd_comparison($prodDb, (int)$rosterRow['id'], null, $mirrorHealth);
+}
+
+function cad_fmt_money(?float $v): string {
+    if ($v === null) return '—';
+    $sign = $v < 0 ? '-' : '';
+    $abs = abs($v);
+    if ($abs >= 1000000) return $sign . '$' . rtrim(rtrim(number_format($abs / 1000000, 1), '0'), '.') . 'M';
+    if ($abs >= 1000) return $sign . '$' . round($abs / 1000) . 'K';
+    return $sign . '$' . number_format($abs);
+}
+function cad_exact_money(?float $v): string { return $v === null ? '' : '$' . number_format($v); }
+function cad_fmt_pct(?float $v): string { return $v === null ? '—' : (($v > 0 ? '+' : '') . number_format($v, 1) . '%'); }
+function cad_trend_style(?float $v): string {
+    if ($v === null) return 'color:var(--faint)';
+    if ($v > 0) return 'color:var(--green-d)';
+    if ($v < 0) return 'color:var(--red)';
+    return 'color:var(--faint)';
+}
+// prior=0 is a real, common case -- never divide into Infinity/NaN.
+function cad_mtd_delta_text(?float $current, ?float $prior): string {
+    if ($current === null || $prior === null) return '—';
+    if ($prior == 0.0) return $current == 0.0 ? 'No activity yet' : 'New vs. no prior-year activity';
+    $pct = (($current - $prior) / $prior) * 100;
+    return ($pct >= 0 ? '↑ ' : '↓ ') . number_format(abs($pct), 0) . '% vs same period last year';
 }
 ?>
 <!doctype html>
@@ -223,6 +263,52 @@ if ($found && $targetEmail !== '') {
               <?php endforeach; ?>
             <?php else: ?>
               <div class="cad-stub">No activity goals set for this agent yet.</div>
+            <?php endif; ?>
+          <?php endif; ?>
+        </div>
+
+        <div class="card">
+          <h2>Production</h2>
+          <?php if (!$rosterRow): ?>
+            <div class="cad-stub">No roster record for this agent — production can't be looked up.</div>
+          <?php elseif ($production['production_status'] === 'unmatched'): ?>
+            <div class="cad-stub">Production unavailable — agent identity not matched.</div>
+          <?php elseif ($production['production_status'] === 'mirror_unavailable'): ?>
+            <div class="cad-stub">Production mirror is currently unavailable.</div>
+          <?php else:
+            $closed = $production['closed'];
+            $extra  = $production['ltm_extra'] ?? [];
+            $active = $production['active_listings'];
+            $mtd    = $productionMtd;
+          ?>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;margin-bottom:8px">
+              <div class="dg-field"><span class="dg-label">LTM Volume</span><span class="dg-value" title="<?= h(cad_exact_money($closed['volume'])) ?>"><?= h(cad_fmt_money($closed['volume'])) ?></span></div>
+              <div class="dg-field"><span class="dg-label">LTM Transactions</span><span class="dg-value"><?= $closed['transactions'] !== null ? h($closed['transactions']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">LTM Sides</span><span class="dg-value"><?= $closed['sides'] !== null ? h($closed['sides']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Avg Sale Price</span><span class="dg-value" title="<?= h(cad_exact_money($closed['average_sale_price'])) ?>"><?= h(cad_fmt_money($closed['average_sale_price'])) ?></span></div>
+              <div class="dg-field"><span class="dg-label">Trend</span><span class="dg-value" style="<?= h(cad_trend_style($extra['trend_pct_12mo'] ?? null)) ?>"><?= h(cad_fmt_pct($extra['trend_pct_12mo'] ?? null)) ?></span></div>
+              <div class="dg-field"><span class="dg-label">List / Buy Sides</span><span class="dg-value"><?= isset($extra['list_side_12mo']) ? h($extra['list_side_12mo']) : '—' ?> / <?= isset($extra['buy_side_12mo']) ? h($extra['buy_side_12mo']) : '—' ?></span></div>
+            </div>
+            <div class="dg-section">Current Active Listings</div>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;margin-bottom:8px">
+              <div class="dg-field"><span class="dg-label">Count</span><span class="dg-value"><?= $active !== null && $active['count'] !== null ? h($active['count']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Volume</span><span class="dg-value" title="<?= h(cad_exact_money($active['volume'] ?? null)) ?>"><?= h(cad_fmt_money($active !== null ? $active['volume'] : null)) ?></span></div>
+            </div>
+            <?php
+            $mtdCurrentVol = $mtd['current']['volume'] ?? null;
+            $mtdPriorVol   = $mtd['prior_year']['volume'] ?? null;
+            $mtdPct = null;
+            if ($mtdCurrentVol !== null && $mtdPriorVol !== null && $mtdPriorVol > 0) {
+                $mtdPct = ($mtdCurrentVol - $mtdPriorVol) / $mtdPriorVol * 100;
+            }
+            ?>
+            <div class="dg-section">MTD (Closed Volume)</div>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px">
+              <div class="dg-field"><span class="dg-label">This Month</span><span class="dg-value"><?= h(cad_fmt_money($mtdCurrentVol)) ?></span></div>
+              <div class="dg-field"><span class="dg-label">vs Same Period Last Year</span><span class="dg-value" style="<?= h(cad_trend_style($mtdPct)) ?>"><?= h(cad_mtd_delta_text($mtdCurrentVol, $mtdPriorVol)) ?></span></div>
+            </div>
+            <?php if (!empty($extra['last_close_date'])): ?>
+              <div class="cad-meta-row" style="margin-top:10px"><span>Last close: <?= h($extra['last_close_date']) ?></span></div>
             <?php endif; ?>
           <?php endif; ?>
         </div>

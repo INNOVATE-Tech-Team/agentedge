@@ -156,6 +156,28 @@ function local_db(): PDO {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ccs_agent_date ON coastline_closed_sides(canonical_agent_id, close_date)");
 
+    // Step 4.1 fix: coverage must be judged by the date range the sync
+    // actually REQUESTED from Coastline (source window), never by
+    // MIN/MAX(close_date) of whatever rows happened to come back — an
+    // agent-wide lull in closings near the end of the window (e.g. synced
+    // through 2026-09-09 but the latest real close is 2026-09-04) does NOT
+    // mean 2026-09-05..09 is missing data, and MIN(close_date) is never
+    // guaranteed to equal the requested window start either. Single-row
+    // table (id=1, same pattern as local_db_schema_meta above) describing
+    // the most recent SUCCESSFUL sync only — written by
+    // coastline_write_snapshot() inside the same atomic transaction as the
+    // two mirror tables (see lib/coastline.php), so this table, the
+    // aggregate mirror, and the closed-sides mirror always describe one
+    // consistent snapshot; a failed/rolled-back sync updates none of them.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS coastline_sync_meta (
+        id                    INTEGER PRIMARY KEY CHECK (id=1),
+        source_window_start   TEXT,
+        source_window_end     TEXT,
+        synced_at             TEXT,
+        aggregate_rows        INTEGER,
+        closed_side_rows      INTEGER
+    )");
+
     return $pdo;
 }
 
