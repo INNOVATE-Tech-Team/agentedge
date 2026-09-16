@@ -116,13 +116,10 @@ if ($myMcSlugs !== null) {
 }
 usort($intakeAgents, fn($x, $y) => strcasecmp(lastNameFirst($x['full_name'] ?? ''), lastNameFirst($y['full_name'] ?? '')));
 
-$launchCoaches = local_db()->query(
-    "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
-     FROM agent_roles ar
-     LEFT JOIN agent_intake i ON i.email = ar.email
-     WHERE ar.role = 'launch_coach'
-     ORDER BY full_name"
-)->fetchAll(PDO::FETCH_ASSOC);
+// Eligible-coach list for the "Coached By" dropdown — includes both
+// primary-role and additional-role Launch Coaches/Directors of Coaching; see
+// list_launch_coaches() in roles.php for the shared "effective role" rule.
+$launchCoaches = list_launch_coaches(local_db());
 
 $additionalLicensesByEmail = [];
 foreach (local_db()->query(

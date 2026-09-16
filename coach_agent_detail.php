@@ -8,11 +8,14 @@ require_once __DIR__ . '/lib/agent_profile.php';
 require_once __DIR__ . '/lib/performance_client.php';
 require_once __DIR__ . '/lib/coach_production.php';
 
-// V1: super-admin-only, same gate as coach_dashboard.php. This is a
+// Super Admin or Launch Coach, same gate as coach_dashboard.php. This is a
 // Coach-Dashboard-specific detail view — it does not replace or modify
-// agent_profile.php, it just reuses the same data-loading helpers.
+// agent_profile.php, it just reuses the same data-loading helpers. A Launch
+// Coach's access to a SPECIFIC agent is checked below, once $targetEmail is
+// known (agent_admin.coached_by must name this coach) -- see coach_can_access_agent().
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+$isSuperAdmin = is_super_admin();
+if (!$isSuperAdmin && !is_launch_coach()) { header('Location: index.php'); exit; }
 
 function h($s): string { return htmlspecialchars((string)$s, ENT_QUOTES); }
 
@@ -35,6 +38,19 @@ if ($targetEmail !== '') {
 
 // Not a valid/known agent — safe empty state, no fatal error either way.
 $found = $rosterRow !== null || $profile !== null;
+
+// Launch Coach: this agent must be assigned to them (agent_admin.coached_by)
+// -- checked before anything profile/production-related below runs. Folded
+// into the same "$found = false" empty state as an unknown email, rather
+// than a distinct denial message, so this page never confirms or denies
+// which emails exist in the roster to a coach probing URLs.
+if ($found && !$isSuperAdmin) {
+    $viewerEmail = strtolower(trim($agent['email'] ?? ''));
+    if (!coach_can_access_agent(local_db(), $viewerEmail, $targetEmail)) {
+        $found = false;
+        $rosterRow = null;
+    }
+}
 
 $name   = $profile['full_name']       ?? ($rosterRow['agent_name']    ?? $targetEmail);
 $phone  = $profile['phone']           ?? ($rosterRow['phone']         ?? '');

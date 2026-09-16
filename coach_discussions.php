@@ -5,12 +5,12 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 
-// V1: super-admin-only, same gate as coach_dashboard.php. This is a
-// structural page shell only — no discussion data model exists yet
-// (see build report). Do not wire this to a real table without a
-// separate data-model pass.
+// Super Admin or Launch Coach. This is a structural page shell only — no
+// discussion data model exists yet (see build report), and nothing here is
+// agent-specific, so there's no further scoping to do beyond page access.
+// Do not wire this to a real table without a separate data-model pass.
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+if (!is_super_admin() && !is_launch_coach()) { header('Location: index.php'); exit; }
 ?>
 <!doctype html>
 <html lang="en">

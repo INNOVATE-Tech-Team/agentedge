@@ -5,9 +5,9 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 
-// V1: super-admin-only, same gate as coach_dashboard.php. Placeholder only.
+// Super Admin or Launch Coach. Placeholder only, nothing agent-specific.
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+if (!is_super_admin() && !is_launch_coach()) { header('Location: index.php'); exit; }
 ?>
 <!doctype html>
 <html lang="en">

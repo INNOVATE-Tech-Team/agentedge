@@ -219,8 +219,85 @@ function can_use_buyback(): bool {
 // mc_leader/bic (only the Market Centers in their own mc_slugs), plus LAUNCH
 // coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
 function can_send_company_email(): bool { return can_post_announcements() || is_launch_coach(); }
-// LAUNCH coaching staff (coach or the director role above them).
-function is_launch_coach(): bool { return in_array(my_role(), ['launch_coach', 'director_of_coaching'], true); }
+// LAUNCH coaching staff (coach or the director role above them). Checks the
+// effective role set (my_roles(), primary + the one optional extra role from
+// agent_roles.extra_roles_json) rather than just the primary role, so
+// someone whose primary role is 'agent' with Launch Coach assigned only as
+// an additional role (the safe way to grant it without disturbing their
+// existing agent placement/bic_email) is still recognized as a coach.
+function is_launch_coach(): bool { return array_intersect(my_roles(), ['launch_coach', 'director_of_coaching']) !== []; }
+
+// Every agent whose EFFECTIVE role (primary agent_roles.role, or the one
+// optional additional role in extra_roles_json) is Launch Coach or Director
+// of Coaching — same "effective role" definition is_launch_coach() uses for
+// the signed-in agent, applied across every agent_roles row instead of just
+// the current session. Single source for "Coached By" dropdown eligibility
+// (api/agent_detail.php, backoffice_agents.php) so those two call sites
+// don't grow their own, potentially drifting, copies of this JSON parsing.
+// Exact role match only — never fuzzy/name-based.
+function list_launch_coaches(\PDO $pdo): array {
+    $rows = $pdo->query(
+        "SELECT ar.email, ar.role, ar.extra_roles_json, COALESCE(i.full_name, ar.email) AS full_name
+         FROM agent_roles ar
+         LEFT JOIN agent_intake i ON i.email = ar.email"
+    )->fetchAll(\PDO::FETCH_ASSOC);
+
+    $coaches = [];
+    foreach ($rows as $r) {
+        $effectiveRoles = [$r['role']];
+        $extra = json_decode($r['extra_roles_json'] ?? '[]', true);
+        if (is_array($extra)) {
+            foreach ($extra as $er) {
+                if (!empty($er['role'])) $effectiveRoles[] = $er['role'];
+            }
+        }
+        if (array_intersect($effectiveRoles, ['launch_coach', 'director_of_coaching'])) {
+            $coaches[] = ['email' => $r['email'], 'full_name' => $r['full_name']];
+        }
+    }
+    usort($coaches, fn($a, $b) => strcasecmp($a['full_name'], $b['full_name']));
+    return $coaches;
+}
+
+// Coach Dashboard access scoping for Launch Coaches (super_admin is never
+// scoped -- see is_super_admin() checks at each call site, kept separate
+// from this rather than folded in here). Source of truth is exactly one
+// column: agent_admin.coached_by = the coach's email, exact match only,
+// never fuzzy/name-based. Deliberately NOT cohort_members (a different,
+// unrelated coaching-pilot table) and no new mapping table.
+
+// Every active roster agent currently assigned to $coachEmail. Returns full
+// innovate_roster rows so callers (coach_dashboard.php's roster/list,
+// api/coach_production_summary.php's agents[] filter) can use whatever
+// columns they need without a second query.
+function coach_assigned_agents(\PDO $pdo, string $coachEmail): array {
+    $coachEmail = strtolower(trim($coachEmail));
+    if ($coachEmail === '') return [];
+    $stmt = $pdo->prepare(
+        "SELECT r.*
+         FROM agent_admin aa
+         JOIN innovate_roster r ON LOWER(TRIM(r.email)) = LOWER(TRIM(aa.email))
+         WHERE LOWER(TRIM(aa.coached_by)) = ? AND r.active = 1
+         ORDER BY r.agent_name"
+    );
+    $stmt->execute([$coachEmail]);
+    return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+}
+
+// Whether $coachEmail is authorized (via agent_admin.coached_by) to view
+// $agentEmail's production/profile data. Used to re-check a single agent
+// server-side even when the caller already has coach_assigned_agents()'s
+// list, so a request can't bypass this by supplying a roster_id/email the
+// client-side list simply wasn't rendered with.
+function coach_can_access_agent(\PDO $pdo, string $coachEmail, string $agentEmail): bool {
+    $coachEmail = strtolower(trim($coachEmail));
+    $agentEmail = strtolower(trim($agentEmail));
+    if ($coachEmail === '' || $agentEmail === '') return false;
+    $stmt = $pdo->prepare("SELECT 1 FROM agent_admin WHERE LOWER(TRIM(email))=? AND LOWER(TRIM(coached_by))=? LIMIT 1");
+    $stmt->execute([$agentEmail, $coachEmail]);
+    return (bool)$stmt->fetchColumn();
+}
+
 // Can create/edit cohorts and reassign coaches (admin or coaching leadership).
 function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
 // Can view (and edit) the LAUNCH Curriculum reference content — coaching

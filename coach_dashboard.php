@@ -5,20 +5,29 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 
-// V1: super-admin-only while the coaching data model is decided. Do not
-// widen to is_launch_coach() without a deliberate follow-up pass — see
-// nav.php's coach_dashboard group and api/coach_roster_activity.php.
+// Super Admin or Launch Coach. A Launch Coach only ever sees agents assigned
+// to them (agent_admin.coached_by) below -- never the full brokerage roster,
+// never an "All Agents" view. Enforced again server-side in
+// api/coach_production_summary.php, which the JS on this page calls --
+// this page's own scoping is for correct rendering, not the security
+// boundary itself.
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+$isSuperAdmin = is_super_admin();
+if (!$isSuperAdmin && !is_launch_coach()) { header('Location: index.php'); exit; }
+$coachScoped = !$isSuperAdmin;
+$viewerEmail = strtolower(trim($agent['email'] ?? ''));
 
 function h($s): string { return htmlspecialchars((string)$s, ENT_QUOTES); }
 
 // Real, existing roster data — no coaching schema involved. Powers both the
 // "Agent" filter dropdown and the Agent List below from one query.
-$roster = local_db()->query(
-    "SELECT agent_name, email, phone, market_center, state_code, license_exp
-     FROM innovate_roster WHERE active=1 ORDER BY agent_name"
-)->fetchAll(PDO::FETCH_ASSOC);
+$roster = $coachScoped
+    ? coach_assigned_agents(local_db(), $viewerEmail)
+    : local_db()->query(
+        "SELECT agent_name, email, phone, market_center, state_code, license_exp
+         FROM innovate_roster WHERE active=1 ORDER BY agent_name"
+    )->fetchAll(PDO::FETCH_ASSOC);
+$coachHasNoAgents = $coachScoped && !$roster;
 
 // Period: ltm | ytd | year | custom. Old bookmarked links may still carry a
 // bare 4-digit year (e.g. "period=2025") -- api/coach_production_summary.php
@@ -41,6 +50,16 @@ $selectedYear = preg_match('/^\d{4}$/', (string)$yearRaw) ? (int)$yearRaw : (int
 $customFrom = $_GET['from'] ?? '';
 $customTo   = $_GET['to']   ?? '';
 $selectedAgent = strtolower(trim($_GET['agent'] ?? ''));
+if ($coachScoped) {
+    // Never "All Agents" for a coach, and never someone else's agent even if
+    // ?agent= is edited by hand -- fall back to (one of) their own assigned
+    // agents. With exactly one assigned agent this also doubles as the
+    // "auto-select the one agent" behavior.
+    $assignedEmails = array_map(fn($r) => strtolower(trim($r['email'])), $roster);
+    if (!in_array($selectedAgent, $assignedEmails, true)) {
+        $selectedAgent = $assignedEmails[0] ?? '';
+    }
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -157,8 +176,12 @@ $selectedAgent = strtolower(trim($_GET['agent'] ?? ''));
       <div class="coach-filters">
         <div class="coach-filter-field">
           <label>Agent</label>
-          <select class="coach-agent-select" id="coach-agent-select" onchange="coachFilterAgent(this.value)">
-            <option value="">All Agents</option>
+          <select class="coach-agent-select" id="coach-agent-select" onchange="coachFilterAgent(this.value)"<?= $coachHasNoAgents ? ' disabled' : '' ?>>
+            <?php if (!$coachScoped): ?>
+              <option value="">All Agents</option>
+            <?php elseif ($coachHasNoAgents): ?>
+              <option value="">No agents assigned</option>
+            <?php endif; ?>
             <?php foreach ($roster as $r): $em = strtolower(trim($r['email'])); ?>
               <option value="<?= h($em) ?>"<?= $em === $selectedAgent ? ' selected' : '' ?>><?= h($r['agent_name']) ?></option>
             <?php endforeach; ?>
@@ -192,6 +215,10 @@ $selectedAgent = strtolower(trim($_GET['agent'] ?? ''));
       </div>
 
       <div id="coach-status-banner" class="coach-status-banner" hidden></div>
+
+      <?php if ($coachHasNoAgents): ?>
+      <div class="card"><div class="empty-state">No agents are currently assigned to you.</div></div>
+      <?php else: ?>
 
       <!-- B. Performance summary -->
       <div class="coach-summary-grid" id="coach-summary-grid">
@@ -290,6 +317,8 @@ $selectedAgent = strtolower(trim($_GET['agent'] ?? ''));
         </div>
       </div>
 
+      <?php endif; ?>
+
     </main>
   </div>
 </div>
@@ -306,6 +335,12 @@ const COACH = {
   from:   <?= json_encode($customFrom) ?>,
   to:     <?= json_encode($customTo) ?>,
 };
+// Launch Coach with zero assigned agents: the server already rendered the
+// "No agents are currently assigned to you" state and skipped the
+// production markup entirely -- there's nothing to fetch, and COACH.agent
+// is empty here, which would otherwise resolve to a company-wide request
+// the API correctly rejects for a coach. Just don't call it.
+const COACH_HAS_NO_AGENTS = <?= json_encode($coachHasNoAgents) ?>;
 let coachChart = null;
 let coachRequestSeq = 0; // guards against an older, slower response landing after a newer one
 
@@ -644,8 +679,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const key = label === 'ltm' ? 'ltm' : label === 'ytd' ? 'ytd' : label === 'year' ? 'year' : 'custom';
     btn.setAttribute('data-period', key);
   });
-  coachApplyAgentRowVisibility();
-  coachLoad();
+  if (!COACH_HAS_NO_AGENTS) {
+    coachApplyAgentRowVisibility();
+    coachLoad();
+  }
 });
 </script>
 </body>

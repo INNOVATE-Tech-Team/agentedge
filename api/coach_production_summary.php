@@ -39,12 +39,22 @@ function cps_fail(int $code, string $message): never {
 $viewer = current_agent();
 if (!$viewer) cps_fail(401, 'not signed in');
 
-// Same gate as coach_dashboard.php / coach_agent_detail.php (confirmed
-// current post-Phase-2A code, 2026-09-09) -- super-admin-only while the
-// coaching data model is decided. Widen only in a deliberate follow-up.
-if (!is_super_admin()) cps_fail(403, 'not authorized');
+// Same gate as coach_dashboard.php / coach_agent_detail.php: Super Admin or
+// Launch Coach. A Launch Coach's access is scoped below to only agents
+// assigned to them via agent_admin.coached_by -- never company-wide, never
+// another coach's agents -- enforced here server-side (see
+// coach_assigned_agents()/coach_can_access_agent() in roles.php), not left
+// to the frontend to hide.
+$isSuperAdmin = is_super_admin();
+if (!$isSuperAdmin && !is_launch_coach()) cps_fail(403, 'not authorized');
+$coachScoped = !$isSuperAdmin;
 
 $pdo = local_db();
+
+$viewerEmail = strtolower(trim($viewer['email'] ?? ''));
+$assignedEmails = $coachScoped
+    ? array_map(fn($r) => strtolower(trim($r['email'])), coach_assigned_agents($pdo, $viewerEmail))
+    : [];
 
 // ── Period parsing/validation ────────────────────────────────────────────────
 
@@ -97,12 +107,22 @@ $rosterId = null;
 if (!empty($_GET['roster_id'])) {
     if (!preg_match('/^\d+$/', (string)$_GET['roster_id'])) cps_fail(400, "roster_id must be a positive integer");
     $rosterId = (int)$_GET['roster_id'];
-    if (!coach_roster_row($pdo, $rosterId)) cps_fail(404, 'agent not found');
+    $rosterIdRow = coach_roster_row($pdo, $rosterId);
+    if (!$rosterIdRow) cps_fail(404, 'agent not found');
+    // Re-checked against the coach's actual assigned set (not just whether
+    // the row exists) -- a roster_id for someone else's/an unassigned agent
+    // must fail here even though it's a perfectly valid roster_id.
+    if ($coachScoped && !in_array(strtolower(trim($rosterIdRow['email'] ?? '')), $assignedEmails, true)) {
+        cps_fail(403, 'agent not assigned to you');
+    }
 } elseif (!empty(trim((string)($_GET['agent'] ?? '')))) {
     // Exact, case-insensitive email match only -- same normalization
     // coach_dashboard.php/coach_agent_detail.php already use. Never a
     // fuzzy/name lookup.
     $email = strtolower(trim((string)$_GET['agent']));
+    if ($coachScoped && !in_array($email, $assignedEmails, true)) {
+        cps_fail(403, 'agent not assigned to you');
+    }
     $stmt = $pdo->prepare("SELECT id FROM innovate_roster WHERE LOWER(TRIM(email)) = ?");
     $stmt->execute([$email]);
     $foundId = $stmt->fetchColumn();
@@ -111,6 +131,12 @@ if (!empty($_GET['roster_id'])) {
 }
 
 $scope = $rosterId !== null ? 'agent' : 'all';
+// A Launch Coach never gets the company-wide view -- whether that's because
+// no agent/roster_id was given at all, or an out-of-scope one was rejected
+// above (which already exited with 403 and never reaches this line).
+if ($coachScoped && $scope === 'all') {
+    cps_fail(403, 'company-wide scope is not available to Launch Coaches');
+}
 
 // ── Shared mirror/coverage (independent of scope or selected agent) ─────────
 
@@ -207,6 +233,23 @@ try {
     }
 
     $bulk = coach_bulk_roster_production($pdo, $mirrorHealthFull);
+
+    if ($coachScoped) {
+        // agents[] must never include anyone outside this coach's assigned
+        // roster -- filtered here server-side, not merely hidden by the
+        // frontend. Roster-size counts recomputed from the filtered set so
+        // they don't leak a brokerage-wide number to a Launch Coach either.
+        $bulk['agents'] = array_values(array_filter(
+            $bulk['agents'],
+            fn($a) => in_array(strtolower(trim($a['email'] ?? '')), $assignedEmails, true)
+        ));
+        $bulk['active_roster_count']  = count($bulk['agents']);
+        $bulk['matched_roster_count'] = count(array_filter(
+            $bulk['agents'],
+            fn($a) => in_array($a['production_status'], ['matched_with_production', 'matched_no_production'], true)
+        ));
+        $bulk['unmatched_roster_count'] = $bulk['active_roster_count'] - $bulk['matched_roster_count'];
+    }
 
     if ($companySummary !== null) {
         $companySummary['reconciliation'] = [
