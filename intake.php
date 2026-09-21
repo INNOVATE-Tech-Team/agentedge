@@ -474,13 +474,6 @@ $intakeMarketCenters = local_db()
         missingMsgs.push('select at least one office');
       }
 
-      if (!mlsChecked()) {
-        const firstMlsAssoc = document.querySelector('#mls-memberships .mls-assoc');
-        if (firstMlsAssoc) firstMlsAssoc.classList.add('invalid');
-        firstInvalid = firstInvalid || firstMlsAssoc || el('mls-memberships');
-        missingMsgs.push('add an MLS / Association');
-      }
-
       if (firstInvalid) {
         firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el('form-msg').textContent = 'Please ' + missingMsgs.join(' and ') + '.';
