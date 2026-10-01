@@ -1,5 +1,5 @@
 <?php
-// My AI Agents — deploy your own AI agent on your own Follow Up Boss book.
+// [First name]'s Agents (e.g. "Darren's Agents") — deploy your own AI agent on your own Follow Up Boss book.
 // Backend: coastline-server /public/agentedge/ai/* (via api/ai_agents.php).
 // Nothing an agent drafts is sent until the agent approves it here; the CRM
 // enforces that (user agents can never run unattended). Added 2026-09-30.
@@ -9,13 +9,19 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 $agent = require_login();
 if (!can_use_buyback()) { header('Location: index.php'); exit; }
+// Personalized title, same first-name rule as the sidebar ("Darren's Agents").
+$firstName = preg_split('/\s+/', trim($agent['name'] ?? ''))[0] ?? '';
+if ($firstName === '' || strpos($firstName, '@') !== false) {
+    $firstName = ucfirst(strtolower(explode('@', $agent['email'] ?? 'My')[0]));
+}
+$pageTitle = $firstName . "'s Agents";
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My AI Agents — AgentEdge</title>
+<title><?= htmlspecialchars($pageTitle) ?> — AgentEdge</title>
 <link rel="stylesheet" href="assets/app.css">
 <style>
 .bo-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
@@ -66,7 +72,7 @@ if (!can_use_buyback()) { header('Location: index.php'); exit; }
   <div class="content-top">
     <div>
       <div class="bo-eyebrow">My Tools</div>
-      <div class="content-title">My AI Agents</div>
+      <div class="content-title"><?= htmlspecialchars($pageTitle) ?></div>
     </div>
   </div>
   <div class="wrap">
