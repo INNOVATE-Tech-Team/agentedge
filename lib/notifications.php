@@ -801,7 +801,8 @@ function notify_mc_assigned(string $agentName, string $agentEmail, string $marke
 }
 
 // Queue an email to the agent's Market Center Leader + lisa@innovateonline.com
-// (always cc'd per Darren's request, not conditional on market center lookup)
+// + michele@innovateonline.com (always included, not conditional on market
+// center lookup; Lisa per Darren's request, Michele added 2026-10-02)
 // when an agent caps — called from lib/darwin.php's cap-progress sync when it
 // detects a transition from not-capped to capped for that agent. Unlike
 // notify_bic_ml_onboard_complete this does NOT include the BIC, only the MC
@@ -816,7 +817,7 @@ function notify_agent_capped(string $agentName, string $agentEmail, string $mark
         $mcLeaderEmail = trim($st->fetchColumn() ?: '');
     }
 
-    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com'])));
+    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com', 'michele@innovateonline.com'])));
     if (!$emails) return;
 
     $eName    = htmlspecialchars($agentName, ENT_QUOTES);
