@@ -86,6 +86,7 @@ $superAdmin = is_super_admin();
     .check-item input{width:14px;height:14px;cursor:pointer;accent-color:#82C112}
 
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
+    .notes-cell{max-width:180px;font-size:11px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
     .fee-val{font-size:12px;font-weight:700;color:#555}
   </style>
@@ -126,10 +127,11 @@ $superAdmin = is_super_admin();
                 <th>Status</th>
                 <th>Monthly Fee</th>
                 <th>Products</th>
+                <th>Notes</th>
                 <th></th>
               </tr>
             </thead>
-            <tbody id="mls-tbody"><tr><td colspan="9" class="empty-note">Loading…</td></tr></tbody>
+            <tbody id="mls-tbody"><tr><td colspan="10" class="empty-note">Loading…</td></tr></tbody>
           </table>
         </div>
 
@@ -275,6 +277,11 @@ const SUPER = <?= $superAdmin ? 'true' : 'false' ?>;
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function fmt(d){if(!d)return'—';const p=d.split('-');return p[1]+'/'+p[2]+'/'+p[0];}
 function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+'/mo';}
+function noteSnippet(notes){
+  if(!notes) return '—';
+  const oneLine=notes.replace(/\s+/g,' ').trim();
+  return oneLine.length>60 ? oneLine.slice(0,60)+'…' : oneLine;
+}
 
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
 const FEED_SOURCE_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark',Bridge:'Bridge',Self:'Self'};
@@ -310,7 +317,7 @@ function renderTiles(rows){
 
 function renderTable(rows){
   const tbody=document.getElementById('mls-tbody');
-  if(!rows.length){tbody.innerHTML='<tr><td colspan="9" class="empty-note">No MLS integrations yet. Click "+ Add MLS" to get started.</td></tr>';return;}
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="10" class="empty-note">No MLS integrations yet. Click "+ Add MLS" to get started.</td></tr>';return;}
   const order=['active','approved','applied','researching','paused','rejected'];
   rows=[...rows].sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status));
   tbody.innerHTML=rows.map(r=>{
@@ -324,6 +331,7 @@ function renderTable(rows){
       <td><span class="badge badge-${esc(r.status)}">${esc(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td class="fee-val">${fmtFee(r.monthly_fee)}</td>
       <td style="font-size:11px;color:#777">${esc(prods)}</td>
+      <td class="notes-cell" title="${esc(r.notes||'')}">${esc(noteSnippet(r.notes))}</td>
       <td onclick="event.stopPropagation()">${SUPER?`<button class="btn-sm" onclick="openModal(${r.id})">Edit</button>`:''}
       </td>
     </tr>`;
