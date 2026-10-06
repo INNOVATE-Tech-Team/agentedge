@@ -3,6 +3,7 @@ ob_start();
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/crm_email_assertion.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -22,7 +23,7 @@ $url   = $base . '/public/agentedge/mls-memberships' . ($token ? '?token=' . url
 // The agent always sets their OWN memberships — never accepts an email
 // from the request body, so one agent can't overwrite another's boards.
 $payload = json_encode([
-    'email'                     => $agent['email'],
+    'email'                     => crm_signed_email($agent['email']),
     'originating_system_names'  => $boards,
 ]);
 

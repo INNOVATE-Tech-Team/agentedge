@@ -45,10 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         // An agent can belong to more than one Market Center — see any
         // announcement targeted at any MC they belong to or lead.
-        $myMcSlugs = array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs())));
+        $myMcSlugs = array_values(array_unique(array_merge(my_mc_slugs(), my_own_mc_slugs(), my_roster_mc_slugs())));
         foreach ($myMcSlugs as $slug) {
-            $conds[]  = "(audience='mc' AND target_mc_slug=?)";
-            $params[] = $slug;
+            // target_mc_slug is CSV-joined when an announcement targets more than
+            // one Market Center — match if this agent's slug appears anywhere in it.
+            $conds[]  = "(audience='mc' AND (',' || target_mc_slug || ',') LIKE ?)";
+            $params[] = '%,' . $slug . ',%';
         }
 
         $bicEmail = my_bic_email();
@@ -150,20 +152,30 @@ if ($action === 'create' || $action === 'update') {
     $targetMcSlug   = '';
     $targetBicEmail = '';
 
+    // target_mc_slug arrives CSV-joined (one or more slugs picked via checkboxes)
+    // and is stored back the same way — see the non-admin GET filter above.
     if (is_admin()) {
         $audience = in_array($in['audience'] ?? '', ['all','admin','mc']) ? $in['audience'] : 'all';
         if ($audience === 'mc') {
-            $targetMcSlug = trim($in['target_mc_slug'] ?? '');
-            if ($targetMcSlug === '') {
-                http_response_code(400); echo json_encode(['error'=>'target_mc_slug required for mc audience']); exit;
+            $mcSlugs = array_values(array_unique(array_filter(array_map('trim', explode(',', $in['target_mc_slug'] ?? '')))));
+            if (!$mcSlugs) {
+                http_response_code(400); echo json_encode(['error'=>'select at least one market center']); exit;
             }
+            $targetMcSlug = implode(',', $mcSlugs);
         }
     } elseif (is_mc_leader()) {
-        $audience     = 'mc';
-        $targetMcSlug = trim($in['target_mc_slug'] ?? '');
-        if (!in_array($targetMcSlug, my_mc_slugs(), true)) {
-            http_response_code(403); echo json_encode(['error'=>'not your market center']); exit;
+        $audience = 'mc';
+        $mcSlugs  = array_values(array_unique(array_filter(array_map('trim', explode(',', $in['target_mc_slug'] ?? '')))));
+        $allowed  = my_mc_slugs();
+        foreach ($mcSlugs as $slug) {
+            if (!in_array($slug, $allowed, true)) {
+                http_response_code(403); echo json_encode(['error'=>'not your market center']); exit;
+            }
         }
+        if (!$mcSlugs) {
+            http_response_code(400); echo json_encode(['error'=>'select at least one market center']); exit;
+        }
+        $targetMcSlug = implode(',', $mcSlugs);
     } elseif (is_bic()) {
         $audience       = 'bic';
         $targetBicEmail = $me['email'];

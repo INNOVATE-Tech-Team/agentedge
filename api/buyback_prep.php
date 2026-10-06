@@ -3,6 +3,7 @@ ob_start();
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/crm_email_assertion.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -19,7 +20,7 @@ $radiusTierIndex = isset($body['radius_tier_index']) && $body['radius_tier_index
 $c     = cfg();
 $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
 $token = $c['crm_token'] ?? '';
-$qs    = http_build_query(['token' => $token, 'email' => $agent['email']]);
+$qs    = http_build_query(['token' => $token, 'email' => crm_signed_email($agent['email'])]);
 $url   = $base . '/public/agentedge/buyback/prep-packet?' . $qs;
 
 $payload = json_encode(['address' => $address, 'radius_tier_index' => $radiusTierIndex]);

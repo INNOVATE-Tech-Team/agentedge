@@ -216,23 +216,42 @@ function dotloop_shared_email(): string {
 /**
  * Return every email that should be treated as the same person as $email when
  * matching dotloop_loop_participants — some agents get added to loops under
- * more than one address. Configure via config.php's 'dotloop_email_groups':
- * an array of email lists, e.g. [['darren@innovateonline.com', 'darren@darrenwoodard.com']].
- * Always includes $email itself. Falls back to just [$email] if unconfigured
- * or $email isn't in any group.
+ * more than one address. Two sources, both merged in:
+ *  - agent_extra.dotloop_alt_email — self-service, set on the Agent Profile
+ *    page (or by an admin on Backoffice > Agents) when DotLoop has an agent
+ *    under a different email than their AgentEdge login. This is the primary
+ *    fix path; prefer it over the one below for any new mismatch.
+ *  - config.php's 'dotloop_email_groups' — an array of email lists, e.g.
+ *    [['darren@innovateonline.com', 'darren@darrenwoodard.com']]. Predates
+ *    the per-agent column above and is unconfigured by default; kept for
+ *    any group that covers more than one agent at once.
+ * Always includes $email itself.
  */
 function dotloop_email_group(string $email): array {
     $email  = strtolower(trim($email));
+    $result = [$email];
+
+    try {
+        $stmt = local_db()->prepare(
+            "SELECT dotloop_alt_email FROM agent_extra WHERE email = ? AND dotloop_alt_email != ''"
+        );
+        $stmt->execute([$email]);
+        $alt = $stmt->fetchColumn();
+        if ($alt) $result[] = strtolower(trim($alt));
+    } catch (\Throwable $e) {}
+
     $groups = cfg()['dotloop_email_groups'] ?? [];
     foreach ($groups as $group) {
         $normalized = array_values(array_unique(array_map(
             fn($e) => strtolower(trim($e)), $group
         )));
         if (in_array($email, $normalized, true)) {
-            return $normalized;
+            $result = array_merge($result, $normalized);
+            break;
         }
     }
-    return [$email];
+
+    return array_values(array_unique($result));
 }
 
 /** Who to notify when a loop's DotLoop "Insurance Quote Request" field is Yes. */
@@ -273,9 +292,19 @@ function dotloop_extract_insurance_quote(array $detail): ?string {
 /**
  * Email every address in dotloop_insurance_notify_emails() about a loop that
  * just came back with an Insurance Quote Request of "Yes". Pulls buyer
- * contact info from the already-synced local participant cache.
+ * contact info and the buyer's agent (the referral source, for Carolina
+ * Property Insurance's own tracking) from the already-synced local
+ * participant cache — the caller must sync participants for this loop
+ * before calling this, or the cache will be stale/empty.
  */
-function dotloop_send_insurance_quote_notification(string $loopId, string $loopName, string $loopUrl): void {
+function dotloop_send_insurance_quote_notification(
+    string $loopId,
+    string $loopName,
+    string $loopUrl,
+    string $propertyAddress = '',
+    string $closingDate = '',
+    string $purchasePrice = ''
+): void {
     $db   = local_db();
     $stmt = $db->prepare(
         "SELECT name, email, phone, role FROM dotloop_loop_participants
@@ -292,9 +321,41 @@ function dotloop_send_insurance_quote_notification(string $loopId, string $loopN
           ))
         : '(no buyer/seller participant on file)';
 
+    // Buyer's agent = the referral source Carolina Property Insurance credits
+    // for the lead. DotLoop's role label for this varies (BUYER_AGENT /
+    // BUYING_AGENT), so match on "starts with BUY, contains AGENT" rather
+    // than an exact string.
+    $agentStmt = $db->prepare(
+        "SELECT name, email, phone FROM dotloop_loop_participants
+         WHERE loop_id = ? AND role LIKE 'BUY%AGENT%'"
+    );
+    $agentStmt->execute([$loopId]);
+    $buyerAgents = $agentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $agentLines = $buyerAgents
+        ? implode('<br>', array_map(
+            fn($a) => htmlspecialchars($a['name'] ?: $a['email']) . ' — ' . htmlspecialchars($a['email'])
+                . ($a['phone'] ? ' — ' . htmlspecialchars($a['phone']) : ''),
+            $buyerAgents
+          ))
+        : '(no buyer\'s agent on file)';
+
+    $detailLines = '';
+    if ($propertyAddress !== '') {
+        $detailLines .= "<p><strong>Address:</strong> " . htmlspecialchars($propertyAddress) . "</p>";
+    }
+    if ($purchasePrice !== '') {
+        $detailLines .= "<p><strong>Contract Price:</strong> " . htmlspecialchars($purchasePrice) . "</p>";
+    }
+    if ($closingDate !== '') {
+        $detailLines .= "<p><strong>Closing Date:</strong> " . htmlspecialchars($closingDate) . "</p>";
+    }
+
     $body = "<p>A client on the following INNOVATE transaction requested a Carolina Property Insurance quote in DotLoop:</p>"
           . "<p><strong>" . htmlspecialchars($loopName) . "</strong></p>"
-          . "<p>{$clientLines}</p>"
+          . $detailLines
+          . "<p><strong>Buyer/Seller:</strong><br>{$clientLines}</p>"
+          . "<p><strong>Referral Source (Buyer's Agent):</strong><br>{$agentLines}</p>"
           . ($loopUrl ? "<p><a href=\"" . htmlspecialchars($loopUrl) . "\">View in DotLoop</a></p>" : '');
 
     $c = cfg();
@@ -450,6 +511,29 @@ function dotloop_sync_company_loops(
                 // see $zillowReviewBackfillDone.
                 $justSoldForZillow = $zillowReviewBackfillDone && $wasNotSold && $stage === 'SOLD';
 
+                // Participants are synced before the Detail check below so that,
+                // if this pass ends up sending the insurance-quote notification,
+                // it reads this run's freshly-synced buyer/agent rows instead of
+                // an empty/stale cache — on a brand-new loop that already comes
+                // back "Yes" on its very first sync, the old ordering sent the
+                // notification before any participant had ever been cached here,
+                // which is why past notifications showed "no participant on file"
+                // even when DotLoop had one.
+                $partResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/participant");
+                if ($partResult['ok']) {
+                    dotloop_execute_with_retry($clearParticipants, [$loopId]);
+                    $participants = $partResult['data']['data'] ?? [];
+                    foreach ($participants as $p) {
+                        $pEmail = strtolower(trim((string)($p['email'] ?? '')));
+                        if ($pEmail === '') continue;
+                        dotloop_execute_with_retry($upsertParticipant, [
+                            $loopId, $pEmail, (string)($p['fullName'] ?? ''), (string)($p['role'] ?? ''),
+                            (string)($p['Phone'] ?? ''),
+                        ]);
+                    }
+                }
+                usleep(100000); // light throttle on the participant call above
+
                 // Only spend an extra API call on Detail for loops that are new
                 // or changed since last sync (or, on the very first run of this
                 // feature, everything — see $backfillDone above).
@@ -467,15 +551,18 @@ function dotloop_sync_company_loops(
                         $isYes  = $quote !== null && strtolower($quote) === 'yes';
                         $notifiedAt = $existing['insurance_quote_notified_at'] ?? '';
 
-                        if ($backfillDone && $isYes && !$wasYes && $notifiedAt === '') {
-                            dotloop_send_insurance_quote_notification($loopId, $newLoopName, (string)($loop['loopUrl'] ?? ''));
-                            $notifiedAt = date('Y-m-d H:i:s');
-                        }
-
                         $propertyAddress = dotloop_extract_detail_field($detailData, 'full address') ?? '';
                         $mlsNumber       = dotloop_extract_detail_field($detailData, 'mls number') ?? '';
                         $closingDate     = dotloop_extract_detail_field($detailData, 'closing date') ?? '';
                         $purchasePrice   = dotloop_extract_detail_field($detailData, 'purchase') ?? '';
+
+                        if ($backfillDone && $isYes && !$wasYes && $notifiedAt === '') {
+                            dotloop_send_insurance_quote_notification(
+                                $loopId, $newLoopName, (string)($loop['loopUrl'] ?? ''),
+                                $propertyAddress, $closingDate, $purchasePrice
+                            );
+                            $notifiedAt = date('Y-m-d H:i:s');
+                        }
 
                         dotloop_execute_with_retry($updateDetailStmt, [
                             $quote, $notifiedAt, $propertyAddress, $mlsNumber, $closingDate, $purchasePrice, $loopId,
@@ -483,21 +570,6 @@ function dotloop_sync_company_loops(
                     }
                     usleep(100000); // light throttle on the detail call above
                 }
-
-                $partResult = dotloop_api($email, 'GET', "/profile/{$profileId}/loop/{$loopId}/participant");
-                if ($partResult['ok']) {
-                    dotloop_execute_with_retry($clearParticipants, [$loopId]);
-                    $participants = $partResult['data']['data'] ?? [];
-                    foreach ($participants as $p) {
-                        $pEmail = strtolower(trim((string)($p['email'] ?? '')));
-                        if ($pEmail === '') continue;
-                        dotloop_execute_with_retry($upsertParticipant, [
-                            $loopId, $pEmail, (string)($p['fullName'] ?? ''), (string)($p['role'] ?? ''),
-                            (string)($p['Phone'] ?? ''),
-                        ]);
-                    }
-                }
-                usleep(100000); // light throttle on the participant call above
 
                 if ($justSold) {
                     queue_review_request_for_loop($loopId, $newLoopName, (string)($loop['loopUrl'] ?? ''));

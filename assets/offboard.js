@@ -163,6 +163,10 @@
   function loadQueue() {
     const container = document.getElementById('ob-queue');
     if (!container) return;
+    // Blanking the container to "Loading…" collapses the page height and
+    // clamps window scroll to top while the fetch is in flight — restore it
+    // once real content is back so a save mid-list doesn't snap you to top.
+    const scrollY = window.scrollY;
     container.innerHTML = '<div class="ob-empty">Loading…</div>';
 
     fetch('api/offboard_action.php?action=list_queue&filter=' + encodeURIComponent(currentFilter), {
@@ -172,6 +176,7 @@
       .then(d => {
         if (!d.ok) { container.innerHTML = `<div class="ob-empty">Error: ${esc(d.error)}</div>`; return; }
         renderQueue(container, d.queue || []);
+        window.scrollTo(0, scrollY);
       })
       .catch(() => {
         container.innerHTML = '<div class="ob-empty">Could not load queue.</div>';
@@ -254,6 +259,20 @@
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOffboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
+    const notesHtml = `
+      <div class="ob-notes" id="ob-notes-${entry.id}" data-email="${esc(entry.agent_email)}" style="padding:12px 14px 4px;border-top:1px solid #f0f0f0;margin-top:6px">
+        <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#aaa;margin-bottom:6px">Notes</div>
+        <div class="ob-notes-list" id="ob-notes-list-${entry.id}" style="font-size:12px;color:#aaa">Loading…</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <textarea id="ob-notes-input-${entry.id}"
+                    placeholder="Add a note — e.g. why dotloop was skipped, anything unusual…"
+                    rows="1"
+                    oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';"
+                    style="flex:1;padding:6px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px;font-family:inherit;resize:none;overflow:hidden;max-height:200px"></textarea>
+          <button class="ob-btn-sm ob-btn-done" onclick="addOffboardNote(${entry.id})">Add Note</button>
+        </div>
+      </div>`;
+
     return `
       <div class="ob-agent-row" id="ob-row-${entry.id}">
         <div class="ob-agent-head" onclick="toggleChecklist(${entry.id})">
@@ -276,6 +295,7 @@
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
           ${reasonDetail}
           ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          ${notesHtml}
           ${footerHtml}
         </div>
       </div>`;
@@ -383,6 +403,48 @@
       .catch(() => { box.textContent = 'Could not load exit interview.'; });
   };
 
+  // ── Notes ─────────────────────────────────────────────────────────────────
+  const offboardNotesLoaded = new Set();
+
+  function renderOffboardNotes(queueId, notes) {
+    const list = document.getElementById('ob-notes-list-' + queueId);
+    if (!list) return;
+    if (!notes.length) { list.innerHTML = '<div style="color:#aaa">No notes yet.</div>'; return; }
+    list.innerHTML = notes.map(n => `
+      <div style="padding:6px 0;border-bottom:1px solid #f0f0f0">
+        <div style="white-space:pre-wrap;font-size:12px;color:#333">${esc(n.note)}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:2px">${esc(n.created_by)} · ${esc(n.created_at)}</div>
+      </div>`).join('');
+  }
+
+  function loadOffboardNotes(queueId, force) {
+    if (offboardNotesLoaded.has(queueId) && !force) return;
+    const wrap  = document.getElementById('ob-notes-' + queueId);
+    const email = wrap?.dataset.email;
+    if (!email) return;
+    fetch('api/agent_notes.php?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => {
+        offboardNotesLoaded.add(queueId);
+        if (d.ok) renderOffboardNotes(queueId, d.notes || []);
+      })
+      .catch(() => {});
+  }
+
+  window.addOffboardNote = function (queueId) {
+    const input = document.getElementById('ob-notes-input-' + queueId);
+    const wrap  = document.getElementById('ob-notes-' + queueId);
+    const email = wrap?.dataset.email;
+    const note  = (input?.value || '').trim();
+    if (!note || !email) return;
+    post('api/agent_notes.php', { email, note })
+      .then(d => {
+        if (d.ok) { input.value = ''; input.style.height = 'auto'; loadOffboardNotes(queueId, true); }
+        else { alert(d.error || 'Could not save note.'); }
+      })
+      .catch(() => { alert('Network error saving note.'); });
+  };
+
   // ── Toggle checklist ───────────────────────────────────────────────────────
   window.toggleChecklist = function (queueId) {
     const cl   = document.querySelector(`.ob-checklist[data-qid="${queueId}"]`);
@@ -391,6 +453,7 @@
     const open = cl.classList.toggle('open');
     if (open) {
       expandedIds.add(queueId);
+      loadOffboardNotes(queueId);
     } else {
       expandedIds.delete(queueId);
     }

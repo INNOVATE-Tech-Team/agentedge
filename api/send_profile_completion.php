@@ -89,7 +89,7 @@ if ($action === 'bulk_incomplete') {
     $rows = $db->query(
         "SELECT i.email, i.full_name
          FROM agent_intake i
-         LEFT JOIN agent_admin aa ON aa.email = i.email
+         LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email
          WHERE COALESCE(aa.terminated_date, '') = ''"
     )->fetchAll(PDO::FETCH_ASSOC);
 

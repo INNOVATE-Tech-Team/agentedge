@@ -83,12 +83,17 @@ function render_launch_markdown(string $md): string {
             continue;
         }
 
-        // Bullet list
+        // Bullet list (including GFM task-list items: "- [ ] ..." / "- [x] ...")
         if (preg_match('/^-\s+(.*)$/', $trimmed, $m)) {
             $flushPara();
             $out .= '<ul>';
             while ($i < $n && preg_match('/^-\s+(.*)$/', trim($lines[$i]), $m2)) {
-                $out .= '<li>' . _launch_md_inline($m2[1]) . '</li>';
+                if (preg_match('/^\[([ xX])\]\s*(.*)$/', $m2[1], $cb)) {
+                    $checked = strtolower($cb[1]) === 'x' ? ' checked' : '';
+                    $out .= '<li class="lc-task-item"><input type="checkbox" disabled' . $checked . '> ' . _launch_md_inline($cb[2]) . '</li>';
+                } else {
+                    $out .= '<li>' . _launch_md_inline($m2[1]) . '</li>';
+                }
                 $i++;
             }
             $out .= '</ul>';

@@ -12,12 +12,15 @@ $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok' => false, 'error' => 'not signed in']); exit; }
 $me = strtolower(trim($agent['email'] ?? ''));
 
-if (!is_launch_coach() && !is_admin()) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'not authorized']); exit; }
+// Super-admin-only for now — see coach_dashboard.php. Widen to
+// is_launch_coach() once real coaches are assigned a role and this API's
+// data model is revisited.
+if (!is_super_admin()) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'not authorized']); exit; }
 
 $pdo = local_db();
 
 $coachEmail = $me;
-if (is_admin() && !empty($_GET['coach_email'])) {
+if (is_super_admin() && !empty($_GET['coach_email'])) {
     $coachEmail = strtolower(trim($_GET['coach_email']));
 }
 

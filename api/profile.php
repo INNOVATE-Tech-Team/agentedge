@@ -9,6 +9,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../lib/notifications.php';
 require_once __DIR__ . '/../lib/google_business.php';
 header('Content-Type: application/json');
@@ -102,6 +103,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     $social = [];
     foreach ($SOCIAL_KEYS as $k) $social[$k] = $intake[$k] ?? '';
 
+    // An agent can belong to more than one market center (e.g. licensed in
+    // bordering states) — own_mc_slugs already carries every assignment
+    // (see roles.php), unlike innovate_roster's one-row-per-office layout.
+    // Fall back to slugifying the legacy single marketCenter value for
+    // agents who don't yet have an agent_roles row.
+    $mcSlugs = my_own_mc_slugs();
+    if (!$mcSlugs) {
+        $fallbackMc = $row ? $row['market_center'] : ($intake['office_location'] ?? '');
+        if ($fallbackMc !== '') $mcSlugs = [slugify_mc($fallbackMc)];
+    }
+
     echo json_encode([
         'matched'  => true,
         'editable' => true,
@@ -110,6 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             'email'               => $row ? $row['email'] : $myEmail,
             'phone'               => $phone,
             'marketCenter'        => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
+            'marketCenters'       => $mcSlugs,
             'brokerage'           => 'INNOVATE Real Estate',
             'social'              => (object)$social,
             'googlePlaceId'       => $intake['google_place_id'] ?? '',

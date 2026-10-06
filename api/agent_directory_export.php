@@ -42,7 +42,7 @@ $rows = local_db()->query(
     "SELECT i.full_name AS agent_name, i.email, i.office_location AS market_center,
             i.license_state AS state_code, aa.terminated_date
      FROM agent_intake i
-     LEFT JOIN agent_admin aa ON aa.email = i.email"
+     LEFT JOIN agent_admin aa ON LOWER(aa.email) = i.email"
 )->fetchAll(PDO::FETCH_ASSOC);
 
 $agents = [];

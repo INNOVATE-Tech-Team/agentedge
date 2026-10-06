@@ -41,18 +41,60 @@ if ($action === 'request') {
         $known = (bool)$u;
     }
 
-    if ($known) {
-        $token = bin2hex(random_bytes(32));
-        local_db()->prepare(
-            "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+1 hour'))"
-        )->execute([$token, $email]);
+    // Onboarded agents who've never set a password or been assigned a role
+    // (no agent_passwords/agent_roles row yet — see admin_agent_login.php's
+    // agent_login_status()) still exist as real, active agents on
+    // innovate_roster. Without this check they fall through as "not known"
+    // and this endpoint silently sends nothing while still reporting success.
+    $pendingSetup = false;
+    if (!$known) {
+        try {
+            $rs = local_db()->prepare("SELECT 1 FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1");
+            $rs->execute([$email]);
+            if ($rs->fetchColumn()) { $known = true; $pendingSetup = true; }
+        } catch (\Throwable $e) {}
+    }
 
-        $base     = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
-        $resetUrl = $base . '/reset_password.php?token=' . urlencode($token);
-        $body = '<p>Click the link below to set a new AgentEdge password. This link expires in 1 hour and can only be used once.</p>'
-              . '<p><a href="' . htmlspecialchars($resetUrl) . '">Set a new password</a></p>'
-              . "<p>If you didn't request this, you can safely ignore this email.</p>";
-        queue_email_to([$email], 'Reset your AgentEdge password', $body);
+    if ($known) {
+        try {
+            if ($pendingSetup) {
+                // Same setup-link email admin_agent_login.php sends — a
+                // reset link would be misleading since there's no password
+                // yet to reset.
+                mint_and_send_setup_link(local_db(), $email, '', '');
+            } else {
+                $token = bin2hex(random_bytes(32));
+                local_db()->prepare(
+                    "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+1 hour'))"
+                )->execute([$token, $email]);
+
+                $base     = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
+                $resetUrl = $base . '/reset_password.php?token=' . urlencode($token);
+                $content = '
+                    <p style="margin:0 0 6px 0;font-size:12px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#82C112;">Account access</p>
+                    <h1 style="margin:0 0 18px 0;font-size:22px;line-height:1.3;color:#1a1a1a;">Reset your AgentEdge password</h1>
+                    <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#3a3a3a;">
+                        We received a request to reset your AgentEdge password. Click below to create a new password and get back into your account.
+                    </p>
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                        <tr><td style="border-radius:7px;background:#82C112;">
+                            <a href="' . htmlspecialchars($resetUrl) . '" style="display:inline-block;padding:12px 26px;font-size:14px;font-weight:700;color:#1a1a1a;text-decoration:none;">Set a new password &rarr;</a>
+                        </td></tr>
+                    </table>
+                    <p style="margin:28px 0 0 0;font-size:13px;line-height:1.6;color:#767676;">
+                        This link expires in 1 hour and can only be used once. If you didn\'t request this, you can safely ignore this email — your account stays secure.
+                    </p>
+                ';
+                $body = notification_email_html($content);
+                queue_email_to([$email], 'Reset your AgentEdge password', $body, '', '', '', true);
+            }
+        } catch (\Throwable $e) {
+            // A real send failure (not "email not known" — $known is already
+            // true here) must not be reported as success, or the agent has no
+            // way to know the reset never went out.
+            echo json_encode(['ok' => false, 'error' => 'Something went wrong sending that email. Please try again shortly, or contact your admin.']);
+            exit;
+        }
     }
 
     echo json_encode($generic);

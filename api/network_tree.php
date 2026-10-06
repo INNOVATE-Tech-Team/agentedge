@@ -17,7 +17,10 @@ if ($email === '') $email = $me['email'];
 // Look up the root agent's staffid
 $root = db_one("SELECT staffid FROM tblstaff WHERE email = ? LIMIT 1", [$email]);
 if (!$root) {
-    echo json_encode(['tree'=>null,'totalCount'=>0,'sponsor'=>null]);
+    // Not a bug/empty-tree case — this agent simply has no Perfex staff record
+    // yet (e.g. onboarded locally in AgentEdge but not yet created in Perfex
+    // CRM), so there's no staffid to look up recruiting hierarchy by.
+    echo json_encode(['tree'=>null,'totalCount'=>0,'sponsor'=>null,'reason'=>'not_in_perfex']);
     exit;
 }
 $rootId = (string)$root['staffid'];
@@ -85,14 +88,51 @@ $emailToId = [];
 foreach ($nodes as $id => $n) {
     if (!empty($n['email'])) $emailToId[strtolower($n['email'])] = $id;
 }
+
+// Display name for a recruit who has no Perfex row yet — best available
+// source is the AgentEdge-owned roster (imported independently of Perfex).
+$rosterNameByEmail = [];
+try {
+    $rRows = local_db()->query("SELECT email, agent_name FROM innovate_roster WHERE email <> ''")
+        ->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rRows as $r) {
+        $rosterNameByEmail[strtolower(trim($r['email']))] = trim($r['agent_name']);
+    }
+} catch (\Throwable $e) {}
+
 try {
     $overrides = local_db()->query(
         "SELECT email, recruit_source_email FROM agent_admin WHERE recruit_source_email <> ''"
     )->fetchAll(PDO::FETCH_ASSOC);
     foreach ($overrides as $o) {
-        $childId  = $emailToId[strtolower(trim($o['email']))] ?? null;
-        $sourceId = $emailToId[strtolower(trim($o['recruit_source_email']))] ?? null;
-        if ($childId === null || $sourceId === null || $childId === $sourceId) continue;
+        $childEmail  = strtolower(trim($o['email']));
+        $sourceEmail = strtolower(trim($o['recruit_source_email']));
+        $sourceId    = $emailToId[$sourceEmail] ?? null;
+        if ($sourceId === null || $childEmail === $sourceEmail) continue;
+        $childId = $emailToId[$childEmail] ?? null;
+
+        if ($childId === null) {
+            // Recruited and given a Recruit Source, but no Perfex staff record
+            // exists yet — surface them as a placeholder node under their
+            // sponsor instead of leaving the whole recruiting hierarchy waiting
+            // on someone to manually create that record in Perfex first.
+            $childId = 'local:' . $childEmail;
+            $dw = $darwinByEmail[$childEmail] ?? null;
+            $nodes[$childId] = [
+                'name'     => $rosterNameByEmail[$childEmail] ?? $o['email'],
+                'email'    => $o['email'],
+                'volume'   => $dw ? $dw['volume'] : 0.0,
+                'deals'    => $dw ? $dw['deals']  : 0,
+                'residual' => 0.0,
+                'pending'  => true,
+            ];
+            $emailToId[$childEmail] = $childId;
+            $children[$sourceId][] = $childId;
+            $parents[$childId]      = $sourceId;
+            continue;
+        }
+
+        if ($childId === $sourceId) continue;
         $oldParent = $parents[$childId] ?? null;
         if ($oldParent !== null && isset($children[$oldParent])) {
             $children[$oldParent] = array_values(array_diff($children[$oldParent], [$childId]));

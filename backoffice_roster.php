@@ -597,6 +597,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
         </div>
         <?php endif; ?>
         <div class="mc-group-content" id="mc-content-<?= $mcEditId ?>">
+        <div style="overflow-x:auto">
         <table class="agent-table">
           <thead>
             <tr>
@@ -690,6 +691,7 @@ function mc_name_for_email(array $nameByEmail, string $email): string {
             <?php endforeach; ?>
           </tbody>
         </table>
+        </div><!-- /overflow-x -->
         </div><!-- /mc-group-content -->
       </div>
       <?php endforeach; ?>
@@ -918,7 +920,9 @@ function saveOffboard() {
         btn.disabled = false; btn.textContent = 'Send to Offboarding';
         if (!d.ok) { err.textContent = d.error || 'Error sending.'; err.style.display = ''; return; }
         closeOffboardModal();
-        alert(obName + ' has been sent to the Offboarding Queue.');
+        alert(d.already_active
+            ? obName + ' was already in the Offboarding Queue (e.g. removed from another Market Center) — this Market Center has been removed from their roster and tracked under that existing record, not a new one.'
+            : obName + ' has been sent to the Offboarding Queue.');
     })
     .catch(()=>{ btn.disabled = false; btn.textContent = 'Send to Offboarding'; err.textContent = 'Network error.'; err.style.display = ''; });
 }
@@ -958,7 +962,7 @@ function saveNewAgent() {
         if (!d.ok) { err.textContent = d.error || 'Error saving.'; err.style.display = ''; return; }
         closeAddModal();
         // Reload the page to show the new agent in the correct state/MC
-        navigatePreservingMCState('backoffice_roster.php?state=' + encodeURIComponent(state));
+        navigateRoster('backoffice_roster.php?state=' + encodeURIComponent(state));
     })
     .catch(()=>{ btn.disabled=false; btn.textContent='Add to Roster'; err.textContent='Network error.'; err.style.display=''; });
 }
@@ -998,7 +1002,7 @@ function saveNewMC() {
         btn.disabled = false; btn.textContent = 'Add Market Center';
         if (!d.ok) { err.textContent = d.error || 'Error saving.'; err.style.display = ''; return; }
         closeAddMCModal();
-        navigatePreservingMCState('backoffice_roster.php?state=' + encodeURIComponent(state));
+        navigateRoster('backoffice_roster.php?state=' + encodeURIComponent(state));
     })
     .catch(() => {
         btn.disabled = false; btn.textContent = 'Add Market Center';
@@ -1021,7 +1025,7 @@ function loginAsAgent(email) {
 
 // ── Remove agent ─────────────────────────────────────────────────────────────
 function removeAgent(id, name) {
-    if (!confirm('Remove ' + name + ' from the roster?\n\nThey will be moved to the Offboarding Queue for deprovisioning, and this is logged in Weekly Changes. The agent can be restored from the changes report or by cancelling their offboarding.')) return;
+    if (!confirm('Remove ' + name + ' from this Market Center?\n\nThis is logged in Weekly Changes. If they don\'t already have an active offboarding record, one is started for deprovisioning; if they do (e.g. already removed from another Market Center), this is tracked under that same record instead of starting a duplicate. The agent can be restored from the changes report or by cancelling their offboarding.')) return;
     fetch('api/roster_agent.php', {
         method:'POST', credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
@@ -1086,7 +1090,7 @@ function doBulkAssign() {
         btn.disabled = false; btn.textContent = 'Assign';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
         // Reload so agents appear under their new MC group
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(()=>{ btn.disabled=false; btn.textContent='Assign'; alert('Network error.'); });
 }
@@ -1133,7 +1137,7 @@ function saveMoveMC(rosterId) {
     .then(d => {
         saveBtn.disabled = false; saveBtn.textContent = 'Save';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
 }
@@ -1171,7 +1175,7 @@ function saveRetention(rosterId) {
     .then(d => {
         saveBtn.disabled = false; saveBtn.textContent = 'Save';
         if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(() => { saveBtn.disabled = false; saveBtn.textContent = 'Save'; alert('Network error.'); });
 }
@@ -1218,7 +1222,7 @@ function saveEditMC(panelId, oldName, slug) {
         btn.disabled = false; btn.textContent = 'Save Changes';
         const failed = results.find(r => !r.ok);
         if (failed) { alert('Save failed: ' + (failed.error||'Unknown')); return; }
-        reloadPreservingMCState();
+        reloadRoster();
     }).catch(err => {
         btn.disabled = false; btn.textContent = 'Save Changes';
         alert('Error: ' + err.message);
@@ -1239,7 +1243,7 @@ function deleteMC(slug, mcName, agentCount) {
     .then(r=>r.json())
     .then(d => {
         if (!d.ok) { alert('Delete failed: ' + (d.error||'Unknown')); return; }
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(err => alert('Error: ' + err.message));
 }
@@ -1258,7 +1262,7 @@ function importMCsFromRoster() {
         if (!d.ok) { alert('Import failed: ' + (d.error||'Unknown')); return; }
         if (d.added === 0) { alert('All CRM Market Centers are already in the list.'); return; }
         alert(`Imported ${d.added} new Market Center${d.added!==1?'s':''} from the CRM.`);
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(err => { btn.disabled=false; btn.textContent='↓ Import MCs from CRM'; alert('Error: '+err.message); });
 }
@@ -1307,14 +1311,14 @@ function saveEditAgent() {
         btn.disabled = false; btn.textContent = 'Save Changes';
         if (!d.ok) { err.textContent = d.error || 'Save failed.'; err.style.display = ''; return; }
         closeEditAgentModal();
-        reloadPreservingMCState();
+        reloadRoster();
     })
     .catch(() => { btn.disabled=false; btn.textContent='Save Changes'; err.textContent='Network error.'; err.style.display=''; });
 }
 
 // ── Collapsible MC groups ────────────────────────────────────────────────────
-const MC_STATE_KEY = 'agentedge_open_mcs';
-
+// Always start collapsed on page load — no open/closed state is remembered
+// across reloads or navigations.
 function toggleMCGroup(heading) {
     const contentId = heading.dataset.contentId;
     const content = document.getElementById(contentId);
@@ -1322,7 +1326,6 @@ function toggleMCGroup(heading) {
     const isOpen = heading.classList.contains('mc-open');
     heading.classList.toggle('mc-open', !isOpen);
     content.classList.toggle('mc-open', !isOpen);
-    persistMCState();
 }
 document.querySelectorAll('.mc-heading').forEach(function(h) {
     h.addEventListener('click', function(e) {
@@ -1331,32 +1334,20 @@ document.querySelectorAll('.mc-heading').forEach(function(h) {
     });
 });
 
-// Remember which MC groups are open across reloads/navigations so edits don't collapse everything.
-function persistMCState() {
-    const openIds = Array.from(document.querySelectorAll('.mc-heading.mc-open'))
-        .map(function(h) { return h.dataset.contentId; })
-        .filter(Boolean);
-    try { sessionStorage.setItem(MC_STATE_KEY, JSON.stringify(openIds)); } catch (e) {}
-}
-function reloadPreservingMCState() {
-    persistMCState();
+function reloadRoster() {
+    try { sessionStorage.setItem('ae_roster_scroll', String(window.scrollY)); } catch(e) {}
     window.location.reload();
 }
-function navigatePreservingMCState(url) {
-    persistMCState();
+(function restoreRosterScroll() {
+    let saved;
+    try { saved = sessionStorage.getItem('ae_roster_scroll'); } catch(e) { saved = null; }
+    if (saved === null) return;
+    try { sessionStorage.removeItem('ae_roster_scroll'); } catch(e) {}
+    window.scrollTo(0, parseInt(saved, 10) || 0);
+})();
+function navigateRoster(url) {
     window.location.href = url;
 }
-(function restoreMCState() {
-    let openIds;
-    try { openIds = JSON.parse(sessionStorage.getItem(MC_STATE_KEY) || '[]'); } catch (e) { openIds = []; }
-    openIds.forEach(function(contentId) {
-        const content = document.getElementById(contentId);
-        if (!content) return;
-        const heading = document.querySelector('.mc-heading[data-content-id="' + contentId + '"]');
-        content.classList.add('mc-open');
-        if (heading) heading.classList.add('mc-open');
-    });
-})();
 
 // ── Agent search ──────────────────────────────────────────────────────────────
 function filterRoster(q) {
@@ -1386,7 +1377,6 @@ function filterRoster(q) {
     const clearEl = document.getElementById('roster-search-clear');
     if (countEl) countEl.textContent = q ? totalMatches + ' match' + (totalMatches !== 1 ? 'es' : '') : '';
     if (clearEl) clearEl.style.display = q ? '' : 'none';
-    if (!q) persistMCState();
 }
 function clearRosterSearch() {
     const input = document.getElementById('roster-search');

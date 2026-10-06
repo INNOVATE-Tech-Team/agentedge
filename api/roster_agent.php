@@ -59,10 +59,15 @@ if ($action === 'remove') {
     $obId = null;
     try {
         require_once __DIR__ . '/../offboard_tools.php';
+        // Case/whitespace-insensitive match — the same real person's email can
+        // be stored with different casing across their separate innovate_roster
+        // rows (one per Market Center), and an exact-string match here missed
+        // that, creating a duplicate active offboard_queue entry when the same
+        // agent was removed from a second MC (real incident, 2026-09-03).
         $obEmail = $row['email'] ?? '';
         $existing = $obEmail !== ''
-            ? $db->prepare("SELECT id FROM offboard_queue WHERE agent_email=? AND status='active' LIMIT 1")
-            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND agent_name=? AND status='active' LIMIT 1");
+            ? $db->prepare("SELECT id FROM offboard_queue WHERE LOWER(TRIM(agent_email))=LOWER(TRIM(?)) AND status='active' LIMIT 1")
+            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND LOWER(agent_name)=LOWER(?) AND status='active' LIMIT 1");
         $existing->execute([$obEmail !== '' ? $obEmail : $row['agent_name']]);
         $obId = $existing->fetchColumn();
 
@@ -108,10 +113,11 @@ if ($action === 'restore') {
 
     // Close out any in-flight offboarding for this agent too.
     try {
+        // Same case/whitespace-insensitive match as the 'remove' action above.
         $obEmail = $row['email'] ?? '';
         $obq = $obEmail !== ''
-            ? $db->prepare("SELECT id FROM offboard_queue WHERE agent_email=? AND status='active' LIMIT 1")
-            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND agent_name=? AND status='active' LIMIT 1");
+            ? $db->prepare("SELECT id FROM offboard_queue WHERE LOWER(TRIM(agent_email))=LOWER(TRIM(?)) AND status='active' LIMIT 1")
+            : $db->prepare("SELECT id FROM offboard_queue WHERE agent_email='' AND LOWER(agent_name)=LOWER(?) AND status='active' LIMIT 1");
         $obq->execute([$obEmail !== '' ? $obEmail : $row['agent_name']]);
         $obqId = $obq->fetchColumn();
         if ($obqId) {

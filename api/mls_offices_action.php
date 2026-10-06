@@ -91,6 +91,15 @@ switch ($action) {
         break;
     }
 
+    case 'update_notes': {
+        $id = (int)($body['id'] ?? 0);
+        if (!$id) { echo json_encode(['ok'=>false,'error'=>'id required']); exit; }
+        $db->prepare("UPDATE mls_offices SET notes=?, updated_at=datetime('now') WHERE id=?")
+            ->execute([trim($body['notes'] ?? ''), $id]);
+        echo json_encode(['ok'=>true]);
+        break;
+    }
+
     case 'delete': {
         $id = (int)($body['id'] ?? 0);
         if (!$id) { echo json_encode(['ok'=>false,'error'=>'id required']); exit; }

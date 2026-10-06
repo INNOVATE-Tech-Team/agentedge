@@ -51,22 +51,3 @@ function notify_referral_request_response(
 
     queue_email_to([$requesterEmail], $subject, implode("\n", $lines), $responderEmail, $responderName);
 }
-
-// Nudge a requester when their cross-posted Facebook post gets a comment.
-function notify_referral_fb_comment(string $requesterEmail, string $metroLabel, string $commenterName, string $commentText, string $fbPostId): void {
-    $subject = "New Facebook comment on your referral post for {$metroLabel}";
-    $body = implode("\n", [
-        "{$commenterName} commented on your Referral Network Facebook post for {$metroLabel}:",
-        "",
-        '"' . $commentText . '"',
-        "",
-        "View it on Facebook:",
-        "https://www.facebook.com/" . $fbPostId,
-        "",
-        "View your requests:",
-        "https://agents.innovateonline.com/referral_network.php?tab=requests",
-        "",
-        "— AgentEdge",
-    ]);
-    queue_email_to([$requesterEmail], $subject, $body);
-}

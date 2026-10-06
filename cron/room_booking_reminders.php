@@ -5,6 +5,9 @@
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/room_booking.php';
 
+// No $_SERVER['HTTP_HOST'] in a CLI context -- this is the one production domain.
+const CRON_HOST = 'agentedge.innovateonline.com';
+
 $db  = local_db();
 $now = new DateTime('now', new DateTimeZone(ROOM_BOOKING_TIMEZONE));
 
@@ -26,38 +29,24 @@ foreach ($rows as $b) {
     );
     if (!$start) continue;
     $minutesUntil = ($start->getTimestamp() - $now->getTimestamp()) / 60;
+    $manageUrl = 'https://' . CRON_HOST . '/room_booking.php?booking=' . (int)$b['id'];
+    $when = room_booking_format_when($b['booking_date'], $b['start_time'], $b['end_time']);
 
     if (!$b['reminder_day_sent'] && $minutesUntil <= (24 * 60) && $minutesUntil > (23 * 60)) {
-        room_booking_notify(
+        room_booking_notify_html(
             'Reminder: Conference Room Booking Tomorrow',
-            [
-                "Hi {$b['agent_name']},",
-                "",
-                "This is a reminder that you have {$b['room_name']} booked tomorrow:",
-                room_booking_format_when($b['booking_date'], $b['start_time'], $b['end_time']),
-                "",
-                "-- AgentEdge",
-            ],
-            $b['agent_email'],
-            $b['agent_name']
+            room_booking_reminder_content($b['agent_name'], $b['room_name'], $when, $manageUrl, 'tomorrow'),
+            $b['agent_email']
         );
         $db->prepare("UPDATE room_bookings SET reminder_day_sent=1 WHERE id=?")->execute([$b['id']]);
         $dayCount++;
     }
 
     if (!$b['reminder_30m_sent'] && $minutesUntil <= 30 && $minutesUntil > 0) {
-        room_booking_notify(
+        room_booking_notify_html(
             'Reminder: Conference Room Booking in 30 Minutes',
-            [
-                "Hi {$b['agent_name']},",
-                "",
-                "This is a reminder that you have {$b['room_name']} booked shortly:",
-                room_booking_format_when($b['booking_date'], $b['start_time'], $b['end_time']),
-                "",
-                "-- AgentEdge",
-            ],
-            $b['agent_email'],
-            $b['agent_name']
+            room_booking_reminder_content($b['agent_name'], $b['room_name'], $when, $manageUrl, 'shortly'),
+            $b['agent_email']
         );
         $db->prepare("UPDATE room_bookings SET reminder_30m_sent=1 WHERE id=?")->execute([$b['id']]);
         $mCount++;

@@ -39,26 +39,11 @@ function agent_login_status(PDO $db, string $email): array {
     ];
 }
 
-// Mints a 24h/single-use password-setup token and emails it, returning the
-// link — shared by the "send a link" action below and the optional
-// "also send a login link" step after a Change Login Email.
-function mint_and_send_setup_link(PDO $db, string $email, string $fromEmail, string $fromName): string {
-    $token = bin2hex(random_bytes(32));
-    $db->prepare(
-        "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+24 hours'))"
-    )->execute([$token, $email]);
-
-    $base = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
-    $link = $base . '/reset_password.php?token=' . urlencode($token);
-
-    $body = '<p>An INNOVATE admin has set up (or reset) your AgentEdge login.</p>'
-          . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES) . '">Set your AgentEdge password</a></p>'
-          . '<p>This link expires in 24 hours and can only be used once.</p>';
-    queue_email_to([$email], 'Set your AgentEdge password', $body, $fromEmail, $fromName);
-    process_notification_queue();
-
-    return $link;
-}
+// mint_and_send_setup_link() — shared by the "send a link" action below, the
+// optional "also send a login link" step after a Change Login Email, and
+// (via lib/notifications.php, where it now lives) api/password_reset.php's
+// self-service flow for agents who exist on the roster but never set a
+// password.
 
 // An agent's identity is split across every table below, each independently
 // keyed by email — there's no single place that renames it, which is exactly

@@ -132,7 +132,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     <h3 id="sc-modal-title">Add Shortcut</h3>
     <input type="hidden" id="sc-id" value="">
     <div class="field"><label>Label</label><input type="text" id="sc-label" placeholder="e.g. Contact Support"></div>
-    <div class="field"><label>Link (URL or internal page)</label><input type="text" id="sc-url" placeholder="e.g. https://... or backoffice_tickets.php"></div>
+    <div class="field">
+      <label>Link (URL or internal page)</label>
+      <input type="text" id="sc-url" placeholder="e.g. https://... or backoffice_tickets.php">
+      <div style="font-size:11px;color:#888;margin-top:4px">Use <code>action:get_support</code> to open the Get Support ticket modal instead of navigating.</div>
+    </div>
     <div class="field">
       <label>Icon</label>
       <div class="icon-input-row">

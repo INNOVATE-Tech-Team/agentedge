@@ -87,6 +87,12 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .rte-body blockquote{margin:0 0 6px;padding:6px 12px;border-left:3px solid #82C112;background:#f9fdf5;font-style:italic;color:#555}
 .rte-body table{border-collapse:collapse}
 .reach-note{font-size:12px;color:var(--faint);margin:-4px 0 14px}
+.person-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.person-chips:empty{margin-bottom:0}
+.person-chip{display:inline-flex;align-items:center;gap:5px;background:#eef5e8;color:#3a6b1a;border:1px solid #d4edab;
+  border-radius:14px;padding:3px 6px 3px 10px;font-size:12px;white-space:nowrap}
+.person-chip button{background:none;border:none;color:#5b8e0d;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+.person-chip button:hover{color:#c0392b}
 .aud-checks{display:flex;flex-wrap:wrap;gap:10px 18px;padding-top:4px}
 .aud-check{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;cursor:pointer}
 .mc-check-list{display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;background:#fff}
@@ -115,7 +121,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
       padding:8px 16px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border)}
 .email-table td{padding:9px 16px;border-top:1px solid var(--border);vertical-align:middle}
 .email-table tr:first-child td{border-top:none}
-.aud-chip{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.aud-chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;white-space:normal}
 .aud-chip.all{background:#eef5e8;color:#5b8e0d}
 .aud-chip.admin{background:#fff4e0;color:#a07221}
 .aud-chip.mc{background:#e8f0fe;color:#1a56c4}
@@ -123,10 +129,22 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .aud-chip.leaders{background:#fce8f0;color:#c41a6a}
 .aud-chip.mc_leader{background:#fce8f0;color:#c41a6a}
 .aud-chip.bic{background:#fde8e0;color:#c46a1a}
+.aud-chip.team_leader{background:#e6f4ea;color:#1a7a4c}
 .aud-chip.launch{background:#eef5e8;color:#3a6b1a}
 .empty-note{color:var(--faint);font-style:italic;text-align:center;padding:20px}
+#sent-table{table-layout:fixed;min-width:760px}
+#sent-table th:first-child,#sent-table td:first-child{white-space:nowrap}
+.subject-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;white-space:normal;word-break:break-word}
+.stats-row td{padding:0 16px 10px;border-top:none}
+.stats-strip{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:16px 24px;font-size:11px;color:#5b8e0d}
+.stats-strip b{color:#5b8e0d;font-size:12px}
 .btn-cancel-sched{padding:4px 10px;background:#fee2e2;color:#c00;border:none;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer}
 .btn-cancel-sched:hover{background:#fecaca}
+.btn-view-email{display:inline-flex;align-items:center;gap:5px;padding:5px 12px 5px 10px;background:#eef5e8;color:#5b8e0d;
+      border:1px solid #c7e2a3;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
+.btn-view-email svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.btn-view-email:hover{background:#e0eed4;border-color:#82C112;transform:translateY(-1px)}
+.btn-view-email:active{transform:translateY(0)}
 .section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:0 0 8px}
 
 /* Preview modal */
@@ -162,8 +180,13 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <?php if (is_admin()): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="all" onchange="onAudienceChange()"> Entire Company</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="admin" onchange="onAudienceChange()"> Admin &amp; Staff Only</label>
+          <?php endif; ?>
+          <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc_leader" onchange="onAudienceChange()"> Market Center Leaders</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="bic" onchange="onAudienceChange()"> BICs</label>
+          <?php endif; ?>
+          <?php if (is_admin()): ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="team_leader" onchange="onAudienceChange()"> Team Leaders</label>
           <?php endif; ?>
           <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc" onchange="onAudienceChange()">
@@ -203,8 +226,9 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
           <?php endif; ?>
         </div>
         <div class="field" id="person-target-row" style="display:none">
-          <label>Recipient</label>
-          <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email…" autocomplete="off">
+          <label>Recipients</label>
+          <div id="em-person-chips" class="person-chips"></div>
+          <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email, press Enter to add…" autocomplete="off" onkeydown="onPersonKeydown(event)" onblur="addPersonFromInput()">
           <datalist id="em-person-list"></datalist>
         </div>
         <div class="field" id="launch-class-target-row" style="display:none">
@@ -386,13 +410,18 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
                 </button>
                 <div class="cdd-menu">
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{first_name}}');closeDropdowns()">First Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{last_name}}');closeDropdowns()">Last Name</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{full_name}}');closeDropdowns()">Full Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{email}}');closeDropdowns()">Email</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{market_center}}');closeDropdowns()">Market Center</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{brokerage}}');closeDropdowns()">Brokerage</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{phone}}');closeDropdowns()">Phone</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_number}}');closeDropdowns()">License #</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{license_state}}');closeDropdowns()">License State</div>
                   <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{office}}');closeDropdowns()">Office Location</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{company_name}}');closeDropdowns()">Company Name</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{company_address}}');closeDropdowns()">Company Address</div>
+                  <div class="cdd-item" onmousedown="event.preventDefault();insertVariable('{{unsubscribe_url}}');closeDropdowns()">Unsubscribe Link</div>
                 </div>
               </div>
             </div>
@@ -529,18 +558,27 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
     </table>
 
     <div class="section-label">Sent</div>
-    <table class="email-table">
+    <div style="overflow-x:auto">
+    <table class="email-table" id="sent-table">
+      <colgroup>
+        <col style="width:17%">
+        <col style="width:20%">
+        <col style="width:29%">
+        <col style="width:19%">
+        <col style="width:15%">
+      </colgroup>
       <thead>
         <tr>
           <th>Sent</th>
           <th>Subject</th>
           <th>Audience</th>
-          <th>Recipients</th>
           <th>Sent By</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="email-tbody"><tr><td colspan="5" class="empty-note">Loading…</td></tr></tbody>
     </table>
+    </div>
 
   </div>
 </div>
@@ -549,12 +587,12 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 <div id="preview-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this) closePreview()">
   <div class="modal-box">
     <div class="modal-header">
-      <strong>Email Preview</strong>
+      <strong id="preview-modal-title">Email Preview</strong>
       <button type="button" class="modal-close" onclick="closePreview()">&times;</button>
     </div>
     <div class="modal-subject" id="preview-subject-line"></div>
     <iframe id="preview-frame" title="Email preview"></iframe>
-    <p class="modal-note">Personalized using your own info as a stand-in for the recipient's name, Market Center, etc. — the real send fills these in per recipient.</p>
+    <p class="modal-note" id="preview-modal-note">Personalized using your own info as a stand-in for the recipient's name, Market Center, etc. — the real send fills these in per recipient.</p>
   </div>
 </div>
 
@@ -564,12 +602,14 @@ const ME_EMAIL     = <?= json_encode(strtolower(trim($agent['email'] ?? ''))) ?>
 const MC_NAME_MAP  = <?= json_encode($mcNameMap) ?>;
 let PERSON_LIST_LOADED = false;
 let LAUNCH_CLASSES_LOADED = false;
+let PERSON_EMAILS = []; // [{email, label}] — added via the recipient picker below
 
 function focusBody(){ document.getElementById('em-body').focus(); }
 
 const AUD_LABELS = {
   all: 'Entire Company', admin: 'Admin & Staff', mc_leader: 'Market Center Leaders',
-  bic: 'BICs', person: 'Specific Person', launch_agents: 'LAUNCH Agents', launch_coaches: 'LAUNCH Coaches',
+  bic: 'BICs', team_leader: 'Team Leaders', person: 'Specific Person',
+  launch_agents: 'LAUNCH Agents', launch_coaches: 'LAUNCH Coaches',
 };
 
 function selectedAudiences() {
@@ -600,6 +640,11 @@ function onAudienceChange() {
       const opt = sel.options[sel.selectedIndex];
       return sel.value ? `LAUNCH Agents, ${opt.textContent}` : 'LAUNCH Agents (all)';
     }
+    if (a === 'person') {
+      return PERSON_EMAILS.length
+        ? `${PERSON_EMAILS.length} ${PERSON_EMAILS.length === 1 ? 'Recipient' : 'Recipients'}`
+        : 'Specific People — none added yet';
+    }
     return AUD_LABELS[a] || a;
   });
   note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.';
@@ -618,6 +663,48 @@ function loadPersonList() {
     document.getElementById('em-person-list').innerHTML =
       d.agents.map(a => `<option value="${escapeHtml(a.name)} (${escapeHtml(a.email)})">`).join('');
   });
+}
+
+// ── Recipient picker (multiple "Specific Person" addresses) ────────────────────
+function onPersonKeydown(e) {
+  if (e.key !== 'Enter' && e.key !== ',') return;
+  e.preventDefault();
+  if (!addPersonFromInput() && e.key === 'Enter') {
+    const raw = document.getElementById('em-person').value.trim();
+    if (raw) alert('Enter a valid email address.');
+  }
+}
+
+// Returns true if a chip was added (or the input was empty/duplicate — nothing
+// left to complain about), false only when there's leftover text that isn't a
+// valid email — lets blur commit silently without nagging mid-navigation.
+function addPersonFromInput() {
+  const input = document.getElementById('em-person');
+  const raw = input.value.trim();
+  if (!raw) return true;
+  const m = raw.match(/\(([^()]+)\)\s*$/);
+  const email = (m ? m[1] : raw).trim().toLowerCase();
+  const label = m ? raw.replace(/\s*\([^()]+\)\s*$/, '').trim() : email;
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+  if (!PERSON_EMAILS.some(p => p.email === email)) {
+    PERSON_EMAILS.push({ email, label: label || email });
+    renderPersonChips();
+    onAudienceChange();
+  }
+  input.value = '';
+  return true;
+}
+
+function removePersonChip(i) {
+  PERSON_EMAILS.splice(i, 1);
+  renderPersonChips();
+  onAudienceChange();
+}
+
+function renderPersonChips() {
+  document.getElementById('em-person-chips').innerHTML = PERSON_EMAILS.map((p, i) => `
+    <span class="person-chip">${escapeHtml(p.label)}<button type="button" onclick="removePersonChip(${i})" title="Remove">&times;</button></span>
+  `).join('');
 }
 
 function loadLaunchClasses() {
@@ -653,6 +740,7 @@ function singleAudChip(audience, mcSlug, leaderTypes) {
   if (audience === 'admin')     return '<span class="aud-chip admin">Admin &amp; Staff</span>';
   if (audience === 'mc_leader') return '<span class="aud-chip mc_leader">Market Center Leaders</span>';
   if (audience === 'bic')       return '<span class="aud-chip bic">BICs</span>';
+  if (audience === 'team_leader') return '<span class="aud-chip team_leader">Team Leaders</span>';
   if (audience === 'leaders') {
     // Legacy combined audience — no longer produced by new sends, kept for history rows sent before this split.
     const types = (leaderTypes || 'mc_leader,bic').split(',').filter(Boolean);
@@ -661,7 +749,7 @@ function singleAudChip(audience, mcSlug, leaderTypes) {
                 : types.includes('bic') ? 'BICs Only' : 'Leaders &amp; BICs';
     return '<span class="aud-chip leaders">' + label + '</span>';
   }
-  if (audience === 'person') return '<span class="aud-chip person">1 Person</span>';
+  if (audience === 'person') return '<span class="aud-chip person">Specific People</span>';
   if (audience === 'launch_agents')  return '<span class="aud-chip launch">LAUNCH Agents</span>';
   if (audience === 'launch_coaches') return '<span class="aud-chip launch">LAUNCH Coaches</span>';
   if (audience === 'mc') {
@@ -980,13 +1068,57 @@ function loadHistory() {
     tbody.innerHTML = d.rows.map(r => `
       <tr>
         <td>${fmtDt(r.sent_at)}</td>
-        <td>${escapeHtml(r.subject)}</td>
+        <td><div class="subject-clamp" title="${escapeHtml(r.subject)}">${escapeHtml(r.subject)}</div></td>
         <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
-        <td>${r.recipient_count}</td>
         <td>${escapeHtml(r.sender_email)}</td>
+        <td><button type="button" class="btn-view-email" onclick="viewSentEmail(${r.id})">
+          <svg viewBox="0 0 20 20"><path d="M2 10s2.8-5.5 8-5.5S18 10 18 10s-2.8 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.3"/></svg>
+          View Email</button></td>
+      </tr>
+      <tr class="stats-row">
+        <td colspan="5">${statsStrip(r)}</td>
       </tr>`).join('');
   })
   .catch(() => { document.getElementById('email-tbody').innerHTML = '<tr><td colspan="5" class="empty-note">Failed to load.</td></tr>'; });
+}
+
+// Opens/Clicks/Bounces/Dropped come from the SendGrid Event Webhook
+// (api/sendgrid_events_webhook.php) and read 0 for any send made before that
+// webhook had a signed company_email_id to match events back to. Bounces and
+// Dropped are reported separately -- SendGrid's "bounce" (rejected by the
+// receiving mail server, e.g. invalid address) and "dropped" (SendGrid never
+// attempted delivery, e.g. suppression list/spam-report history) mean
+// different things and call for different follow-up. Recipients/Sent are
+// live now since those come from our own send records, not SendGrid.
+function statsStrip(r) {
+  const stat = (label, val) => `<span>${label} <b>${val}</b></span>`;
+  return '<div class="stats-strip">' +
+    stat('Recipients', r.recipient_count) +
+    stat('Sent', r.sent_count) +
+    stat('Opens', r.opens) +
+    stat('Clicks', r.clicks) +
+    stat('Bounces', r.bounces) +
+    stat('Dropped', r.dropped) +
+    '</div>';
+}
+
+function viewSentEmail(id) {
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'history_detail', id})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) { alert('Could not load email: ' + (d.error || 'Unknown')); return; }
+    document.getElementById('preview-modal-title').textContent = 'Sent Email';
+    document.getElementById('preview-subject-line').textContent = 'Subject: ' + d.subject;
+    document.getElementById('preview-frame').srcdoc =
+      '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6;padding:16px">' + d.html + '</div>';
+    document.getElementById('preview-modal-note').textContent = 'This is the exact email that was sent, before any per-recipient merge variables were filled in.';
+    document.getElementById('preview-modal').style.display = 'flex';
+  })
+  .catch(() => alert('Network error loading email.'));
 }
 
 // ── Attachments ────────────────────────────────────────────────────────────────
@@ -1128,9 +1260,11 @@ function previewEmail() {
   .then(r => r.json())
   .then(d => {
     if (!d.ok) { alert('Preview failed: ' + (d.error || 'Unknown')); return; }
+    document.getElementById('preview-modal-title').textContent = 'Email Preview';
     document.getElementById('preview-subject-line').textContent = 'Subject: ' + d.subject;
     document.getElementById('preview-frame').srcdoc =
       '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.6;padding:16px">' + d.html + '</div>';
+    document.getElementById('preview-modal-note').textContent = "Personalized using your own info as a stand-in for the recipient's name, Market Center, etc. — the real send fills these in per recipient.";
     document.getElementById('preview-modal').style.display = 'flex';
   })
   .catch(() => alert('Network error generating preview.'));
@@ -1144,12 +1278,8 @@ function sendEmail() {
   const audiences = selectedAudiences();
   const mcSlugs    = audiences.includes('mc') ? selectedMcSlugs() : [];
 
-  let targetEmail = '';
-  if (audiences.includes('person')) {
-    const raw = document.getElementById('em-person').value.trim();
-    const m   = raw.match(/\(([^()]+)\)\s*$/);
-    targetEmail = (m ? m[1] : raw).trim().toLowerCase();
-  }
+  if (audiences.includes('person')) addPersonFromInput();
+  const targetEmails = audiences.includes('person') ? PERSON_EMAILS.map(p => p.email) : [];
 
   const subject  = document.getElementById('em-subject').value.trim();
   const bodyEl   = document.getElementById('em-body');
@@ -1162,7 +1292,7 @@ function sendEmail() {
   if (!subject || !hasText) { status.textContent = 'Subject and message are required.'; status.className = 'send-status err'; return; }
   if (!audiences.length) { status.textContent = 'Pick at least one audience.'; status.className = 'send-status err'; return; }
   if (audiences.includes('mc') && !mcSlugs.length) { status.textContent = 'Pick at least one Market Center.'; status.className = 'send-status err'; return; }
-  if (audiences.includes('person') && !targetEmail) { status.textContent = 'Pick a recipient.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('person') && !targetEmails.length) { status.textContent = 'Add at least one recipient.'; status.className = 'send-status err'; return; }
 
   let sendAtIso = '';
   if (isSchedule) {
@@ -1184,7 +1314,7 @@ function sendEmail() {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
-      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmail,
+      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmails,
       launch_class_date: audiences.includes('launch_agents') ? document.getElementById('em-launch-class').value : '',
       subject, body: bodyHtml, send_at: sendAtIso,
       attachment_tokens: ATTACHMENTS.map(a => a.token),
@@ -1200,6 +1330,8 @@ function sendEmail() {
     status.className = 'send-status ok';
     document.getElementById('em-subject').value = '';
     document.getElementById('em-person').value = '';
+    PERSON_EMAILS = [];
+    renderPersonChips();
     bodyEl.innerHTML = '';
     ATTACHMENTS = [];
     renderAttachments();

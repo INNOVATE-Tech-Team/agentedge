@@ -15,6 +15,14 @@ $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['ok' => false, 'error' => 'not signed in']); exit; }
 if (!is_admin()) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'forbidden']); exit; }
 
+// This is a read-only lookup that fires alongside intake.php/agent_extra.php
+// when the Edit Profile modal opens. PHP's default session handler holds an
+// exclusive lock on the session file for the life of the request, so without
+// closing it here, these concurrent requests queue up behind each other
+// instead of actually running in parallel — turning any one slow request
+// (e.g. a CRM role-lookup fallback) into a delay for all of them.
+session_write_close();
+
 $email = strtolower(trim($_GET['email'] ?? ''));
 if ($email === '') { echo json_encode(['ok' => false, 'error' => 'email required']); exit; }
 

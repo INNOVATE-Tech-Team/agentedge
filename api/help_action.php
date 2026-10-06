@@ -8,6 +8,8 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/feature_flags.php';
+require_once __DIR__ . '/../lib/who_does_what.php';
 
 $agent = require_login();
 $db    = local_db();
@@ -50,7 +52,28 @@ $action = $in['action'] ?? '';
 // ── Shortcuts visible to the widget (any logged-in agent) ───────────────────
 if ($action === 'widget_shortcuts') {
     $rows = $db->query("SELECT id,label,icon,url,is_ext FROM help_shortcuts WHERE visible=1 ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
-    echo json_encode(['ok'=>true,'shortcuts'=>$rows]); exit;
+    // "Who Does What?" is injected here rather than stored as an admin-managed
+    // help_shortcuts row, because its visibility must track
+    // wdw_is_available_to_current_user() -- the same super-admin-only gate
+    // who_does_what.php itself enforces today -- not that table's simple
+    // global visible flag, which would show it to every agent regardless of
+    // whether they can actually open the page. Spliced in directly after
+    // Contact Support, per the intended placement.
+    if (wdw_is_available_to_current_user()) {
+        $insertAt = count($rows);
+        foreach ($rows as $i => $r) {
+            if ($r['url'] === 'action:get_support') { $insertAt = $i + 1; break; }
+        }
+        array_splice($rows, $insertAt, 0, [[
+            'id' => 0, 'label' => 'Who Does What?', 'icon' => '🧭',
+            'url' => 'who_does_what.php', 'is_ext' => 0,
+        ]]);
+    }
+    // Admin OS Quick Add only renders for staff who actually have Admin Work
+    // OS access -- same gate api/admin_work_item_action.php's create action
+    // enforces, so the widget never offers a button that would 403.
+    $quickAdd = feature_enabled_for_current_user('admin_work_os');
+    echo json_encode(['ok'=>true,'shortcuts'=>$rows,'quick_add'=>$quickAdd]); exit;
 }
 
 // ── Lesson search (any logged-in agent) — same access rules as university.php ─
@@ -122,7 +145,30 @@ if ($action === 'search') {
         ];
     }, $visible);
 
-    echo json_encode(['ok'=>true,'results'=>$results]); exit;
+    // ── Agent Roster lookup (name/market center → phone), leadership tier only ─
+    // Mirrors backoffice_roster.php's access check — same people who can see
+    // phone numbers on the Agent Roster page can find them via Help search.
+    $agents = [];
+    if ($isAdminUser || is_mc_leader() || is_bic()) {
+        $nameStmt = $db->prepare(
+            "SELECT agent_name, phone, email, market_center, state_code
+             FROM innovate_roster
+             WHERE active=1 AND (agent_name LIKE ? OR market_center LIKE ?)
+             ORDER BY agent_name LIMIT 8"
+        );
+        $nameStmt->execute([$like, $like]);
+        $agents = array_map(function($r) {
+            return [
+                'name'          => $r['agent_name'],
+                'phone'         => $r['phone'] ?: '',
+                'email'         => $r['email'] ?: '',
+                'market_center' => $r['market_center'] ?: '',
+                'state_code'    => $r['state_code'] ?: '',
+            ];
+        }, $nameStmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    echo json_encode(['ok'=>true,'results'=>$results,'agents'=>$agents]); exit;
 }
 
 // ── Everything below requires super_admin ───────────────────────────────────

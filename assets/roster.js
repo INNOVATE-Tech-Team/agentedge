@@ -3,16 +3,157 @@ let ALL = [];
 let sortKey = 'name';
 let sortDir = 1; // 1 asc, -1 desc
 
-const COLLAPSE_KEY = 'roster_collapsed_mcs';
+// Referral coverage — MLS association name -> {counties,cities,townships,zips}
+// lowercased lists, loaded from api/referral_coverage.php. Used only by the
+// referral-location filter below.
+let COVERAGE = [];
+// Guards against the language picker's init-time onChange firing a refresh()
+// before ALL has actually loaded (see initLanguageChecklist call below).
+let rosterLoaded = false;
 
-function getCollapsed() {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]')); }
-  catch(e) { return new Set(); }
+function toggleFilters() {
+  const panel = document.getElementById('filters-panel');
+  const btn = document.getElementById('filters-toggle');
+  const open = !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  btn.classList.toggle('active', open);
 }
 
-function saveCollapsed(set) {
-  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set]));
+function clearFilters() {
+  document.getElementById('roster-languages').value = '';
+  applyLanguageChecklist('roster-languages-checks', 'roster-languages');
+  document.getElementById('referral-location').value = '';
+  refresh();
 }
+
+// Same click-to-add chip picker used on the agent profile's Languages Spoken
+// field (assets/language_options.js) — selecting languages here re-filters
+// the roster live via the onChange callback.
+initLanguageChecklist('roster-languages-checks', 'roster-languages', () => { if (rosterLoaded) refresh(); });
+
+// Normalizes a coverage row's comma/semicolon/newline-separated list into a
+// lowercased, trimmed array for matching against a typed-in search term.
+function coverageList(v) {
+  return (v || []).map(s => s.toLowerCase().trim()).filter(Boolean);
+}
+
+// Every field a coverage row can carry, and the friendly label shown next to
+// a matching option in the referral-location typeahead below.
+const COVERAGE_FIELDS = {
+  counties: 'county', cities: 'city', townships: 'township',
+  zips: 'zip', states: 'state', communities: 'community',
+};
+
+// Flat, deduped index of every location value actually entered in the
+// Referral tab (Back Office > Technology > Referral) -- lowercased value ->
+// { value: original casing, kinds: Set of field labels it appears under }.
+// Rebuilt once whenever COVERAGE (re)loads; powers the typeahead so agents
+// can only search for locations that are actually in the system, instead of
+// guessing at spellings that were never entered.
+let LOCATION_INDEX = new Map();
+
+function buildLocationIndex() {
+  LOCATION_INDEX = new Map();
+  COVERAGE.forEach(row => {
+    Object.keys(COVERAGE_FIELDS).forEach(field => {
+      (row[field] || []).forEach(raw => {
+        const v = raw.trim();
+        if (!v) return;
+        const key = v.toLowerCase();
+        if (!LOCATION_INDEX.has(key)) LOCATION_INDEX.set(key, { value: v, kinds: new Set() });
+        LOCATION_INDEX.get(key).kinds.add(COVERAGE_FIELDS[field]);
+      });
+    });
+  });
+}
+
+function renderLocationDropdown(query) {
+  const dropdown = document.getElementById('referral-location-dropdown');
+  const q = query.trim().toLowerCase();
+  if (!q) { dropdown.classList.remove('open'); dropdown.innerHTML = ''; return; }
+
+  const matches = [...LOCATION_INDEX.values()]
+    .filter(entry => entry.value.toLowerCase().includes(q))
+    .sort((a, b) => a.value.localeCompare(b.value))
+    .slice(0, 50);
+
+  if (!matches.length) {
+    dropdown.innerHTML = '<div class="loc-empty">Nothing in the Referral list matches yet.</div>';
+  } else {
+    dropdown.innerHTML = matches.map(entry => `
+      <div class="loc-opt" data-val="${esc(entry.value)}">
+        ${esc(entry.value)}<span class="loc-kind">${esc([...entry.kinds].join(', '))}</span>
+      </div>`).join('');
+    dropdown.querySelectorAll('.loc-opt').forEach(opt => {
+      opt.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const input = document.getElementById('referral-location');
+        input.value = opt.dataset.val;
+        dropdown.classList.remove('open');
+        refresh();
+      });
+    });
+  }
+  dropdown.classList.add('open');
+}
+
+// Returns, for the given location term, { byLabel, specificEmails }:
+//   byLabel        - map of agentLabel (lowercased) -> array of market-center
+//                     restriction lists (one per matching coverage row under
+//                     that label) -- matched against county/city/township/
+//                     zip/state/community, exact or substring either
+//                     direction so "Mullins" matches a "Mullins" city entry
+//                     and e.g. "Horry County" matches a plain "Horry" county
+//                     entry. Several rows can share one agentLabel (e.g.
+//                     Bright PA/NJ/DE/VA all "Bright MLS"), which is why this
+//                     keeps each match's own market-center list rather than a
+//                     flat set of names -- agentMatchesReferralLocation below
+//                     needs to know which specific row(s) matched to check
+//                     the agent's own market center against the right one,
+//                     so a VA-only Bright agent doesn't surface for a
+//                     PA-only referral just because both say "Bright MLS".
+//   specificEmails - flat set of lowercased emails manually attached to any
+//                     matching row (backoffice_referral.php's "Specific
+//                     People" picker) -- these agents surface for this
+//                     location no matter their own MLS Board or market
+//                     center, e.g. someone who personally covers an area
+//                     their MLS membership doesn't.
+function coverageMatchesForLocation(term) {
+  const q = term.toLowerCase().trim();
+  if (!q) return null;
+  const byLabel = new Map();
+  const specificEmails = new Set();
+  COVERAGE.forEach(row => {
+    const all = Object.keys(COVERAGE_FIELDS).flatMap(field => coverageList(row[field]));
+    const hit = all.some(v => v === q || v.includes(q) || q.includes(v));
+    if (!hit) return;
+    const key = row.agentLabel.toLowerCase().trim();
+    if (!byLabel.has(key)) byLabel.set(key, []);
+    byLabel.get(key).push((row.marketCenters || []).map(mc => mc.toLowerCase().trim()));
+    (row.specificAgents || []).forEach(email => specificEmails.add(email.toLowerCase().trim()));
+  });
+  return { byLabel, specificEmails };
+}
+
+function agentMatchesReferralLocation(agent, coverageMatches) {
+  if (coverageMatches === null) return true; // no location typed -- filter inactive
+  const email = (agent.email || '').toLowerCase().trim();
+  if (email && coverageMatches.specificEmails.has(email)) return true;
+  const boards = agent.mlsBoards || [];
+  const agentMc = (agent.marketCenter || '').toLowerCase().trim();
+  return boards.some(mls => {
+    const rows = coverageMatches.byLabel.get(mls.toLowerCase().trim());
+    if (!rows) return false;
+    // A row with no market centers listed applies regardless of office;
+    // otherwise the agent's own market center has to be one of them.
+    return rows.some(mcList => mcList.length === 0 || mcList.includes(agentMc));
+  });
+}
+
+// Market Center groups always start collapsed on page load. Expanding one
+// during the session is tracked in memory only (so it survives a
+// search/sort re-render) and never persisted — a fresh page load forgets it.
+const expandedMcs = new Set();
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -124,8 +265,6 @@ function render(rows) {
     return a.localeCompare(b);
   });
 
-  const collapsed = getCollapsed();
-
   let html = '';
   sortedMcs.forEach(mc => {
     if (mc === '') return; // hide agents with no market center assignment
@@ -133,7 +272,7 @@ function render(rows) {
       (a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1
     );
     const label = mc || 'Unassigned';
-    const isCollapsed = collapsed.has(mc);
+    const isCollapsed = !expandedMcs.has(mc);
     const arrow = isCollapsed ? '▶' : '▼';
     const mcEncoded = esc(encodeURIComponent(mc));
 
@@ -161,8 +300,7 @@ function render(rows) {
 
 function toggleGroup(mcEncoded) {
   const mc = decodeURIComponent(mcEncoded);
-  const collapsed = getCollapsed();
-  const isNowCollapsed = !collapsed.has(mc);
+  const isNowCollapsed = expandedMcs.has(mc);
 
   document.querySelectorAll(`.mc-agent-row[data-mc="${esc(mcEncoded)}"]`).forEach(r => {
     r.hidden = isNowCollapsed;
@@ -174,9 +312,8 @@ function toggleGroup(mcEncoded) {
     if (toggle) toggle.textContent = isNowCollapsed ? '▶' : '▼';
   }
 
-  if (isNowCollapsed) collapsed.add(mc);
-  else collapsed.delete(mc);
-  saveCollapsed(collapsed);
+  if (isNowCollapsed) expandedMcs.delete(mc);
+  else expandedMcs.add(mc);
 }
 
 function sortRows(rows) {

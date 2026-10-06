@@ -23,6 +23,9 @@ foreach ($due as $row) {
             case 'onboard_followup_text':
                 run_onboard_followup_text($db, $payload);
                 break;
+            case 'dotloop_remind':
+                run_dotloop_remind($db, $payload);
+                break;
             default:
                 throw new \Exception("Unknown task_type: {$row['task_type']}");
         }
@@ -54,6 +57,30 @@ function run_onboard_followup_text(PDO $db, array $payload): void {
 
     $c = cfg();
     send_sms_twilio($phone, $message, $c);
+}
+
+// Reminder to check DotLoop for an agent whose step was skipped pending
+// pending transaction clearance. Emails Whitney (whitneycottle@gmail.com).
+function run_dotloop_remind(PDO $db, array $payload): void {
+    $agentName  = trim($payload['agent_name']  ?? '');
+    $agentEmail = trim($payload['agent_email'] ?? '');
+    if ($agentEmail === '') return;
+
+    $subject = "DotLoop Reminder: Check {$agentName}'s account";
+    $body    = implode("\n", [
+        "Hi Whitney,",
+        "",
+        "This is your scheduled reminder to check DotLoop for {$agentName} ({$agentEmail}).",
+        "",
+        "They were offboarded with pending transactions, so their DotLoop account was left active.",
+        "Please log in and verify whether all transactions have closed, then remove the agent if appropriate.",
+        "",
+        "— AgentEdge",
+    ]);
+
+    $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    )->execute(['whitneycottle@gmail.com', 'email', $subject, $body, '', '', '']);
 }
 
 process_notification_queue();

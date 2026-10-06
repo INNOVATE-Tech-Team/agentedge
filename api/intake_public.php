@@ -48,9 +48,28 @@ try {
         $email = strtolower(trim($queueEmail));
     }
 
+    // An agent can hold multiple MLS memberships (see agent_mls_memberships
+    // below), but agent_intake.mls_board/mls_id remain single-value columns
+    // other code still reads directly. Mirror the first membership into them
+    // here, before the required-field check and the UPSERT below, both of
+    // which read $body['mls_board']/['mls_id'] directly.
+    if (is_array($body['mls_memberships'] ?? null)) {
+        // Mirror the first membership that actually names an association --
+        // not just array index 0. The client only requires *some* row to have
+        // an association selected (mlsChecked()), so a row with just an ID
+        // number sitting before it in DOM order must not blank out mls_board.
+        $primaryMembership = null;
+        foreach ($body['mls_memberships'] as $membership) {
+            if (trim($membership['mls_association'] ?? '') !== '') { $primaryMembership = $membership; break; }
+        }
+        $primaryMembership = $primaryMembership ?? ($body['mls_memberships'][0] ?? []);
+        $body['mls_board'] = trim($primaryMembership['mls_association'] ?? '');
+        $body['mls_id']    = trim($primaryMembership['mls_number'] ?? '');
+    }
+
     // ── Required fields check ─────────────────────────────────────────────────
     $required = [
-        'full_name', 'phone', 'license_number', 'nar_number', 'mls_board',
+        'full_name', 'phone', 'license_number', 'nar_number',
         'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
         'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
     ];
@@ -133,6 +152,19 @@ try {
         $insLicense->execute([$email, $num, $state, $exp]);
     }
 
+    // ── MLS memberships (rewritten in full on every submit) ──────────────────
+    local_db()->prepare("DELETE FROM agent_mls_memberships WHERE agent_email=?")->execute([$email]);
+    $mlsMemberships = is_array($body['mls_memberships'] ?? null) ? $body['mls_memberships'] : [];
+    $insMembership = local_db()->prepare(
+        "INSERT INTO agent_mls_memberships (agent_email, mls_association, mls_number) VALUES (?,?,?)"
+    );
+    foreach ($mlsMemberships as $mem) {
+        $assoc  = trim($mem['mls_association'] ?? '');
+        $number = trim($mem['mls_number'] ?? '');
+        if ($assoc === '' && $number === '') continue;
+        $insMembership->execute([$email, $assoc, $number]);
+    }
+
     // ── Add to onboard_queue (also seeds onboard_steps + notifications) ──────
     // Must go through the shared helper, not a raw INSERT — it's the only
     // place that seeds onboard_steps from onboard_tools(), so the checklist
@@ -182,6 +214,11 @@ try {
     notify_intake_completed($submitterName, $submitterEmail, $queueResult['id'], (string)($queueRow->fetchColumn() ?: ''));
 
     echo json_encode(['ok' => true]);
+    // Drain notification_queue in-request so staff alerts go out immediately
+    // instead of waiting on the next cron cycle — wrapped so a delivery
+    // hiccup here can never turn an already-succeeded submission into an
+    // error response (the JSON success above is already sent).
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
 
 } catch (\Throwable $e) {
     http_response_code(500);

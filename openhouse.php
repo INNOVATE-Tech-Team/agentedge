@@ -17,7 +17,9 @@ $admin     = is_admin();
 $filterState = trim($_GET['state'] ?? '');
 $filterType  = trim($_GET['type']  ?? '');
 
-// Load available listings (visible=1, not mine)
+// Load available listings (visible=1) — includes the agent's own listings so
+// they can confirm one they submitted is actually showing up in the pool;
+// own listings are flagged with is_mine below and get no request UI.
 $whereExtra = '';
 $params     = [];
 if ($filterState !== '') { $whereExtra .= " AND l.state=?"; $params[] = $filterState; }
@@ -26,10 +28,9 @@ if ($filterType  !== '') { $whereExtra .= " AND l.property_type=?"; $params[] = 
 // Hide listings that have no current/active time slot, unless the listing is
 // flagged no_schedule (vacant, intentionally left "available anytime").
 $listQ = $db->prepare("
-    SELECT l.*
+    SELECT l.*, (LOWER(l.listing_agent_email) = ?) AS is_mine
     FROM oh_listings l
     WHERE l.visible=1
-      AND LOWER(l.listing_agent_email) != ?
       AND (l.no_schedule=1 OR EXISTS (
           SELECT 1 FROM oh_slots s WHERE s.listing_id=l.id AND s.slot_date >= date('now')
       ))
@@ -128,7 +129,8 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
       <?php else: ?>
       <div class="oh-grid">
         <?php foreach ($listings as $lst):
-            $slots = $slotsByListing[$lst['id']] ?? [];
+            $slots  = $slotsByListing[$lst['id']] ?? [];
+            $isMine = (bool)$lst['is_mine'];
         ?>
         <div class="oh-card-wrap">
           <div class="oh-card" id="card-<?= $lst['id'] ?>">
@@ -143,7 +145,7 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
             <div class="oh-card-body">
               <div class="oh-card-addr"><?= h($lst['address']) ?>, <?= h($lst['city']) ?>, <?= h($lst['state']) ?><?= $lst['zip'] ? ' '.$lst['zip'] : '' ?></div>
               <div style="font-size:12px;color:#888"><?= h($lst['property_type']) ?><?= $lst['list_price'] ? ' &middot; $'.number_format($lst['list_price']) : '' ?></div>
-              <div class="oh-card-agent">Listed by <?= h($lst['listing_agent_name'] ?: $lst['listing_agent_email']) ?></div>
+              <div class="oh-card-agent">Listed by <?= h($lst['listing_agent_name'] ?: $lst['listing_agent_email']) ?><?php if ($isMine): ?> <span class="badge-pending" style="background:#eef2ff;color:#3949ab">Your listing</span><?php endif; ?></div>
 
               <?php /* FIXME(merge 2026-08-09): box's newer "propose one time" ad-hoc
                      flow below and the pre-existing "claim a time range" flow further
@@ -195,7 +197,9 @@ if ($maxPerSlot < 1) $maxPerSlot = 1;
                 </div>
               <?php endif; ?>
 
-              <?php if ($lst['no_schedule']): ?>
+              <?php if ($isMine): ?>
+                <div style="margin-top:auto;font-size:12px;color:#888;font-style:italic">This is your listing — visible to other agents in the pool</div>
+              <?php elseif ($lst['no_schedule']): ?>
                 <?php $alreadyClaimed = isset($myClaimedListings[$lst['id']]); ?>
                 <?php if ($alreadyClaimed): ?>
                   <div style="margin-top:auto;font-size:12px;color:#888;font-style:italic">Open house requested</div>

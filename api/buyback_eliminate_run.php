@@ -3,6 +3,7 @@ ob_start();
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
+require_once __DIR__ . '/../lib/crm_email_assertion.php';
 ini_set('display_errors', '0');
 ob_clean();
 header('Content-Type: application/json');
@@ -14,7 +15,7 @@ if (!can_use_buyback()) { echo json_encode(['ok' => false, 'error' => 'Forbidden
 $c     = cfg();
 $base  = rtrim($c['crm_base'] ?? 'https://bold360.vip/api', '/');
 $token = $c['crm_token'] ?? '';
-$qs    = http_build_query(['token' => $token, 'email' => $agent['email']]);
+$qs    = http_build_query(['token' => $token, 'email' => crm_signed_email($agent['email'])]);
 $url   = $base . '/public/agentedge/buyback/eliminate/run?' . $qs;
 
 $ch = curl_init($url);

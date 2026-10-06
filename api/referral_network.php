@@ -17,7 +17,6 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../lib/referral_network.php';
-require_once __DIR__ . '/../lib/facebook.php';
 
 function rn_json_out(array $d, int $code = 200): void {
     http_response_code($code);
@@ -236,15 +235,7 @@ if ($action === 'create_request') {
     $annId = (int)$db->lastInsertId();
     $db->prepare("UPDATE referral_requests SET announcement_id=? WHERE id=?")->execute([$annId, $requestId]);
 
-    // Best-effort — a Facebook outage or missing/expired token must never
-    // block the request itself from being created.
-    $fbPostId = null;
-    try { $fbPostId = fb_post_to_page($postText); } catch (\Throwable $e) {}
-    if ($fbPostId) {
-        $db->prepare("UPDATE referral_requests SET fb_post_id=? WHERE id=?")->execute([$fbPostId, $requestId]);
-    }
-
-    rn_json_out(['ok' => true, 'id' => $requestId, 'post_text' => $postText, 'fb_posted' => (bool)$fbPostId]);
+    rn_json_out(['ok' => true, 'id' => $requestId]);
 }
 
 if ($action === 'close_request') {

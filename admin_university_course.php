@@ -11,6 +11,11 @@ $courseId = (int)($_GET['id'] ?? 0);
 
 if (!$isNew && !$courseId) { header('Location: admin_university.php'); exit; }
 
+// Pre-fill from the New Course modal's layout choice (blank-course flow only -- see
+// admin_university.php's ncCreate()); ignored once a course row exists, which reads its own
+// layout_style below instead.
+$newCourseLayout = in_array($_GET['layout'] ?? '', ['standard', 'on_demand_hero'], true) ? $_GET['layout'] : 'standard';
+
 $course   = null;
 $lessons  = [];
 
@@ -20,7 +25,8 @@ if ($courseId) {
     $course = $cs->fetch(PDO::FETCH_ASSOC);
     if (!$course) { header('Location: admin_university.php'); exit; }
     $ls = $db->prepare("SELECT *, (SELECT COUNT(*) FROM uni_questions WHERE lesson_id=uni_lessons.id) as question_count,
-                        (SELECT COUNT(*) FROM uni_lesson_files WHERE lesson_id=uni_lessons.id) as attachment_count
+                        (SELECT COUNT(*) FROM uni_lesson_files WHERE lesson_id=uni_lessons.id) as attachment_count,
+                        (SELECT COUNT(*) FROM uni_feedback_questions WHERE lesson_id=uni_lessons.id) as feedback_question_count
                         FROM uni_lessons WHERE course_id=? ORDER BY sort_ord,id");
     $ls->execute([$courseId]);
     $lessons = $ls->fetchAll(PDO::FETCH_ASSOC);
@@ -30,13 +36,26 @@ if ($courseId) {
 }
 
 $categories = $db->query("SELECT * FROM uni_categories ORDER BY sort_ord,id")->fetchAll(PDO::FETCH_ASSOC);
+$allCourses = $db->query("SELECT id, title FROM uni_courses ORDER BY title")->fetchAll(PDO::FETCH_ASSOC);
 
-// Group lessons by folder for the tree view (null/0 = ungrouped, rendered last)
+// Group lessons by folder for the tree view (null/0 = top-level)
 $lessonsByFolder = [];
 foreach ($lessons as $lesson) {
     $fid = $lesson['folder_id'] ?: 0;
     $lessonsByFolder[$fid][] = $lesson;
 }
+
+// Folders and top-level (unfoldered) lessons share one sort_ord sequence per
+// course (kept in sync by the reorder_toplevel action), so they can be merged
+// into a single ordered list instead of always rendering folders first.
+$topLevel = [];
+foreach ($folders as $folder) {
+    $topLevel[] = ['type' => 'folder', 'sort_ord' => (int)$folder['sort_ord'], 'id' => (int)$folder['id'], 'data' => $folder];
+}
+foreach ($lessonsByFolder[0] ?? [] as $lesson) {
+    $topLevel[] = ['type' => 'lesson', 'sort_ord' => (int)$lesson['sort_ord'], 'id' => (int)$lesson['id'], 'data' => $lesson];
+}
+usort($topLevel, fn($a, $b) => $a['sort_ord'] <=> $b['sort_ord'] ?: $a['id'] <=> $b['id']);
 $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 $allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
@@ -94,6 +113,7 @@ if ($courseId) {
     .field-row{display:flex;align-items:center;gap:10px}
     .toggle-label{font-size:13px;font-weight:600;color:#333;cursor:pointer;display:flex;align-items:center;gap:8px}
     .toggle-label input[type=checkbox]{width:16px;height:16px;accent-color:#82C112;cursor:pointer}
+    .field-hint{font-size:12px;color:#888;margin-top:4px}
     .btn-primary{padding:9px 20px;background:#82C112;color:#000;border:none;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer}
     .btn-primary:hover{background:#5b8e0d;color:#fff}
     .btn-secondary{padding:9px 16px;background:white;color:#333;border:1.5px solid #ddd;border-radius:6px;font-weight:700;font-size:13px;cursor:pointer}
@@ -140,7 +160,8 @@ if ($courseId) {
     .save-toast{position:fixed;bottom:24px;right:24px;background:#1a1a1a;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;opacity:0;transition:opacity 200ms;z-index:999}
     .save-toast.show{opacity:1}
     /* Folder tree */
-    .folder-group{margin-bottom:14px;border:1px solid #e6e6e6;border-radius:8px;background:#fbfbfb}
+    #top-level-container{display:flex;flex-direction:column;gap:10px}
+    .folder-group{border:1px solid #e6e6e6;border-radius:8px;background:#fbfbfb}
     .folder-header{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:default}
     .folder-header .drag-handle{color:#ccc}
     .folder-icon{font-size:15px}
@@ -148,7 +169,6 @@ if ($courseId) {
     .lesson-sublist{display:flex;flex-direction:column;gap:8px;padding:0 12px 12px;min-height:8px}
     .lesson-sublist:empty{padding-bottom:0}
     .lesson-sublist:empty::before{content:'Drag lessons here';display:block;font-size:11px;color:#ccc;text-align:center;padding:10px;border:1px dashed #eee;border-radius:6px;margin:0 2px 10px}
-    .ungrouped-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
     .tree-actions{display:flex;gap:8px}
     /* Attachments */
     .attach-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
@@ -211,6 +231,19 @@ if ($courseId) {
               <label>Sort Order</label>
               <input type="number" id="c-sort" value="<?= (int)($course['sort_ord'] ?? 0) ?>" min="0">
             </div>
+            <div class="field">
+              <label>Estimated Time (minutes)</label>
+              <input type="number" id="c-est-minutes" value="<?= !empty($course['overview_estimated_minutes']) ? (int)$course['overview_estimated_minutes'] : '' ?>" min="0" placeholder="Optional — leave blank for no estimate">
+            </div>
+            <?php $selectedLayout = $isNew ? $newCourseLayout : ($course['layout_style'] ?? 'standard'); ?>
+            <div class="field full">
+              <label>Layout</label>
+              <select id="c-layout_style" onchange="updateLayoutHint()">
+                <option value="standard" <?= $selectedLayout === 'standard' ? 'selected' : '' ?>>Standard</option>
+                <option value="on_demand_hero" <?= $selectedLayout === 'on_demand_hero' ? 'selected' : '' ?>>On-Demand layout</option>
+              </select>
+              <div class="field-hint" id="c-layout_style-hint"></div>
+            </div>
             <div class="field full">
               <div class="field-row">
                 <label class="toggle-label">
@@ -251,9 +284,56 @@ if ($courseId) {
             <button class="btn-primary" onclick="saveCourseInfo()"><?= $isNew ? 'Create Course' : 'Save Changes' ?></button>
             <?php if (!$isNew): ?>
             <a class="btn-secondary" href="university_course.php?id=<?= $courseId ?>" target="_blank" style="text-decoration:none;display:inline-flex;align-items:center">Preview ↗</a>
+            <?php if (can_edit_uni_templates()): ?>
+            <button class="btn-secondary" onclick="saveAsTemplate()">Save as Template</button>
+            <?php endif; ?>
             <?php endif; ?>
           </div>
         </div>
+
+        <?php if (!$isNew && $courseId): ?>
+        <div class="card" style="padding:24px;margin-top:16px">
+          <div style="font-weight:800;font-size:13px;margin-bottom:14px">Sequencing, Quiz &amp; Certificate Settings</div>
+          <?php if (!empty($course['template_id'])):
+            $srcTpl = $db->prepare("SELECT name FROM uni_templates WHERE id=?"); $srcTpl->execute([$course['template_id']]);
+            $srcTplName = $srcTpl->fetchColumn();
+          ?>
+          <div style="font-size:12px;color:#666;margin-bottom:14px">
+            Created from template: <strong><?= htmlspecialchars($srcTplName ?: '(deleted template)') ?></strong>
+            <?php if ($srcTplName): ?><button class="btn-sm" style="margin-left:8px" onclick="openApplyUpdate()">Apply Template Update</button><?php endif; ?>
+          </div>
+          <?php endif; ?>
+          <div class="form-grid">
+            <div class="field">
+              <label>Sequencing</label>
+              <select id="s-sequencing_mode">
+                <option value="free" <?= ($course['sequencing_mode']??'free')==='free'?'selected':'' ?>>Free navigation</option>
+                <option value="in_order" <?= ($course['sequencing_mode']??'')==='in_order'?'selected':'' ?>>Must complete in order</option>
+              </select>
+            </div>
+            <div class="field"><label>Quiz pass score (%)</label><input type="number" id="s-quiz_pass_score" min="0" max="100" value="<?= (int)($course['quiz_pass_score'] ?? 70) ?>"></div>
+            <div class="field">
+              <label>Retake policy</label>
+              <select id="s-quiz_retake_policy" onchange="document.getElementById('s-max-attempts-wrap').style.display=this.value==='limited'?'block':'none'">
+                <option value="unlimited" <?= ($course['quiz_retake_policy']??'unlimited')==='unlimited'?'selected':'' ?>>Unlimited</option>
+                <option value="limited" <?= ($course['quiz_retake_policy']??'')==='limited'?'selected':'' ?>>Limited</option>
+              </select>
+            </div>
+            <div class="field" id="s-max-attempts-wrap" style="display:<?= ($course['quiz_retake_policy']??'')==='limited'?'block':'none' ?>">
+              <label>Max attempts</label><input type="number" id="s-quiz_max_attempts" min="0" value="<?= (int)($course['quiz_max_attempts'] ?? 0) ?>">
+            </div>
+            <div class="field">
+              <label>Certificate</label>
+              <select id="s-cert_enabled">
+                <option value="1" <?= ($course['cert_enabled']??1)?'selected':'' ?>>Enabled</option>
+                <option value="0" <?= !($course['cert_enabled']??1)?'selected':'' ?>>Disabled</option>
+              </select>
+            </div>
+            <div class="field"><label>Cert expiry (months, 0=never)</label><input type="number" id="s-cert_expiry_months" min="0" value="<?= (int)($course['cert_expiry_months'] ?? 0) ?>"></div>
+          </div>
+          <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+        </div>
+        <?php endif; ?>
       </div>
 
       <!-- Tab: Lessons -->
@@ -269,8 +349,8 @@ if ($courseId) {
             </div>
           </div>
           <?php
-            $typeIcons = ['video'=>'🎥','doc'=>'📄','quiz'=>'📝','placeholder'=>'🧩','upload'=>'📤'];
-            $typeLabel = ['video'=>'Video','doc'=>'Document','quiz'=>'Quiz','placeholder'=>'Placeholder','upload'=>'Learner Upload'];
+            $typeIcons = ['video'=>'🎥','doc'=>'📄','quiz'=>'📝','placeholder'=>'🧩','upload'=>'📤','feedback'=>'🗒️'];
+            $typeLabel = ['video'=>'Video','doc'=>'Document','quiz'=>'Quiz','placeholder'=>'Placeholder','upload'=>'Learner Upload','feedback'=>'Feedback Form'];
             function render_lesson_row($lesson, $typeIcons, $typeLabel) {
               $dur = $lesson['duration_sec'] > 0 ? gmdate($lesson['duration_sec'] >= 3600 ? 'G\h i\m' : 'i\m', $lesson['duration_sec']) : '';
               ?>
@@ -289,6 +369,7 @@ if ($courseId) {
                     <?php if ($lesson['file_key']): ?> · Primary file uploaded<?php endif; ?>
                     <?php if (!empty($lesson['attachment_count'])): ?> · <?= $lesson['attachment_count'] ?> attachment<?= $lesson['attachment_count'] != 1 ? 's' : '' ?><?php endif; ?>
                     <?php if ($lesson['type'] === 'quiz'): ?> · <?= $lesson['question_count'] ?> question<?= $lesson['question_count'] != 1 ? 's' : '' ?><?php endif; ?>
+                    <?php if ($lesson['type'] === 'feedback'): ?> · <?= $lesson['feedback_question_count'] ?> question<?= $lesson['feedback_question_count'] != 1 ? 's' : '' ?><?php endif; ?>
                     <?php if ($dur): ?> · <?= $dur ?><?php endif; ?>
                   </div>
                 </div>
@@ -304,6 +385,10 @@ if ($courseId) {
                   <?php if ($lesson['type'] === 'upload'): ?>
                   <a class="btn-sm" style="text-decoration:none;display:inline-flex;align-items:center" href="admin_university_submissions.php?lesson_id=<?= (int)$lesson['id'] ?>">Submissions</a>
                   <?php endif; ?>
+                  <?php if ($lesson['type'] === 'feedback'): ?>
+                  <button class="btn-sm" onclick="manageFeedbackQuestions(<?= (int)$lesson['id'] ?>, '<?= htmlspecialchars(addslashes($lesson['title'])) ?>')">Questions</button>
+                  <a class="btn-sm" style="text-decoration:none;display:inline-flex;align-items:center" href="admin_university_submissions.php?lesson_id=<?= (int)$lesson['id'] ?>">Responses</a>
+                  <?php endif; ?>
                   <button class="btn-sm btn-danger" onclick="deleteLesson(<?= (int)$lesson['id'] ?>, '<?= htmlspecialchars(addslashes($lesson['title'])) ?>')">Del</button>
                 </div>
               </div>
@@ -315,15 +400,18 @@ if ($courseId) {
             No lessons yet — click <strong>+ Add Lesson</strong> to begin building this course, or <strong>+ Add Folder</strong> to organize it first.
           </div>
           <?php else: ?>
-          <div id="folder-container">
-            <?php foreach ($folders as $folder): ?>
+          <div id="top-level-container">
+            <?php foreach ($topLevel as $item): ?>
+            <?php if ($item['type'] === 'folder'): $folder = $item['data']; ?>
             <div class="folder-group" data-folder-id="<?= (int)$folder['id'] ?>">
               <div class="folder-header">
-                <span class="drag-handle" title="Drag to reorder folders">⠿</span>
+                <span class="drag-handle" title="Drag to reorder">⠿</span>
                 <span class="folder-icon">📁</span>
+                <?php $folderCode = $folder['code'] ?: strtoupper(substr($folder['title'], 0, 3)); ?>
+                <span style="font:700 10px ui-monospace,Menlo,Monaco,Consolas,monospace;color:#5b8e0d;background:#eef5e2;border-radius:4px;padding:2px 5px"><?= htmlspecialchars($folderCode) ?></span>
                 <span class="folder-title"><?= htmlspecialchars($folder['title']) ?></span>
                 <div class="lesson-actions">
-                  <button class="btn-sm" onclick="openEditFolder(<?= (int)$folder['id'] ?>,'<?= htmlspecialchars(addslashes($folder['title'])) ?>')">Edit</button>
+                  <button class="btn-sm" onclick="openEditFolder(<?= (int)$folder['id'] ?>,'<?= htmlspecialchars(addslashes($folder['title'])) ?>','<?= htmlspecialchars(addslashes($folder['code'])) ?>','<?= htmlspecialchars(addslashes($folder['description'])) ?>')">Edit</button>
                   <button class="btn-sm btn-danger" onclick="deleteFolder(<?= (int)$folder['id'] ?>,'<?= htmlspecialchars(addslashes($folder['title'])) ?>')">Del</button>
                 </div>
               </div>
@@ -331,13 +419,10 @@ if ($courseId) {
                 <?php foreach ($lessonsByFolder[$folder['id']] ?? [] as $lesson) render_lesson_row($lesson, $typeIcons, $typeLabel); ?>
               </div>
             </div>
+            <?php else: render_lesson_row($item['data'], $typeIcons, $typeLabel); endif; ?>
             <?php endforeach; ?>
           </div>
-          <?php if ($folders): ?><div style="font-size:11px;font-weight:700;color:#aaa;margin:12px 0 6px">Ungrouped</div><?php endif; ?>
-          <div class="ungrouped-list lesson-sublist" id="ungrouped-list" data-folder-id="">
-            <?php foreach ($lessonsByFolder[0] ?? [] as $lesson) render_lesson_row($lesson, $typeIcons, $typeLabel); ?>
-          </div>
-          <div style="font-size:11px;color:#bbb;text-align:center">Drag lessons to reorder or move them between folders.</div>
+          <div style="font-size:11px;color:#bbb;text-align:center;margin-top:8px">Drag folders and lessons to reorder — drag a lesson into a folder to file it there, or out to make it top-level.</div>
           <?php endif; ?>
         </div>
       </div>
@@ -423,6 +508,8 @@ if ($courseId) {
     <h3 id="folder-modal-title">Add Folder</h3>
     <input type="hidden" id="f-id" value="">
     <div class="field"><label>Folder Title</label><input type="text" id="f-title" placeholder="e.g. SC Purchase Required Agency Documents"></div>
+    <div class="field"><label>Code (3 letters)</label><input type="text" id="f-code" maxlength="3" style="text-transform:uppercase" placeholder="e.g. FUB — defaults to first 3 letters of title"></div>
+    <div class="field"><label>Description</label><input type="text" id="f-description" placeholder="One line shown under the folder title"></div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('folder-modal')">Cancel</button>
       <button class="btn-primary" onclick="saveFolder()">Save Folder</button>
@@ -444,6 +531,7 @@ if ($courseId) {
           <option value="doc">📄 Document</option>
           <option value="quiz">📝 Quiz</option>
           <option value="upload">📤 Learner Upload</option>
+          <option value="feedback">🗒️ Feedback Form</option>
           <option value="placeholder">🧩 Placeholder (Coming Soon)</option>
         </select>
       </div>
@@ -534,6 +622,21 @@ if ($courseId) {
       <label>Duration (seconds, optional)</label>
       <input type="number" id="l-duration" value="0" min="0">
     </div>
+
+    <!-- Move / transfer to another course (existing lessons only) -->
+    <div id="l-move-section" style="display:none;margin-top:6px;border-top:1px solid #eee;padding-top:16px">
+      <div style="font-size:13px;font-weight:800;color:#111;margin-bottom:4px">Move / Transfer to Another Course</div>
+      <div style="font-size:12px;color:#888;margin-bottom:12px">Reassigns this lesson to a different course — useful for sorting Fathom-recorded calls out of a holding course.</div>
+      <div class="field-row">
+        <select id="l-move-course" style="flex:1">
+          <?php foreach ($allCourses as $c): ?>
+          <option value="<?= (int)$c['id'] ?>"><?= htmlspecialchars($c['title']) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <button type="button" class="btn-sm" onclick="moveLessonToCourse()">Move</button>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('lesson-modal')">Cancel</button>
       <button class="btn-primary" id="l-save-btn" onclick="saveLesson()">Save Lesson</button>
@@ -575,6 +678,93 @@ if ($courseId) {
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn-cancel" onclick="closeModal('qe-modal')">Cancel</button>
       <button class="btn-primary" onclick="saveQuestion()">Save Question</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feedback Questions modal -->
+<div class="modal-overlay" id="fq-modal">
+  <div class="modal" style="width:660px">
+    <h3 id="fq-modal-title">Feedback Questions</h3>
+    <div style="font-size:12px;color:#888;margin-bottom:10px">No correct answers or scoring here — these questions build the form a learner fills out. Blank answers are allowed; nothing is required yet.</div>
+    <div id="fq-list" class="q-list"></div>
+    <button class="btn-secondary" onclick="openAddFeedbackQuestion()" style="margin-bottom:8px">+ Add Question</button>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('fq-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feedback question editor (nested within fq-modal flow) -->
+<div class="modal-overlay" id="fqe-modal" style="z-index:400">
+  <div class="sub-modal">
+    <h3 id="fqe-title">Add Question</h3>
+    <input type="hidden" id="fqe-id" value="">
+    <div class="field"><label>Question / Field Label</label><textarea id="fqe-question" rows="2" placeholder="e.g. How would you rate your facilitator's preparedness?"></textarea></div>
+    <div class="form-grid">
+      <div class="field"><label>Section Label (optional)</label><input type="text" id="fqe-section" placeholder="e.g. Facilitator Performance"></div>
+      <div class="field">
+        <label>Type</label>
+        <select id="fqe-type" onchange="onFQTypeChange()">
+          <option value="rating_5">Rating (1–5)</option>
+          <option value="scale_10">Scale (1–10 / recommend)</option>
+          <option value="short_text">Short Answer</option>
+          <option value="long_text">Long Answer</option>
+          <option value="date">Date</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label class="toggle-label" style="font-weight:400;text-transform:none"><input type="checkbox" id="fqe-intro"> Show on the opening Intro/Details screen (grouped with other intro fields, not its own step)</label>
+    </div>
+
+    <div id="fqe-config-rating5">
+      <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:6px">Labels for each value (optional)</div>
+      <div class="form-grid">
+        <div class="field"><label>Label for 1</label><input type="text" id="fqe-r5-label-1"></div>
+        <div class="field"><label>Label for 2</label><input type="text" id="fqe-r5-label-2"></div>
+        <div class="field"><label>Label for 3</label><input type="text" id="fqe-r5-label-3"></div>
+        <div class="field"><label>Label for 4</label><input type="text" id="fqe-r5-label-4"></div>
+        <div class="field"><label>Label for 5</label><input type="text" id="fqe-r5-label-5"></div>
+      </div>
+      <div class="field">
+        <label class="toggle-label" style="font-weight:400;text-transform:none"><input type="checkbox" id="fqe-r5-allow-na" onchange="onFQNaToggle()"> Allow "N/A"</label>
+      </div>
+      <div class="field" id="fqe-r5-na-label-wrap" style="display:none">
+        <label>N/A label</label>
+        <input type="text" id="fqe-r5-na-label" placeholder="N/A">
+      </div>
+    </div>
+
+    <div id="fqe-config-scale10" style="display:none">
+      <div class="form-grid">
+        <div class="field"><label>Low-end label</label><input type="text" id="fqe-s10-low" placeholder="e.g. Not likely"></div>
+        <div class="field"><label>High-end label</label><input type="text" id="fqe-s10-high" placeholder="e.g. Extremely likely"></div>
+      </div>
+    </div>
+
+    <div id="fqe-config-text" style="display:none">
+      <div class="field">
+        <label>Prefill from</label>
+        <select id="fqe-prefill">
+          <option value="">— None, learner types it in —</option>
+          <option value="agent_name">Logged-in agent's name</option>
+          <option value="agent_email">Logged-in agent's email</option>
+        </select>
+        <div style="font-size:11px;color:#aaa;margin-top:4px">Only prefill values Agent Edge already has reliably — nothing else is invented.</div>
+      </div>
+    </div>
+    <div id="fqe-config-placeholder" style="display:none">
+      <div class="field">
+        <label>Placeholder (optional)</label>
+        <input type="text" id="fqe-placeholder" placeholder="e.g. First and last">
+        <div style="font-size:11px;color:#aaa;margin-top:4px">Hint text shown in the empty field. Not shown once the learner has typed something (or a prefill has filled it in).</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn-cancel" onclick="closeModal('fqe-modal')">Cancel</button>
+      <button class="btn-primary" onclick="saveFeedbackQuestion()">Save Question</button>
     </div>
   </div>
 </div>
@@ -667,12 +857,24 @@ function switchTab(name, el) {
 }
 
 // ── Course Info ───────────────────────────────────────────────────────────
+const LAYOUT_HINTS = {
+  standard: 'Lesson list, how courses look today',
+  on_demand_hero: 'Full-screen hero page and one-lesson-at-a-time player',
+};
+function updateLayoutHint() {
+  const el = document.getElementById('c-layout_style');
+  const hint = document.getElementById('c-layout_style-hint');
+  if (el && hint) hint.textContent = LAYOUT_HINTS[el.value] || '';
+}
+updateLayoutHint();
+
 function saveCourseInfo() {
   const title = document.getElementById('c-title').value.trim();
   if (!title) { alert('Title required'); return; }
   const catEl  = document.getElementById('c-cat');
   const catId  = catEl ? (parseInt(catEl.value)||null) : null;
   const pubEl  = document.getElementById('c-published');
+  const layoutEl = document.getElementById('c-layout_style');
   const body   = {
     action: COURSE_ID ? 'update_course' : 'create_course',
     title, description: document.getElementById('c-desc').value.trim(),
@@ -680,13 +882,63 @@ function saveCourseInfo() {
     is_required: document.getElementById('c-required').checked ? 1 : 0,
     sort_ord: parseInt(document.getElementById('c-sort').value)||0,
     published: pubEl && pubEl.checked ? 1 : 0,
+    overview_estimated_minutes: parseInt(document.getElementById('c-est-minutes').value)||0,
   };
+  if (layoutEl) body.layout_style = layoutEl.value;
   if (COURSE_ID) body.id = COURSE_ID;
   api(body).then(d => {
     if (d.ok) {
       if (!COURSE_ID && d.id) { location.href = 'admin_university_course.php?id=' + d.id; }
       else toast('Saved ✓');
     } else alert(d.error);
+  });
+}
+
+function saveAsTemplate() {
+  const name = prompt('Template name:', document.getElementById('c-title').value.trim());
+  if (!name) return;
+  const description = prompt('Template description (optional):', '') || '';
+  fetch('api/uni_template_action.php', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'snapshot_course_as_template', course_id: COURSE_ID, name, description})})
+    .then(r=>r.json()).then(d => {
+      if (d.ok) { if (confirm('Template created. View it now?')) location.href = 'admin_university_template.php?id=' + d.id; }
+      else alert(d.error);
+    });
+}
+
+// ── Sequencing/Quiz/Cert settings ───────────────────────────────────────────
+function saveSettings() {
+  const body = {
+    action: 'update_course', id: COURSE_ID,
+    sequencing_mode: document.getElementById('s-sequencing_mode').value,
+    quiz_pass_score: parseInt(document.getElementById('s-quiz_pass_score').value) || 70,
+    quiz_retake_policy: document.getElementById('s-quiz_retake_policy').value,
+    quiz_max_attempts: parseInt(document.getElementById('s-quiz_max_attempts').value) || 0,
+    cert_enabled: parseInt(document.getElementById('s-cert_enabled').value),
+    cert_expiry_months: parseInt(document.getElementById('s-cert_expiry_months').value) || 0,
+  };
+  api(body).then(d => { if (d.ok) toast('Settings saved ✓'); else alert(d.error); });
+}
+
+// ── Apply Template Update — preview first, write only on confirm ──────────
+function openApplyUpdate() {
+  api({action:'preview_template_update', course_id: COURSE_ID}).then(d => {
+    if (!d.ok && d.error) { alert(d.error); return; }
+    const settingsLines = (d.settings||[]).map(s => `${s.field}: ${s.old} → ${s.new}`);
+    const parts = [];
+    if (settingsLines.length) parts.push('Settings that will change:\n' + settingsLines.join('\n'));
+    else parts.push('No settings changes.');
+    parts.push(`New content: ${d.folders_to_add} module(s), ${d.lessons_to_add} lesson(s), ${d.questions_to_add} question(s) will be added.`);
+    parts.push('\nYour existing edits and any deliberately-deleted items are untouched.');
+    if (!settingsLines.length && !d.folders_to_add && !d.lessons_to_add && !d.questions_to_add) {
+      alert('This course is already up to date with the template.');
+      return;
+    }
+    if (!confirm(parts.join('\n\n') + '\n\nApply these changes?')) return;
+    api({action:'apply_template_update', course_id: COURSE_ID}).then(r => {
+      if (r.ok) { toast(`Applied — ${r.folders_added} module(s), ${r.lessons_added} lesson(s), ${r.questions_added} question(s) added ✓`); location.reload(); }
+      else alert(r.error);
+    });
   });
 }
 
@@ -722,7 +974,7 @@ function onTypeChange() {
   embedField.style.display  = type === 'video' ? '' : 'none';
   orDivider.style.display   = type === 'video' ? '' : 'none';
   contentField.style.display = type === 'placeholder' ? 'none' : '';
-  contentLabel.textContent = type === 'upload' ? 'Instructions for the learner' : 'Notes / Description';
+  contentLabel.textContent = type === 'upload' ? 'Instructions for the learner' : (type === 'feedback' ? 'Intro copy (shown above the first question)' : 'Notes / Description');
   attachField.style.display = (type === 'video' || type === 'doc' || type === 'upload') ? '' : 'none';
   document.getElementById('l-attach-hint').textContent = type === 'upload'
     ? 'Optional: attach a blank template for the learner to fill out and submit back.'
@@ -820,6 +1072,7 @@ function openAddLesson() {
   document.getElementById('l-related-results').style.display = 'none';
   resetLessonAttachUI();
   onTypeChange();
+  document.getElementById('l-move-section').style.display = 'none';
   document.getElementById('lesson-modal').classList.add('open');
 }
 
@@ -867,7 +1120,23 @@ function editLesson(lesson) {
   }
   resetLessonAttachUI();
   onTypeChange();
+  const moveSel = document.getElementById('l-move-course');
+  moveSel.value = [...moveSel.options].find(o => parseInt(o.value) !== COURSE_ID)?.value || '';
+  document.getElementById('l-move-section').style.display = '';
   document.getElementById('lesson-modal').classList.add('open');
+}
+
+function moveLessonToCourse() {
+  const id = document.getElementById('l-id').value;
+  const sel = document.getElementById('l-move-course');
+  const targetId = parseInt(sel.value, 10);
+  const targetTitle = sel.options[sel.selectedIndex].text;
+  if (targetId === COURSE_ID) { alert('Choose a different course to move this lesson to.'); return; }
+  if (!confirm(`Move "${document.getElementById('l-title').value}" to "${targetTitle}"?`)) return;
+  api({action:'move_lesson', id: parseInt(id), course_id: targetId}).then(d => {
+    if (d.ok) { closeModal('lesson-modal'); location.reload(); }
+    else alert('Error: ' + (d.error || 'move failed'));
+  });
 }
 
 function handleLessonFileDrop(e){e.preventDefault();e.currentTarget.classList.remove('drag');if(e.dataTransfer.files[0]){pendingLessonFile=e.dataTransfer.files[0];document.getElementById('l-file-name').textContent=pendingLessonFile.name;}}
@@ -1005,19 +1274,27 @@ function openAddFolder() {
   document.getElementById('folder-modal-title').textContent = 'Add Folder';
   document.getElementById('f-id').value = '';
   document.getElementById('f-title').value = '';
+  document.getElementById('f-code').value = '';
+  document.getElementById('f-description').value = '';
   document.getElementById('folder-modal').classList.add('open');
 }
-function openEditFolder(id, title) {
+function openEditFolder(id, title, code, description) {
   document.getElementById('folder-modal-title').textContent = 'Edit Folder';
   document.getElementById('f-id').value = id;
   document.getElementById('f-title').value = title;
+  document.getElementById('f-code').value = code || '';
+  document.getElementById('f-description').value = description || '';
   document.getElementById('folder-modal').classList.add('open');
 }
 function saveFolder() {
   const title = document.getElementById('f-title').value.trim();
   if (!title) { alert('Title required'); return; }
+  const code = document.getElementById('f-code').value.trim().toUpperCase();
+  const description = document.getElementById('f-description').value.trim();
   const id = document.getElementById('f-id').value;
-  const body = id ? {action:'update_folder', id:parseInt(id), title} : {action:'create_folder', course_id:COURSE_ID, title};
+  const body = id
+    ? {action:'update_folder', id:parseInt(id), title, code, description}
+    : {action:'create_folder', course_id:COURSE_ID, title, code, description};
   api(body).then(d => { if (d.ok) location.reload(); else alert(d.error); });
 }
 function deleteFolder(id, title) {
@@ -1025,23 +1302,31 @@ function deleteFolder(id, title) {
   api({action:'delete_folder', id}).then(d => { if (d.ok) location.reload(); else alert(d.error); });
 }
 
-// ── Drag-to-reorder (lessons across folders, and folders themselves) ───────
+// ── Drag-to-reorder ──────────────────────────────────────────────────────
+// Folders and top-level lessons are direct children of #top-level-container
+// and are draggable as siblings of each other, so a lesson can land above,
+// below, or between folders instead of being stuck after all of them.
+// Lessons inside a folder additionally drag within/between .lesson-sublist
+// containers (nested inside a folder-group) to file into or out of a folder.
 let dragSrc = null;
 let dragKind = null; // 'lesson' | 'folder'
 document.addEventListener('DOMContentLoaded', () => {
   initDrag();
 });
 function initDrag() {
-  // Lessons: draggable within/between any .lesson-sublist container
+  const topLevel = document.getElementById('top-level-container');
+  if (!topLevel) return;
+
+  document.querySelectorAll('.lesson-row').forEach(row => {
+    row.setAttribute('draggable', 'true');
+    row.addEventListener('dragstart', e => { dragSrc = row; dragKind = 'lesson'; row.style.opacity = '.4'; e.stopPropagation(); });
+    row.addEventListener('dragend', () => { dragSrc.style.opacity = ''; saveLessonOrder(); saveTopLevelOrder(); dragSrc = null; dragKind = null; });
+  });
   document.querySelectorAll('.lesson-sublist').forEach(sublist => {
-    sublist.querySelectorAll('.lesson-row').forEach(row => {
-      row.setAttribute('draggable','true');
-      row.addEventListener('dragstart', e => { dragSrc = row; dragKind = 'lesson'; row.style.opacity = '.4'; e.stopPropagation(); });
-      row.addEventListener('dragend', () => { dragSrc.style.opacity=''; saveLessonOrder(); dragSrc=null; dragKind=null; });
-    });
     sublist.addEventListener('dragover', e => {
       if (dragKind !== 'lesson') return;
       e.preventDefault();
+      e.stopPropagation(); // this sublist owns positioning; don't also reorder the top-level sequence
       const row = e.target.closest('.lesson-row');
       if (row && row !== dragSrc && sublist.contains(row)) {
         const rect = row.getBoundingClientRect();
@@ -1052,35 +1337,40 @@ function initDrag() {
       }
     });
   });
-  // Folders: draggable header rows within #folder-container
-  const folderContainer = document.getElementById('folder-container');
-  if (folderContainer) {
-    folderContainer.querySelectorAll('.folder-group').forEach(group => {
-      const header = group.querySelector('.folder-header');
-      header.setAttribute('draggable','true');
-      header.addEventListener('dragstart', e => { dragSrc = group; dragKind = 'folder'; group.style.opacity = '.4'; });
-      header.addEventListener('dragend', () => { dragSrc.style.opacity=''; saveFolderOrder(); dragSrc=null; dragKind=null; });
-      group.addEventListener('dragover', e => {
-        if (dragKind !== 'folder' || dragSrc === group) return;
-        e.preventDefault();
-        const rect = group.getBoundingClientRect();
-        const mid = rect.top + rect.height / 2;
-        folderContainer.insertBefore(dragSrc, e.clientY < mid ? group : group.nextSibling);
-      });
-    });
-  }
+
+  topLevel.querySelectorAll('.folder-group').forEach(group => {
+    const header = group.querySelector('.folder-header');
+    header.setAttribute('draggable', 'true');
+    header.addEventListener('dragstart', e => { dragSrc = group; dragKind = 'folder'; group.style.opacity = '.4'; e.stopPropagation(); });
+    header.addEventListener('dragend', () => { dragSrc.style.opacity = ''; saveTopLevelOrder(); dragSrc = null; dragKind = null; });
+  });
+  topLevel.addEventListener('dragover', e => {
+    if (!dragSrc || e.target.closest('.lesson-sublist')) return;
+    e.preventDefault();
+    const target = e.target.closest('.folder-group, .lesson-row');
+    if (target && target !== dragSrc) {
+      const rect = target.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      topLevel.insertBefore(dragSrc, e.clientY < mid ? target : target.nextSibling);
+    } else if (!target) {
+      topLevel.appendChild(dragSrc);
+    }
+  });
 }
 function saveLessonOrder() {
   const order = [];
-  document.querySelectorAll('.lesson-sublist').forEach(sublist => {
-    const folderId = sublist.dataset.folderId ? parseInt(sublist.dataset.folderId) : null;
+  document.querySelectorAll('.folder-group .lesson-sublist').forEach(sublist => {
+    const folderId = parseInt(sublist.dataset.folderId);
     sublist.querySelectorAll('.lesson-row').forEach(row => order.push({ id: parseInt(row.dataset.id), folder_id: folderId }));
   });
-  api({action:'reorder_lessons',order});
+  if (order.length) api({action:'reorder_lessons',order});
 }
-function saveFolderOrder() {
-  const order = [...document.querySelectorAll('.folder-group')].map(g=>parseInt(g.dataset.folderId));
-  if (order.length) api({action:'reorder_folders',order});
+function saveTopLevelOrder() {
+  const order = [...document.getElementById('top-level-container').children].map(el => ({
+    type: el.classList.contains('folder-group') ? 'folder' : 'lesson',
+    id: parseInt(el.classList.contains('folder-group') ? el.dataset.folderId : el.dataset.id)
+  }));
+  if (order.length) api({action:'reorder_toplevel',order});
 }
 
 // ── Quiz Questions ─────────────────────────────────────────────────────────
@@ -1214,6 +1504,138 @@ function saveQuestion() {
 function deleteQuestion(id) {
   if (!confirm('Delete this question?')) return;
   api({action:'delete_question',id}).then(d=>{if(d.ok)loadQuestions();});
+}
+
+// ── Feedback Questions ───────────────────────────────────────────────────────
+let activeFbLessonId = null;
+let editingFqId = null;
+
+const FQTYPE_LABEL = {rating_5:'Rating (1–5)', scale_10:'Scale (1–10)', short_text:'Short Answer', long_text:'Long Answer', date:'Date'};
+
+function manageFeedbackQuestions(lessonId, title) {
+  activeFbLessonId = lessonId;
+  document.getElementById('fq-modal-title').textContent = `Feedback Questions — ${title}`;
+  loadFeedbackQuestions();
+  document.getElementById('fq-modal').classList.add('open');
+}
+
+function loadFeedbackQuestions() {
+  api({action:'list_feedback_questions', lesson_id:activeFbLessonId}).then(d => {
+    const list = document.getElementById('fq-list');
+    const qs = d.questions || [];
+    if (!qs.length) { list.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:20px">No questions yet.</div>'; return; }
+    list.innerHTML = qs.map((q, i) => {
+      const cfg = JSON.parse(q.config || '{}');
+      const bits = [FQTYPE_LABEL[q.qtype] || q.qtype];
+      if (q.section_label) bits.push(esc(q.section_label));
+      if (q.is_intro_field) bits.push('Intro screen');
+      return `<div class="q-row">
+        <div class="q-num">${i + 1}</div>
+        <div class="q-text"><strong>${esc(q.question)}</strong><br><span style="color:#888;font-size:11px">${bits.join(' · ')}</span></div>
+        <div class="q-actions">
+          <button class="btn-sm" onclick="moveFeedbackQuestion(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="btn-sm" onclick="moveFeedbackQuestion(${i},1)" ${i === qs.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="btn-sm" onclick='openEditFeedbackQuestion(${JSON.stringify(q).replace(/'/g, "&#39;")})'>Edit</button>
+          <button class="btn-sm btn-danger" onclick="deleteFeedbackQuestion(${q.id})">Del</button>
+        </div>
+      </div>`;
+    }).join('');
+    window._fqOrder = qs.map(q => q.id);
+  });
+}
+
+function moveFeedbackQuestion(idx, dir) {
+  const order = window._fqOrder || [];
+  const j = idx + dir;
+  if (j < 0 || j >= order.length) return;
+  [order[idx], order[j]] = [order[j], order[idx]];
+  api({action:'reorder_feedback_questions', order}).then(() => loadFeedbackQuestions());
+}
+
+function onFQTypeChange() {
+  const type = document.getElementById('fqe-type').value;
+  document.getElementById('fqe-config-rating5').style.display = type === 'rating_5' ? '' : 'none';
+  document.getElementById('fqe-config-scale10').style.display = type === 'scale_10' ? '' : 'none';
+  document.getElementById('fqe-config-text').style.display = (type === 'short_text' || type === 'long_text' || type === 'date') ? '' : 'none';
+  // Placeholder isn't meaningful on a date input -- shown for short/long text only.
+  document.getElementById('fqe-config-placeholder').style.display = (type === 'short_text' || type === 'long_text') ? '' : 'none';
+}
+function onFQNaToggle() {
+  document.getElementById('fqe-r5-na-label-wrap').style.display = document.getElementById('fqe-r5-allow-na').checked ? '' : 'none';
+}
+
+function openAddFeedbackQuestion() {
+  editingFqId = null;
+  document.getElementById('fqe-title').textContent = 'Add Question';
+  document.getElementById('fqe-id').value = '';
+  document.getElementById('fqe-question').value = '';
+  document.getElementById('fqe-section').value = '';
+  document.getElementById('fqe-type').value = 'rating_5';
+  document.getElementById('fqe-intro').checked = false;
+  for (let i = 1; i <= 5; i++) document.getElementById(`fqe-r5-label-${i}`).value = '';
+  document.getElementById('fqe-r5-allow-na').checked = false;
+  document.getElementById('fqe-r5-na-label').value = '';
+  document.getElementById('fqe-s10-low').value = '';
+  document.getElementById('fqe-s10-high').value = '';
+  document.getElementById('fqe-prefill').value = '';
+  document.getElementById('fqe-placeholder').value = '';
+  onFQTypeChange(); onFQNaToggle();
+  document.getElementById('fqe-modal').classList.add('open');
+}
+
+function openEditFeedbackQuestion(q) {
+  const cfg = JSON.parse(q.config || '{}');
+  editingFqId = q.id;
+  document.getElementById('fqe-title').textContent = 'Edit Question';
+  document.getElementById('fqe-id').value = q.id;
+  document.getElementById('fqe-question').value = q.question;
+  document.getElementById('fqe-section').value = q.section_label || '';
+  document.getElementById('fqe-type').value = q.qtype;
+  document.getElementById('fqe-intro').checked = !!q.is_intro_field;
+  for (let i = 1; i <= 5; i++) document.getElementById(`fqe-r5-label-${i}`).value = (cfg.labels && cfg.labels[String(i)]) || '';
+  document.getElementById('fqe-r5-allow-na').checked = !!cfg.allow_na;
+  document.getElementById('fqe-r5-na-label').value = cfg.na_label || '';
+  document.getElementById('fqe-s10-low').value = cfg.low_label || '';
+  document.getElementById('fqe-s10-high').value = cfg.high_label || '';
+  document.getElementById('fqe-prefill').value = cfg.prefill || '';
+  document.getElementById('fqe-placeholder').value = cfg.placeholder || '';
+  onFQTypeChange(); onFQNaToggle();
+  document.getElementById('fqe-modal').classList.add('open');
+}
+
+function saveFeedbackQuestion() {
+  const question = document.getElementById('fqe-question').value.trim();
+  if (!question) { alert('Question / field label required'); return; }
+  const qtype = document.getElementById('fqe-type').value;
+  let config = {};
+  if (qtype === 'rating_5') {
+    const labels = {};
+    for (let i = 1; i <= 5; i++) labels[String(i)] = document.getElementById(`fqe-r5-label-${i}`).value.trim();
+    config = { labels, allow_na: document.getElementById('fqe-r5-allow-na').checked, na_label: document.getElementById('fqe-r5-na-label').value.trim() };
+  } else if (qtype === 'scale_10') {
+    config = { low_label: document.getElementById('fqe-s10-low').value.trim(), high_label: document.getElementById('fqe-s10-high').value.trim() };
+  } else if (qtype === 'date') {
+    config = { prefill: document.getElementById('fqe-prefill').value };
+  } else {
+    config = { prefill: document.getElementById('fqe-prefill').value, placeholder: document.getElementById('fqe-placeholder').value.trim() };
+  }
+  const id = document.getElementById('fqe-id').value;
+  const body = {
+    question, qtype, config,
+    section_label: document.getElementById('fqe-section').value.trim(),
+    is_intro_field: document.getElementById('fqe-intro').checked ? 1 : 0,
+  };
+  if (id) { body.action = 'update_feedback_question'; body.id = parseInt(id); }
+  else { body.action = 'create_feedback_question'; body.lesson_id = activeFbLessonId; }
+  api(body).then(d => {
+    if (d.ok) { closeModal('fqe-modal'); loadFeedbackQuestions(); }
+    else alert(d.error);
+  });
+}
+
+function deleteFeedbackQuestion(id) {
+  if (!confirm('Delete this question?')) return;
+  api({action:'delete_feedback_question', id}).then(d => { if (d.ok) loadFeedbackQuestions(); });
 }
 
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}

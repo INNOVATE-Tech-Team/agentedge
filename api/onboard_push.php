@@ -1,7 +1,7 @@
 <?php
 // AgentEdge — External onboarding intake endpoint.
 // Called by Advantage CRM when an agent is added to the team.
-// Auth: JSON body must include 'token' matching 'permissions_token' in config.php.
+// Auth: JSON body must include 'token' matching 'crm_token' in config.php.
 // Returns: { ok, id, queue_url } — frontend can redirect to queue_url to view the entry.
 
 require_once __DIR__ . '/../db.php';
@@ -25,9 +25,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $raw  = file_get_contents('php://input');
 $body = $raw ? json_decode($raw, true) ?? [] : [];
 
-// Token validation — constant-time compare to prevent timing attacks
+// Token validation — constant-time compare to prevent timing attacks.
+// Must be crm_token (shared with the CRM's AGENTEDGE_TOKEN), not
+// permissions_token (a separate secret for a different integration,
+// api/permissions.php) — using the wrong one here silently 403'd every
+// push from Advantage since crm_token was introduced.
 $c        = cfg();
-$expected = trim($c['permissions_token'] ?? '');
+$expected = trim($c['crm_token'] ?? '');
 $provided = trim($body['token'] ?? $_SERVER['HTTP_X_TOKEN'] ?? '');
 
 if ($expected === '' || !hash_equals($expected, $provided)) {

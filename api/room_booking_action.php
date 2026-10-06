@@ -22,14 +22,13 @@ if ($action === 'create') {
     $room = $roomId ? room_booking_room($db, $roomId) : null;
     if (!$room) { echo json_encode(['ok'=>false,'error'=>'Room not found']); exit; }
 
-    // Booking is restricted to the agent's own market center -- even an
-    // admin books through their own MC's room, they don't get to book on
-    // behalf of another MC here (that's a cancel/edit-only privilege).
-    if (!is_admin() && my_own_mc_slug() !== $room['mc_slug']) {
-        echo json_encode(['ok'=>false,'error'=>'You can only book your own market center\'s room']); exit;
+    // Same scope as viewing: the agent's own market center, or -- for a room
+    // with an explicit office allow-list -- any office on that list.
+    if (!room_booking_can_view_room($db, $room)) {
+        echo json_encode(['ok'=>false,'error'=>'You can only book rooms available to your office']); exit;
     }
 
-    $err = room_booking_validate_window($date, $start, $end);
+    $err = room_booking_validate_window($room, $date, $start, $end);
     if ($err) { echo json_encode(['ok'=>false,'error'=>$err]); exit; }
 
     try {
@@ -51,21 +50,20 @@ if ($action === 'create') {
         exit;
     }
 
-    room_booking_notify(
+    $baseUrl = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
+    room_booking_notify_html(
         'Conference Room Booking Confirmed',
-        [
-            "Hi {$agent['name']},",
-            "",
-            "Your booking for {$room['name']} is confirmed:",
+        room_booking_confirmation_content(
+            $agent['name'] ?? '',
+            $room['name'],
             room_booking_format_when($date, $start, $end),
-            "",
-            "Need to cancel? Visit room_booking.php.",
-            "",
-            "-- AgentEdge",
-        ],
-        $agent['email'],
-        $agent['name'] ?? ''
+            $purpose,
+            $baseUrl . '/room_booking.php?booking=' . $bookingId,
+            room_booking_gcal_link($room['name'], $date, $start, $end, $purpose)
+        ),
+        $agent['email']
     );
+    room_booking_notify_watcher($room, $agent['name'] ?? '', $agent['email'], $date, $start, $end, $purpose);
 
     echo json_encode(['ok'=>true, 'booking_id'=>$bookingId]);
     exit;
@@ -79,7 +77,7 @@ if ($action === 'cancel') {
     if (!$booking) { echo json_encode(['ok'=>false,'error'=>'Booking not found']); exit; }
 
     $room = room_booking_room($db, (int)$booking['room_id']);
-    if (!$room || !room_booking_can_manage($booking, $room['mc_slug'], $agent)) {
+    if (!$room || !room_booking_can_manage($db, $booking, $room, $agent)) {
         echo json_encode(['ok'=>false,'error'=>'Unauthorized']); exit;
     }
 

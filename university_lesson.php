@@ -3,6 +3,7 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
+require_once __DIR__ . '/lib/uni_feedback.php';
 $agent = require_login();
 $db    = local_db();
 $email = $agent['email'];
@@ -87,7 +88,29 @@ if ($lesson['type'] === 'upload') {
     $mySubmission = $us->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
-$typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤'];
+// Feedback: questions (grouped into steps), this learner's response + answers
+$feedbackSteps = [];
+$feedbackResponse = null;
+$feedbackAnswers = []; // question_id => answer row
+if ($lesson['type'] === 'feedback') {
+    $fq = $db->prepare("SELECT * FROM uni_feedback_questions WHERE lesson_id=? ORDER BY sort_ord,id");
+    $fq->execute([$lessonId]);
+    $feedbackQuestions = $fq->fetchAll(PDO::FETCH_ASSOC);
+    $feedbackSteps = feedback_build_steps($feedbackQuestions);
+
+    $frQ = $db->prepare("SELECT * FROM uni_feedback_responses WHERE lesson_id=? AND agent_email=?");
+    $frQ->execute([$lessonId, $email]);
+    $feedbackResponse = $frQ->fetch(PDO::FETCH_ASSOC) ?: null;
+
+    if ($feedbackResponse) {
+        $faQ = $db->prepare("SELECT * FROM uni_feedback_answers WHERE response_id=?");
+        $faQ->execute([(int)$feedbackResponse['id']]);
+        foreach ($faQ->fetchAll(PDO::FETCH_ASSOC) as $a) { $feedbackAnswers[(int)$a['question_id']] = $a; }
+    }
+}
+$feedbackSubmitted = $feedbackResponse && $feedbackResponse['status'] === 'submitted';
+
+$typeIcons = ['video' => '🎥', 'doc' => '📄', 'quiz' => '📝', 'placeholder' => '🧩', 'upload' => '📤', 'feedback' => '🗒️'];
 $lessonNum = $lessonIndex !== false ? $lessonIndex + 1 : 1;
 
 function make_embed_url(string $url): string {
@@ -188,6 +211,28 @@ $isPdfDoc = strtolower(pathinfo($lesson['file_key'] ?? '', PATHINFO_EXTENSION)) 
     .upload-submitted-sub{font-size:12px;color:#555;margin-bottom:10px}
     /* Placeholder lesson */
     .placeholder-wrap{border:1px dashed #ddd;border-radius:10px;padding:48px;text-align:center;background:#fafafa;margin-bottom:20px}
+    /* Feedback lesson */
+    .fb-progress{font-size:12px;color:#888;margin-bottom:16px;font-weight:700}
+    .fb-step{background:white;border:1px solid #e0e0e0;border-radius:10px;padding:24px;margin-bottom:16px}
+    .fb-section-eyebrow{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#82C112;margin-bottom:8px}
+    .fb-question-text{font-size:16px;font-weight:700;color:#111;margin-bottom:16px;line-height:1.4}
+    .fb-field{margin-bottom:16px}
+    .fb-field label{display:block;font-size:12px;font-weight:700;color:#555;margin-bottom:6px}
+    .fb-field input[type=text],.fb-field input[type=date],.fb-field textarea{width:100%;box-sizing:border-box;padding:10px 14px;border:1.5px solid #e0e0e0;border-radius:8px;font-size:13px;font-family:inherit}
+    .fb-rating-row{display:flex;gap:8px;flex-wrap:wrap}
+    .fb-rating-opt{flex:1;min-width:64px;text-align:center;padding:12px 8px;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;font-size:12px;color:#555;transition:all 100ms}
+    .fb-rating-opt:hover{border-color:#82C112}
+    .fb-rating-opt.selected{border-color:#82C112;background:#f0f9e8;color:#111;font-weight:700}
+    .fb-rating-num{display:block;font-size:16px;font-weight:800;margin-bottom:2px}
+    .fb-scale-row{display:flex;gap:6px;flex-wrap:wrap}
+    .fb-scale-opt{flex:1;min-width:36px;text-align:center;padding:10px 4px;border:1.5px solid #e0e0e0;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;color:#555;transition:all 100ms}
+    .fb-scale-opt:hover{border-color:#82C112}
+    .fb-scale-opt.selected{border-color:#82C112;background:#f0f9e8;color:#111}
+    .fb-scale-helpers{display:flex;justify-content:space-between;font-size:11px;color:#888;margin-top:6px}
+    .fb-nav{display:flex;gap:10px;align-items:center;margin-top:8px}
+    .fb-save-hint{font-size:11px;color:#aaa;margin-left:auto}
+    .fb-submitted{background:#e8f5e9;border:2px solid #82C112;border-radius:10px;padding:24px;text-align:center;margin-bottom:20px}
+    .fb-submitted-title{font-size:15px;font-weight:800;color:#2e7d32;margin-bottom:4px}
   </style>
 </head>
 <body>
@@ -226,6 +271,61 @@ $isPdfDoc = strtolower(pathinfo($lesson['file_key'] ?? '', PATHINFO_EXTENSION)) 
             <?php endforeach; ?>
           </div>
           <?php
+        }
+
+        // Renders one Feedback question's answer widget. $showLabel prints the
+        // question text as a small field label (used on the grouped intro/details
+        // screen); on its own step the big .fb-question-text heading above already
+        // shows it, so $showLabel is false there. Existing answer always wins over
+        // a configured prefill -- prefill only ever seeds a first-time-blank field.
+        function render_feedback_field(array $q, ?array $answer, array $agent, bool $showLabel): void {
+            $qid   = (int)$q['id'];
+            $cfg   = json_decode($q['config'] ?? '{}', true) ?: [];
+            $qtype = $q['qtype'];
+            $isNa        = $answer ? (int)($answer['is_na'] ?? 0) : 0;
+            $valueNumber = $answer && $answer['value_number'] !== null ? (int)$answer['value_number'] : null;
+            $valueText   = $answer['value_text'] ?? null;
+            ?>
+            <div class="fb-field">
+              <?php if ($showLabel): ?><label><?= htmlspecialchars($q['question']) ?></label><?php endif; ?>
+              <?php if ($qtype === 'rating_5'): ?>
+              <div class="fb-rating-row" id="fb-input-<?= $qid ?>">
+                <?php for ($v = 1; $v <= 5; $v++): $label = trim($cfg['labels'][(string)$v] ?? ''); ?>
+                <div class="fb-rating-opt<?= (!$isNa && $valueNumber === $v) ? ' selected' : '' ?>" data-value="<?= $v ?>" onclick="fbSelectRating(<?= $qid ?>,<?= $v ?>,false,this)">
+                  <span class="fb-rating-num"><?= $v ?></span><?= $label !== '' ? htmlspecialchars($label) : '' ?>
+                </div>
+                <?php endfor; ?>
+                <?php if (!empty($cfg['allow_na'])): ?>
+                <div class="fb-rating-opt<?= $isNa ? ' selected' : '' ?>" data-value="na" onclick="fbSelectRating(<?= $qid ?>,null,true,this)">
+                  <span class="fb-rating-num"><?= htmlspecialchars($cfg['na_label'] !== '' ? $cfg['na_label'] : 'N/A') ?></span>
+                </div>
+                <?php endif; ?>
+              </div>
+              <?php elseif ($qtype === 'scale_10'): ?>
+              <div class="fb-scale-row" id="fb-input-<?= $qid ?>">
+                <?php for ($v = 1; $v <= 10; $v++): ?>
+                <div class="fb-scale-opt<?= $valueNumber === $v ? ' selected' : '' ?>" data-value="<?= $v ?>" onclick="fbSelectScale(<?= $qid ?>,<?= $v ?>,this)"><?= $v ?></div>
+                <?php endfor; ?>
+              </div>
+              <?php if (!empty($cfg['low_label']) || !empty($cfg['high_label'])): ?>
+              <div class="fb-scale-helpers"><span><?= htmlspecialchars($cfg['low_label'] ?? '') ?></span><span><?= htmlspecialchars($cfg['high_label'] ?? '') ?></span></div>
+              <?php endif; ?>
+              <?php else:
+                $prefillKey = $cfg['prefill'] ?? '';
+                $prefillVal = $prefillKey ? feedback_prefill_value($prefillKey, $agent) : '';
+                $val = ($valueText !== null && $valueText !== '') ? $valueText : $prefillVal;
+              ?>
+              <?php $placeholder = $cfg['placeholder'] ?? ''; ?>
+              <?php if ($qtype === 'short_text'): ?>
+              <input type="text" id="fb-input-<?= $qid ?>" value="<?= htmlspecialchars($val) ?>" placeholder="<?= htmlspecialchars($placeholder) ?>" oninput="fbOnTextInput(<?= $qid ?>,this)" onblur="fbFlushPending()">
+              <?php elseif ($qtype === 'long_text'): ?>
+              <textarea id="fb-input-<?= $qid ?>" rows="4" placeholder="<?= htmlspecialchars($placeholder) ?>" oninput="fbOnTextInput(<?= $qid ?>,this)" onblur="fbFlushPending()"><?= htmlspecialchars($val) ?></textarea>
+              <?php elseif ($qtype === 'date'): ?>
+              <input type="date" id="fb-input-<?= $qid ?>" value="<?= htmlspecialchars($val) ?>" onchange="fbOnDateChange(<?= $qid ?>,this)">
+              <?php endif; ?>
+              <?php endif; ?>
+            </div>
+            <?php
         }
       ?>
 
@@ -380,6 +480,44 @@ $isPdfDoc = strtolower(pathinfo($lesson['file_key'] ?? '', PATHINFO_EXTENSION)) 
       <input type="file" id="upload-input" style="display:none" onchange="submitLearnerUpload(this.files[0])">
       <div class="upload-status" id="upload-status" style="font-size:12px;color:#888;min-height:18px"></div>
       <div id="complete-area"></div>
+
+      <!-- Feedback lesson -->
+      <?php elseif ($lesson['type'] === 'feedback'): ?>
+      <?php if ($feedbackSubmitted): ?>
+      <div class="fb-submitted">
+        <div class="fb-submitted-title">✓ Submitted</div>
+        <div style="font-size:12px;color:#555">Submitted <?= fmt_dt_et($feedbackResponse['submitted_at'], 'F j, Y g:ia') ?></div>
+      </div>
+      <div id="complete-area"><span class="done-badge">✓ Lesson Complete</span></div>
+      <?php elseif (!$feedbackSteps): ?>
+      <div style="color:#bbb;text-align:center;padding:40px;font-size:13px;border:1px dashed #eee;border-radius:10px">
+        No questions have been added to this feedback form yet.
+      </div>
+      <?php else: ?>
+      <div class="fb-progress" id="fb-progress">Step 1 of <?= count($feedbackSteps) ?></div>
+      <?php foreach ($feedbackSteps as $si => $step): ?>
+      <div class="fb-step" id="fb-step-<?= $si ?>" style="<?= $si > 0 ? 'display:none' : '' ?>">
+        <?php if ($si === 0 && $lesson['content_html']): ?>
+        <div class="lesson-content" style="margin-bottom:20px"><?= $lesson['content_html'] ?></div>
+        <?php endif; ?>
+        <?php if ($step['type'] === 'intro'): ?>
+          <?php foreach ($step['questions'] as $q): ?>
+          <?php render_feedback_field($q, $feedbackAnswers[(int)$q['id']] ?? null, $agent, true); ?>
+          <?php endforeach; ?>
+        <?php else: $q = $step['question']; ?>
+          <?php if ($q['section_label']): ?><div class="fb-section-eyebrow"><?= htmlspecialchars($q['section_label']) ?></div><?php endif; ?>
+          <div class="fb-question-text"><?= htmlspecialchars($q['question']) ?></div>
+          <?php render_feedback_field($q, $feedbackAnswers[(int)$q['id']] ?? null, $agent, false); ?>
+        <?php endif; ?>
+      </div>
+      <?php endforeach; ?>
+      <div class="fb-nav">
+        <button class="lesson-nav-btn" id="fb-prev" onclick="fbNav(-1)" style="display:none">← Previous</button>
+        <button class="lesson-nav-btn primary" id="fb-next" onclick="fbNav(1)">Next →</button>
+        <span class="fb-save-hint" id="fb-save-hint"></span>
+      </div>
+      <div id="complete-area"></div>
+      <?php endif; ?>
       <?php endif; ?>
 
       <!-- Cert banner (shown after completion if earned) -->
@@ -545,6 +683,89 @@ if (TOTAL_Q > 0) {
     if (TOTAL_Q === 1) { if (next) next.style.display = 'none'; if (sub) sub.style.display = ''; }
   });
 }
+
+// ── Feedback lesson ──────────────────────────────────────────────────────────
+<?php if ($lesson['type'] === 'feedback' && !$feedbackSubmitted && $feedbackSteps): ?>
+const FB_TOTAL_STEPS = <?= count($feedbackSteps) ?>;
+let FB_STEP = <?= max(0, min((int)($feedbackResponse['current_step'] ?? 0), count($feedbackSteps) - 1)) ?>;
+let fbPendingSave = null; // {timer, fn} -- the one debounced text-field save currently waiting to fire
+
+function fbShowStep(idx) {
+  document.querySelectorAll('.fb-step').forEach(el => el.style.display = 'none');
+  const el = document.getElementById('fb-step-' + idx);
+  if (el) el.style.display = '';
+  document.getElementById('fb-progress').textContent = `Step ${idx + 1} of ${FB_TOTAL_STEPS}`;
+  document.getElementById('fb-prev').style.display = idx > 0 ? '' : 'none';
+  document.getElementById('fb-next').textContent = idx === FB_TOTAL_STEPS - 1 ? 'Submit' : 'Next →';
+}
+fbShowStep(FB_STEP);
+
+function fbFlushPending() {
+  if (fbPendingSave) { clearTimeout(fbPendingSave.timer); fbPendingSave.fn(); fbPendingSave = null; }
+}
+
+function fbAutosave(payload) {
+  const hint = document.getElementById('fb-save-hint');
+  fetch('api/uni_progress.php', {
+    method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(Object.assign({action: 'feedback_autosave', lesson_id: LESSON_ID}, payload)),
+  }).then(r => r.json()).then(d => {
+    if (hint) { hint.textContent = d.ok ? 'Saved' : ''; if (d.ok) setTimeout(() => { if (hint.textContent === 'Saved') hint.textContent = ''; }, 1500); }
+  });
+}
+
+function fbSelectRating(qid, value, isNa, el) {
+  document.querySelectorAll(`#fb-input-${qid} .fb-rating-opt`).forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  fbAutosave({question_id: qid, value_number: value, is_na: isNa ? 1 : 0}); // immediate -- a selection is a complete answer
+}
+function fbSelectScale(qid, value, el) {
+  document.querySelectorAll(`#fb-input-${qid} .fb-scale-opt`).forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  fbAutosave({question_id: qid, value_number: value}); // immediate
+}
+function fbOnDateChange(qid, el) {
+  fbAutosave({question_id: qid, value_text: el.value}); // immediate -- a date picker change is a deliberate, discrete action
+}
+function fbOnTextInput(qid, el) {
+  // Cancel the previous pending save without firing it -- a genuine debounce, not a
+  // flush-on-every-keystroke (fbFlushPending() is for Back/Next/blur only, below).
+  if (fbPendingSave) clearTimeout(fbPendingSave.timer);
+  const value = el.value;
+  const timer = setTimeout(() => { fbAutosave({question_id: qid, value_text: value}); fbPendingSave = null; }, 600); // debounced -- avoid one request per keystroke
+  fbPendingSave = { timer, fn: () => fbAutosave({question_id: qid, value_text: el.value}) };
+}
+
+function fbNav(dir) {
+  fbFlushPending();
+  const next = FB_STEP + dir;
+  if (dir > 0 && FB_STEP === FB_TOTAL_STEPS - 1) { fbSubmit(); return; }
+  if (next < 0 || next >= FB_TOTAL_STEPS) return;
+  FB_STEP = next;
+  fbShowStep(FB_STEP);
+  fbAutosave({current_step: FB_STEP});
+}
+
+function fbSubmit() {
+  fbFlushPending();
+  const btn = document.getElementById('fb-next');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  fetch('api/uni_progress.php', {
+    method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'feedback_submit', lesson_id: LESSON_ID}),
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      document.querySelectorAll('.fb-step').forEach(el => el.style.display = 'none');
+      document.querySelector('.fb-nav').style.display = 'none';
+      document.getElementById('complete-area').innerHTML = '<span class="done-badge">✓ Lesson Complete</span>';
+      if (d.cert) showCertBanner(d.cert);
+    } else {
+      alert(d.error || 'Could not submit');
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit'; }
+    }
+  });
+}
+<?php endif; ?>
 </script>
 </body>
 </html>

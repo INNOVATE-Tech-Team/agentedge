@@ -19,7 +19,7 @@ $action = $in['action'] ?? 'start';
 
 if ($action === 'stop') {
     stop_masquerade();
-    echo json_encode(['ok' => true, 'redirect' => 'admin_roles.php']);
+    echo json_encode(['ok' => true, 'redirect' => 'index.php']);
     exit;
 }
 

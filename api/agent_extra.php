@@ -15,13 +15,18 @@ $myEmail = strtolower(trim($agent['email'] ?? ''));
 $isAdmin = is_admin();
 $email   = $myEmail;
 
+// Nothing below writes to $_SESSION. Close it now so this doesn't sit behind
+// PHP's default per-session file lock while agent_team_suggestion.php /
+// intake.php (fired concurrently by the Edit Profile modal) hold it.
+session_write_close();
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (!empty($_GET['email'])) {
         $requested = strtolower(trim($_GET['email']));
         if (!$isAdmin && $requested !== $myEmail) { http_response_code(403); echo json_encode(['error' => 'forbidden']); exit; }
         $email = $requested;
     }
-    $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal, alt_email FROM agent_extra WHERE email = ?");
+    $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal, alt_email, dotloop_alt_email, is_team_leader_tag FROM agent_extra WHERE email = ?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -41,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'hire_date'       => $row['hire_date']        ?? '',
         'license_renewal' => $row['license_renewal']  ?? '',
         'alt_email'       => $row['alt_email']         ?? '',
+        'dotloop_alt_email' => $row['dotloop_alt_email'] ?? '',
+        'is_team_leader_tag' => (bool)($row['is_team_leader_tag'] ?? 0),
     ]);
     exit;
 }
@@ -59,7 +66,6 @@ if ($isAdmin && !empty($in['email'])) {
 $birthday        = trim($in['birthday']        ?? '');
 $hire_date       = trim($in['hire_date']       ?? '');
 $license_renewal = trim($in['license_renewal'] ?? '');
-$alt_email       = strtolower(trim($in['alt_email'] ?? ''));
 
 if ($birthday        !== '' && !preg_match('/^\d{2}-\d{2}$/', $birthday))
     { http_response_code(400); echo json_encode(['error' => 'birthday must be MM-DD']); exit; }
@@ -67,18 +73,47 @@ if ($hire_date       !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hire_date))
     { http_response_code(400); echo json_encode(['error' => 'hire_date must be YYYY-MM-DD']); exit; }
 if ($license_renewal !== '' && !preg_match('/^\d{2}-\d{2}$/', $license_renewal))
     { http_response_code(400); echo json_encode(['error' => 'license_renewal must be MM-DD']); exit; }
-if ($alt_email !== '' && !filter_var($alt_email, FILTER_VALIDATE_EMAIL))
-    { http_response_code(400); echo json_encode(['error' => 'alt_email must be a valid email address']); exit; }
+
+// Admin-only, and only applied when the caller actually sent the key — a
+// self-service save (profile.js only ever sends birthday/hire_date/
+// license_renewal) must never silently clear an existing is_team_leader_tag
+// or the Darwin/DotLoop alternate-email match overrides staff configured
+// via the admin Edit Profile modal.
+$existingStmt = local_db()->prepare("SELECT is_team_leader_tag, alt_email, dotloop_alt_email FROM agent_extra WHERE email = ?");
+$existingStmt->execute([$email]);
+$existing = $existingStmt->fetch(PDO::FETCH_ASSOC) ?: ['is_team_leader_tag' => 0, 'alt_email' => '', 'dotloop_alt_email' => ''];
+
+$is_team_leader_tag = ($isAdmin && array_key_exists('is_team_leader_tag', $in))
+    ? (!empty($in['is_team_leader_tag']) ? 1 : 0)
+    : (int)$existing['is_team_leader_tag'];
+
+if ($isAdmin && array_key_exists('alt_email', $in)) {
+    $alt_email = strtolower(trim($in['alt_email'] ?? ''));
+    if ($alt_email !== '' && !filter_var($alt_email, FILTER_VALIDATE_EMAIL))
+        { http_response_code(400); echo json_encode(['error' => 'alt_email must be a valid email address']); exit; }
+} else {
+    $alt_email = (string)$existing['alt_email'];
+}
+
+if ($isAdmin && array_key_exists('dotloop_alt_email', $in)) {
+    $dotloop_alt_email = strtolower(trim($in['dotloop_alt_email'] ?? ''));
+    if ($dotloop_alt_email !== '' && !filter_var($dotloop_alt_email, FILTER_VALIDATE_EMAIL))
+        { http_response_code(400); echo json_encode(['error' => 'dotloop_alt_email must be a valid email address']); exit; }
+} else {
+    $dotloop_alt_email = (string)$existing['dotloop_alt_email'];
+}
 
 local_db()->prepare(
-    "INSERT INTO agent_extra (email, birthday, hire_date, license_renewal, alt_email, updated_at)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))
+    "INSERT INTO agent_extra (email, birthday, hire_date, license_renewal, alt_email, dotloop_alt_email, is_team_leader_tag, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
-         birthday        = excluded.birthday,
-         hire_date       = excluded.hire_date,
-         license_renewal = excluded.license_renewal,
-         alt_email       = excluded.alt_email,
-         updated_at      = excluded.updated_at"
-)->execute([$email, $birthday, $hire_date, $license_renewal, $alt_email]);
+         birthday            = excluded.birthday,
+         hire_date           = excluded.hire_date,
+         license_renewal     = excluded.license_renewal,
+         alt_email           = excluded.alt_email,
+         dotloop_alt_email   = excluded.dotloop_alt_email,
+         is_team_leader_tag  = excluded.is_team_leader_tag,
+         updated_at          = excluded.updated_at"
+)->execute([$email, $birthday, $hire_date, $license_renewal, $alt_email, $dotloop_alt_email, $is_team_leader_tag]);
 
 echo json_encode(['ok' => true]);
