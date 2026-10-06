@@ -93,7 +93,7 @@ $staffList = local_db()->query(
     .check-item input{width:14px;height:14px;cursor:pointer;accent-color:#82C112}
 
     .empty-note{color:#bbb;font-size:13px;padding:32px;text-align:center}
-    .notes-cell{max-width:180px;font-size:11px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .notes-cell{max-width:260px;font-size:11px;color:#777;white-space:pre-wrap;word-break:break-word}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
     .fee-val{font-size:12px;font-weight:700;color:#555}
 
@@ -424,12 +424,6 @@ const SUPER = <?= $superAdmin ? 'true' : 'false' ?>;
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function fmt(d){if(!d)return'—';const p=d.split('-');return p[1]+'/'+p[2]+'/'+p[0];}
 function fmtFee(v){if(!v&&v!==0)return'—';return'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})+'/mo';}
-function noteSnippet(notes){
-  if(!notes) return '—';
-  const oneLine=notes.replace(/\s+/g,' ').trim();
-  return oneLine.length>60 ? oneLine.slice(0,60)+'…' : oneLine;
-}
-
 const STATUS_LABELS={researching:'Researching',applied:'Applied',approved:'Approved',active:'Active',paused:'Paused',rejected:'Rejected'};
 const FEED_SOURCE_LABELS={RETS:'RETS',OIDH:'OIDH/Bridge',Trestle:'Trestle',Spark:'Spark',Bridge:'Bridge',Self:'Self'};
 const PROD_LABELS={idx:'Website',crm:'Advantage'};
@@ -501,7 +495,7 @@ function renderTable(rows){
       <td><span class="badge badge-${esc(r.status)}">${esc(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td class="fee-val">${fmtFee(r.monthly_fee)}</td>
       <td style="font-size:11px;color:#777">${esc(prods)}</td>
-      <td class="notes-cell notes-btn" data-note="${esc(r.notes||'')}" style="cursor:pointer" onclick="event.stopPropagation();openNotesModal(${r.id})">${esc(noteSnippet(r.notes))}</td>
+      <td class="notes-cell notes-btn" data-note="${esc(r.notes||'')}" style="cursor:pointer" onclick="event.stopPropagation();openNotesModal(${r.id})">${esc(r.notes||'—')}</td>
       <td onclick="event.stopPropagation()">
         <div class="notes-actions">
           <button class="btn-sm" onclick="openActivityModal(${r.id})">Activity</button>
