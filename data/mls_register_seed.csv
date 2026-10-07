@@ -1,0 +1,40 @@
+State,MLS / Board / Feed,Code,Annual Cost,Agents,Cost per Agent,Decision,Contact / Paid For,Last Paid,Next Step
+SC,Coastal Carolinas (CCAR) board,MLS-D,671,203,3,Keep,Darren (DR),Oct 2025,"Renewal due Oct, not recorded as paid."
+SC,CCAR MLS (CCMLS),MLS-P,,203,,Keep,Kris Fuller,May 2026,Enter Q3 and Q4 receipts in Atlas.
+SC,Pee Dee REALTORS board,MLS-D,350,7,50,Keep,Carrie (DR),Oct 2025,"Open $350, not covered by the 10/1 payment. Pay it."
+SC,Pee Dee MLS,MLS-P,400,7,57,Keep,Carrie,10/1/2026,"$639 paid 10/1 (invoices 26229, 26230, 26864). Get written IDX grant."
+SC,CHS Regional MLS (CTAR),MLS-P,1560,3,520,Keep lean,Kris Fuller,9/24/2026,"$390/qtr. Remove Kim Loizzi seat, request Q4 credit."
+SC,Charleston Trident (CTAR) board,MLS-D,,3,,Keep lean,,,Renews Nov. Get amount before it bills.
+SC,Lowcountry MLS (Hilton Head) BBO + IDX,MLS-F,,2,,Review,Michael Fries,,"2 agents. Keep participation, question the two paid feeds."
+SC,Greater Greenville MLS (GGAR),MLS-P,,3,,Keep lean,Kim Guillory,,"Growth market. IDX live with no grant, get it in writing."
+NC,Hive MLS (Cape Fear / Brunswick),MLS-P,,,,Keep,Carrie,Nov 2025,"SourceRE feed approved 10/6. Likely a recording gap, enter receipts."
+NC,Brunswick County (BCAR) board,MLS-D,306,,,Keep,Carrie,Jul 2025,"Was due July, not recorded as paid."
+NC,Doorify (Raleigh) IDX + BBO,MLS-F,150,,,Keep,Carrie / Shawn Carter,10/1/2026,Autopay 10/1. Fix feed token (no sync 19 days). Attestation due 10/14.
+NC,Canopy (Charlotte),MLS-P,,,,Keep lean,Carrie,Sep 2026,$30 admin fee Sept. Volume fell $5.7M to $3.7M. IDX only.
+NC,Triad / WSRAR (Winston-Salem),MLS-P,756,,,Keep,Carrie,Jul 2026,$63/mo. Get Aug and Sep receipts before a suspension.
+NC,Carolina Smokies board + MLS,MLS-D,1509,0,,Cut,Carrie,Jun 2025,"Unpaid 15 months, no agents there. Confirm lapsed and drop."
+NC,High Country MLS (Trestle),MLS-F,,0,,Review,Carrie,,"No feed, no agents. Recruiting only until an owner and call plan exist."
+NC,Roanoke Valley Lake Gaston,MLS-P,,,,Review,Carrie,,No cost or agents on file. Find out if anyone uses it.
+FL,Suncoast Tampa board / Stellar,MLS-D,326,21,16,Keep,Brie Bender,Oct 2025,Due Oct. Stellar feed is IDX only on sandbox.
+FL,Beaches MLS,MLS-D,482,21,23,Keep,Brie Bender,Sep 2025,"Was due Sep, not recorded as paid."
+FL,Indian River (RAIRC),MLS-D,1039,21,49,Keep,Brie / Alysia Stern,Oct 2026,"$519.40 semiannual, receipt received."
+VA,Bright MLS (Fredericksburg),MLS-P,,8,,Keep,Amy Adams,Feb 2026,BBO denied. IDX-only application in through Melanie.
+VA,Fredericksburg (FAAR) board,MLS-D,775,8,97,Keep,Amy Adams,Oct 2026,"Paid, receipt on file."
+VA,CVR MLS (Richmond) admin seat,MLS-A,90,,,Review,Whitney,Dec 2025,"$45 semiannual, due June. Keep only if Richmond has agents."
+PA,Bright MLS (Doylestown / Bucks),MLS-P,,64,,Keep,Melanie,,Largest roster outside SC. $7.8M volume 2025.
+PA,Tri-County Suburban board,MLS-D,,64,,Keep,Melanie,Oct 2026,"Paid, receipt on file. Add the amount."
+PA,Greater Lehigh Valley (GLVR) IDX,MLS-F,0,64,,Keep,Melanie,10/4/2026,"$249 one time, no monthly. Serves Bethlehem."
+PA,Pocono Mountains (2 Spark plans),MLS-F,2400,,,Review,Darren,,"$200/mo, not on the MLS page. Name the agents it serves or cancel."
+DE,Bright MLS (Delaware),MLS-P,,,,Keep,Monica Peterson,,$6.8M volume 2025.
+DE/MD,"Kent, New Castle, GCAAR, Mid-Shore boards",MLS-D,,,,Review,Monica Peterson,,All renew Nov. Match each to an agent before paying.
+NJ,Garden State MLS admin seat,MLS-A,54,7,8,Keep,Whitney,7/7/2026,"$27 every 6 months, paid 7/7."
+NJ,Monmouth Ocean (MOREMLS) IDX,MLS-F,250,7,36,Keep lean,Rosemarie,,Pending approval. Own-data plan is free.
+NJ,South Jersey Shore (SJSRMLS) IDX + BBO,MLS-F,,7,,Keep lean,Rosemarie,,Approved Aug 24.
+TN,East Tennessee (ETAR) BBO + IDX,MLS-F,500,10,50,Keep,Brenda Brewster,8/22/2026,IDX displayed without licence. Finish IDX approval.
+TN,Realtracs via Relitix (Nashville),MLS-V,,2,,Review,Darren,,2 agents can't carry this cost. Quote separately or drop.
+RI,State-Wide MLS,MLS-P,,6,,Keep lean,Manny,,Shown publicly with no IDX record. Add record and grant.
+RI,MLS PIN,MLS-F,,6,,Review,Manny,,Displayed with no IDX record. Confirm we're licensed.
+NH,PrimeMLS,MLS-F,,0,,Cut,,,"No sync in 52 days, no agents."
+OH,MLS Now (Akron / Canton),MLS-P,,1,,Review,Joe Tupta,,One agent. Try secondary membership instead of office fee.
+GA,First MLS,MLS-P,,0,,Review,Michael Fries,,"No agents, broker license record shows expired 7/31."
+All,Relitix (Bright + Realtracs analytics),MLS-V,,,,Review,Darren,10/1/2026,Auto-renewed 10/1 with 5% increase unless notice went out. Confirm.
