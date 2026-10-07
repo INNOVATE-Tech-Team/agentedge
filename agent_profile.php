@@ -248,6 +248,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Personal Email</span><?= dv($a['personal_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Alternate Email (DotLoop match)</span><?= dv($a['dotloop_alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
@@ -585,6 +586,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
+            <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has you under a different email"></div>
             <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
             <div class="em-section">Address</div>
@@ -1086,6 +1088,7 @@ window.openEditModal = function () {
     document.getElementById('em-hire_date').value = extra.hire_date || '';
     document.getElementById('em-license_renewal').value = extra.license_renewal || '';
     document.getElementById('em-alt_email').value = extra.alt_email || '';
+    document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1145,7 +1148,8 @@ window.saveEditModal = function () {
     birthday: emExtraBirthday,
     hire_date: document.getElementById('em-hire_date').value,
     license_renewal: document.getElementById('em-license_renewal').value,
-    alt_email: document.getElementById('em-alt_email').value
+    alt_email: document.getElementById('em-alt_email').value,
+    dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
   };
 
   Promise.all([

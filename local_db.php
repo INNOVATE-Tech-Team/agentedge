@@ -526,6 +526,14 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_alt_email ON agent_extra(alt_email)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_cal_token ON agent_extra(cal_token)");
+    // Same idea as alt_email above, but for DotLoop: the email a loop
+    // creator typed in when adding this agent as a participant sometimes
+    // differs from their AgentEdge login email, and unlike alt_email/Darwin
+    // there was previously no self-service fix — only a hardcoded
+    // config.php 'dotloop_email_groups' array. dotloop_email_group()
+    // (lib/dotloop.php) now also checks this column.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN dotloop_alt_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ae_dotloop_alt_email ON agent_extra(dotloop_alt_email)");
 
     // AgentEdge's own login credentials — the local replacement for Perfex
     // tblstaff auth, checked first in attempt_login() (auth.php) before

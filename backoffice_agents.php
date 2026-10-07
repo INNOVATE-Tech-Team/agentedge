@@ -695,6 +695,7 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
         <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
         <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from the roster email"></div>
+        <div class="em-field"><label>Alternate Email (DotLoop match)</label><input id="em-dotloop_alt_email" type="email" placeholder="if DotLoop has them under a different email"></div>
         <div class="em-field"><label>Phone Last 4 (payroll)</label><input id="em-phone_last4" maxlength="4"></div>
 
         <div class="em-section">Team Status (from Darwin)</div>
@@ -1175,6 +1176,7 @@ $missingCount = count($missingAgents);
       document.getElementById('em-hire_date').value = extra.hire_date || '';
       document.getElementById('em-license_renewal').value = extra.license_renewal || '';
       document.getElementById('em-alt_email').value = extra.alt_email || '';
+      document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
       document.getElementById('em-personal_tax_id').value = '';
       document.getElementById('em-corporate_tax_id').value = '';
       document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1214,7 +1216,8 @@ $missingCount = count($missingAgents);
       birthday: emExtraBirthday,
       hire_date: document.getElementById('em-hire_date').value,
       license_renewal: document.getElementById('em-license_renewal').value,
-      alt_email: document.getElementById('em-alt_email').value
+      alt_email: document.getElementById('em-alt_email').value,
+      dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value
     };
 
     Promise.all([

@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if (!$isAdmin && $requested !== $myEmail) { http_response_code(403); echo json_encode(['error' => 'forbidden']); exit; }
         $email = $requested;
     }
-    $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal, alt_email FROM agent_extra WHERE email = ?");
+    $stmt = local_db()->prepare("SELECT birthday, hire_date, license_renewal, alt_email, dotloop_alt_email FROM agent_extra WHERE email = ?");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'hire_date'       => $row['hire_date']        ?? '',
         'license_renewal' => $row['license_renewal']  ?? '',
         'alt_email'       => $row['alt_email']         ?? '',
+        'dotloop_alt_email' => $row['dotloop_alt_email'] ?? '',
     ]);
     exit;
 }
@@ -60,6 +61,7 @@ $birthday        = trim($in['birthday']        ?? '');
 $hire_date       = trim($in['hire_date']       ?? '');
 $license_renewal = trim($in['license_renewal'] ?? '');
 $alt_email       = strtolower(trim($in['alt_email'] ?? ''));
+$dotloop_alt_email = strtolower(trim($in['dotloop_alt_email'] ?? ''));
 
 if ($birthday        !== '' && !preg_match('/^\d{2}-\d{2}$/', $birthday))
     { http_response_code(400); echo json_encode(['error' => 'birthday must be MM-DD']); exit; }
@@ -69,16 +71,19 @@ if ($license_renewal !== '' && !preg_match('/^\d{2}-\d{2}$/', $license_renewal))
     { http_response_code(400); echo json_encode(['error' => 'license_renewal must be MM-DD']); exit; }
 if ($alt_email !== '' && !filter_var($alt_email, FILTER_VALIDATE_EMAIL))
     { http_response_code(400); echo json_encode(['error' => 'alt_email must be a valid email address']); exit; }
+if ($dotloop_alt_email !== '' && !filter_var($dotloop_alt_email, FILTER_VALIDATE_EMAIL))
+    { http_response_code(400); echo json_encode(['error' => 'dotloop_alt_email must be a valid email address']); exit; }
 
 local_db()->prepare(
-    "INSERT INTO agent_extra (email, birthday, hire_date, license_renewal, alt_email, updated_at)
-     VALUES (?, ?, ?, ?, ?, datetime('now'))
+    "INSERT INTO agent_extra (email, birthday, hire_date, license_renewal, alt_email, dotloop_alt_email, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(email) DO UPDATE SET
-         birthday        = excluded.birthday,
-         hire_date       = excluded.hire_date,
-         license_renewal = excluded.license_renewal,
-         alt_email       = excluded.alt_email,
-         updated_at      = excluded.updated_at"
-)->execute([$email, $birthday, $hire_date, $license_renewal, $alt_email]);
+         birthday          = excluded.birthday,
+         hire_date         = excluded.hire_date,
+         license_renewal   = excluded.license_renewal,
+         alt_email         = excluded.alt_email,
+         dotloop_alt_email = excluded.dotloop_alt_email,
+         updated_at        = excluded.updated_at"
+)->execute([$email, $birthday, $hire_date, $license_renewal, $alt_email, $dotloop_alt_email]);
 
 echo json_encode(['ok' => true]);
