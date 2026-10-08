@@ -202,3 +202,98 @@ function pandadoc_verify_webhook(string $rawBody, string $signature): bool {
     $expected = hash_hmac('sha256', $rawBody, $key);
     return hash_equals($expected, $signature);
 }
+
+// ── Signed-document storage (shared by the webhook and the repair cron) ──────
+
+// One diagnosable log line per attempt. Goes to PHP's error log (container
+// stderr -> `docker logs agentedge`) so a failed store is never silent.
+function pandadoc_log(string $msg, array $ctx = []): void {
+    error_log('[pandadoc-docs] ' . gmdate('Y-m-d\TH:i:s\Z') . ' ' . $msg
+        . ($ctx ? ' ' . json_encode($ctx, JSON_UNESCAPED_SLASHES) : ''));
+}
+
+// Like pandadoc_download_document() but also reports the HTTP code, and
+// retries when PandaDoc has fired document.completed before the finished PDF
+// is downloadable (404/409/5xx, or a body that isn't a PDF). Returns
+// ['ok'=>bool,'bytes'=>?string,'code'=>int,'attempts'=>int,'error'=>?string].
+function pandadoc_download_with_retry(string $docId, int $attempts = 3, array $delaysSec = [3, 8]): array {
+    $c = cfg();
+    $apiKey = $c['pandadoc_api_key'] ?? '';
+    if ($apiKey === '') return ['ok'=>false,'bytes'=>null,'code'=>0,'attempts'=>0,'error'=>'PandaDoc API key not configured'];
+    $code = 0; $err = null;
+    for ($i = 1; $i <= $attempts; $i++) {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'GET', 'timeout' => 30, 'ignore_errors' => true,
+            'header' => "Authorization: API-Key {$apiKey}",
+        ]]);
+        $http_response_header = null;
+        $raw  = @file_get_contents("https://api.pandadoc.com/public/v1/documents/{$docId}/download", false, $ctx);
+        $code = 0;
+        if (!empty($http_response_header[0]) && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) $code = (int)$m[1];
+        if ($raw !== false && $code >= 200 && $code < 300 && strncmp($raw, '%PDF', 4) === 0) {
+            return ['ok'=>true,'bytes'=>$raw,'code'=>$code,'attempts'=>$i,'error'=>null];
+        }
+        $err = $raw === false ? 'request failed (no response)'
+             : ($code >= 200 && $code < 300 ? 'response was not a PDF' : 'HTTP ' . $code);
+        pandadoc_log('download attempt failed', ['doc'=>$docId,'attempt'=>$i,'of'=>$attempts,'http'=>$code,'error'=>$err,
+            'body_head'=>substr(preg_replace('/\s+/', ' ', (string)$raw), 0, 120)]);
+        if ($i < $attempts) sleep($delaysSec[$i - 1] ?? end($delaysSec));
+    }
+    return ['ok'=>false,'bytes'=>null,'code'=>$code,'attempts'=>$attempts,'error'=>$err];
+}
+
+// Downloads a completed PandaDoc document and attaches it to the agent's
+// profile. Idempotent: if a row for this PandaDoc id already exists it does
+// nothing, so webhook retries, duplicate events and the repair cron can all
+// call it safely. Success is only reported once the PDF is on disk AND the
+// agent_documents row is committed. Returns
+// ['ok'=>bool,'status'=>'stored'|'already_stored'|'failed','error'=>?string,'doc_row_id'=>?int].
+function pandadoc_store_completed_document(PDO $pdo, string $docId, string $agentEmail, string $name = 'Onboarding Agreement', string $by = 'pandadoc-webhook'): array {
+    $agentEmail = strtolower(trim($agentEmail));
+    $log = ['doc'=>$docId,'agent'=>$agentEmail,'by'=>$by];
+    if ($docId === '' || $agentEmail === '') {
+        pandadoc_log('store skipped: missing doc id or agent email', $log);
+        return ['ok'=>false,'status'=>'failed','error'=>'missing doc id or agent email','doc_row_id'=>null];
+    }
+    $exists = $pdo->prepare("SELECT id FROM agent_documents WHERE source='pandadoc' AND external_ref=?");
+    $exists->execute([$docId]);
+    if (($id = $exists->fetchColumn()) !== false) {
+        return ['ok'=>true,'status'=>'already_stored','error'=>null,'doc_row_id'=>(int)$id];
+    }
+
+    $dl = pandadoc_download_with_retry($docId);
+    if (!$dl['ok']) {
+        pandadoc_log('STORE FAILED: download', $log + ['http'=>$dl['code'],'attempts'=>$dl['attempts'],'error'=>$dl['error']]);
+        return ['ok'=>false,'status'=>'failed','error'=>'download: ' . $dl['error'],'doc_row_id'=>null];
+    }
+
+    $cfgDir = cfg()['local_db_dir'] ?? null;
+    $dir    = ($cfgDir ?: (__DIR__ . '/../data')) . '/agent_documents';
+    $key    = bin2hex(random_bytes(16)) . '.pdf';
+    $path   = $dir . '/' . $key;
+    try {
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true)) throw new \RuntimeException("cannot create {$dir}");
+        if (file_put_contents($path, $dl['bytes']) !== strlen($dl['bytes'])) throw new \RuntimeException("short write to {$path}");
+
+        // Re-check inside a write lock so two concurrent callers can't both insert.
+        $pdo->exec('BEGIN IMMEDIATE');
+        $exists->execute([$docId]);
+        if (($id = $exists->fetchColumn()) !== false) {
+            $pdo->exec('COMMIT'); @unlink($path);
+            return ['ok'=>true,'status'=>'already_stored','error'=>null,'doc_row_id'=>(int)$id];
+        }
+        $pdo->prepare(
+            "INSERT INTO agent_documents (email, name, source, category, external_ref, mime_type, size_bytes, storage_key, uploaded_by)
+             VALUES (?,?,?,?,?,?,?,?,?)"
+        )->execute([$agentEmail, $name, 'pandadoc', 'onboarding', $docId, 'application/pdf', strlen($dl['bytes']), $key, $by]);
+        $rowId = (int)$pdo->lastInsertId();
+        $pdo->exec('COMMIT');
+    } catch (\Throwable $e) {
+        if ($pdo->inTransaction()) { try { $pdo->exec('ROLLBACK'); } catch (\Throwable $e2) {} }
+        @unlink($path);
+        pandadoc_log('STORE FAILED: save', $log + ['error'=>get_class($e) . ': ' . $e->getMessage()]);
+        return ['ok'=>false,'status'=>'failed','error'=>'save: ' . $e->getMessage(),'doc_row_id'=>null];
+    }
+    pandadoc_log('stored', $log + ['row'=>$rowId,'bytes'=>strlen($dl['bytes']),'attempts'=>$dl['attempts']]);
+    return ['ok'=>true,'status'=>'stored','error'=>null,'doc_row_id'=>$rowId];
+}

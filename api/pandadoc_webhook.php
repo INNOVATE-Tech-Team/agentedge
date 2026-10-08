@@ -52,24 +52,20 @@ foreach ($events as $evt) {
         $qe->execute([$queueId]);
         $agentEmail = strtolower(trim($qe->fetchColumn() ?: ''));
 
-        // Only fetch+store the PDF once per document, even if this webhook
-        // fires more than once for the same completion.
-        $already = $pdo->prepare("SELECT COUNT(*) FROM agent_documents WHERE source='pandadoc' AND external_ref=?");
-        $already->execute([$docId]);
-        if ($agentEmail !== '' && (int)$already->fetchColumn() === 0) {
-            try {
-                $dl = pandadoc_download_document($docId);
-                if ($dl['ok']) {
-                    $cfgDir  = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
-                    $dataDir = $cfgDir ?: (__DIR__ . '/../data');
-                    $key     = bin2hex(random_bytes(16)) . '.pdf';
-                    file_put_contents($dataDir . '/agent_documents/' . $key, $dl['bytes']);
-                    $pdo->prepare(
-                        "INSERT INTO agent_documents (email, name, source, external_ref, mime_type, size_bytes, storage_key, uploaded_by)
-                         VALUES (?,?,?,?,?,?,?,?)"
-                    )->execute([$agentEmail, 'Onboarding Agreement', 'pandadoc', $docId, 'application/pdf', strlen($dl['bytes']), $key, 'pandadoc-webhook']);
-                }
-            } catch (\Throwable $e) {}
+        // Fetch + store the signed PDF via the shared idempotent helper
+        // (retries if PandaDoc's PDF isn't ready yet; logs every failure to
+        // the PHP error log). The signing step above stays "done" regardless —
+        // that means "the agent signed". If storage fails here, the repair
+        // cron (cron/pandadoc_repair_documents.php) retries it. $documentAdded
+        // is true only when THIS request actually stored the PDF, so the
+        // Whitney/Michele "added to profile" ping and the password-setup email
+        // below fire exactly once per document (same rule in the repair cron).
+        $documentAdded = false;
+        if ($agentEmail !== '') {
+            $res = pandadoc_store_completed_document($pdo, $docId, $agentEmail, 'Onboarding Agreement', 'pandadoc-webhook');
+            $documentAdded = ($res['status'] === 'stored');
+        } else {
+            pandadoc_log('STORE FAILED: no agent email on onboard_queue row', ['doc'=>$docId,'queue_id'=>$queueId]);
         }
 
         try {
@@ -78,11 +74,17 @@ foreach ($events as $evt) {
             $qr = $pdo->prepare("SELECT agent_name, market_center FROM onboard_queue WHERE id=?");
             $qr->execute([$queueId]);
             $qr = $qr->fetch(PDO::FETCH_ASSOC);
+            if ($documentAdded) {
+                // Shared with the repair cron (see notify_signed_document_stored()).
+                notify_signed_document_stored($pdo, $qr['agent_name'] ?? '', $agentEmail, 'Onboarding Agreement');
+            }
             if ($qr && trim($qr['market_center'] ?? '') !== '') {
                 notify_bic_ml_docs_signed($qr['agent_name'], $agentEmail, $qr['market_center']);
             }
             dispatch_notification_queue();
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            pandadoc_log('post-sign notifications failed', ['doc'=>$docId,'error'=>$e->getMessage()]);
+        }
     }
 }
 

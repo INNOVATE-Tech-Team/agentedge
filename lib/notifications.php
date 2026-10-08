@@ -766,6 +766,55 @@ function notify_bic_ml_docs_signed(string $agentName, string $agentEmail, string
     );
 }
 
+// Notify leadership (Whitney + Michele) whenever a signed PandaDoc document
+// package is downloaded and attached to an agent's profile (agent_documents)
+// — called once from api/pandadoc_webhook.php, right after that insert
+// succeeds, same "hardcoded leadership pair" pattern as notify_offboard_complete()
+// (Darren + Whitney). Deliberately separate from notify_bic_ml_docs_signed()
+// above: that one is MC-gated (no email if the market center lookup fails)
+// and goes to the BIC/MC Leader; this one always fires regardless of market
+// center, straight to the two people who track document/commission paperwork.
+function notify_docs_added_to_profile(string $agentName, string $agentEmail, string $docName = 'Onboarding Agreement'): void {
+    $eName  = htmlspecialchars($agentName ?: $agentEmail, ENT_QUOTES);
+    $eEmail = htmlspecialchars($agentEmail, ENT_QUOTES);
+    $eDoc   = htmlspecialchars($docName, ENT_QUOTES);
+    $p      = 'style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"';
+
+    $subject = $agentName . ' — signed documents added to profile';
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Signed Documents Added to Profile</h2>'
+        . '<p ' . $p . '><strong>' . $eName . '</strong> (' . $eEmail . ')\'s signed "' . $eDoc . '" package has come back from PandaDoc and been added to their AgentEdge profile.</p>'
+        . '<p style="margin:0 0 14px"><a href="https://agentedge.innovateonline.com/agent_profile.php?email=' . urlencode($agentEmail) . '" style="display:inline-block;background:#82C112;color:#fff;font-weight:700;font-size:14px;padding:10px 22px;border-radius:5px;text-decoration:none">View Agent Profile &rarr;</a></p>'
+        . sender_signature_html('', '')
+    );
+
+    $db  = local_db();
+    $ins = $db->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,'','')"
+    );
+    foreach (['whitney@innovateonline.com', 'michele@innovateonline.com'] as $r) {
+        $ins->execute([$r, 'email', $subject, $body, '']);
+    }
+}
+
+// The two follow-ups that go out when a signed PandaDoc agreement is attached
+// to an agent's profile: the Whitney/Michele "added to profile" notice and the
+// agent's AgentEdge password-setup link. Shared by api/pandadoc_webhook.php and
+// cron/pandadoc_repair_documents.php so the two storage paths cannot drift.
+// Callers must invoke this ONLY when pandadoc_store_completed_document()
+// returned status 'stored' (a true first-time store) -- never for
+// 'already_stored' -- so redeliveries and repair re-runs can't resend either one.
+// mint_and_send_setup_link() flushes the notification queue, which also sends
+// the notice queued just before it.
+function notify_signed_document_stored(PDO $pdo, string $agentName, string $agentEmail, string $docName = 'Onboarding Agreement'): void {
+    notify_docs_added_to_profile($agentName, $agentEmail, $docName);
+    // Same "set your AgentEdge password" email an admin can send manually from
+    // admin_agent_login.php -- the agent just signed their onboarding paperwork,
+    // so this is their first real prompt to log in. Safe even if they already
+    // have a password (the email's own copy covers "set up (or reset)").
+    mint_and_send_setup_link($pdo, $agentEmail, '', '');
+}
+
 // Notify the BIC and MC Leader whenever an agent is assigned to a market center —
 // fired both on onboarding completion and on any roster MC change.
 function notify_mc_assigned(string $agentName, string $agentEmail, string $marketCenter, string $fromEmail = '', string $fromName = ''): void {
@@ -1305,9 +1354,10 @@ function queue_email_to(array $emails, string $subject, string $body, string $fr
 
 // Mints a 24h/single-use password-setup token and emails it, returning the
 // link — shared by admin_agent_login.php's "send a link" action, its
-// optional "also send a login link" step after a Change Login Email, and
+// optional "also send a login link" step after a Change Login Email,
 // api/password_reset.php's self-service flow for agents who exist on the
-// roster but never set a password.
+// roster but never set a password, and api/pandadoc_webhook.php once an
+// agent's onboarding paperwork comes back signed.
 function mint_and_send_setup_link(PDO $db, string $email, string $fromEmail, string $fromName): string {
     $token = bin2hex(random_bytes(32));
     $db->prepare(
