@@ -620,15 +620,15 @@ function notify_onboard_completed(string $agentName, string $agentEmail, string 
     $senderEmail = 'whitney@innovateonline.com';
     $senderName  = 'Whitney Beadling';
     $firstName = htmlspecialchars(explode(' ', trim($agentName))[0], ENT_QUOTES);
-    $subject   = 'Welcome to Innovate Real Estate, ' . $agentName . '!';
+    $subject   = 'You\'re officially set up with Innovate Real Estate, ' . $agentName . '!';
     $sig       = sender_signature_html($senderEmail, $senderName);
     $p         = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 16px"';
     $li        = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 8px"';
     $body      = notification_email_html(
         '<p ' . $p . '>Hi ' . $firstName . ',</p>'
         . '<p ' . $p . '>Congratulations, and welcome to Innovate Real Estate!</p>'
-        . '<p ' . $p . '>You\'ve officially completed your onboarding, and we\'re excited to have you as part of the Innovate family.</p>'
-        . '<p ' . $p . '>While onboarding may be complete, your journey is just getting started. Over the coming weeks you\'ll begin building relationships, developing your business, and taking advantage of the coaching, training, technology, and support designed to help you succeed.</p>'
+        . '<p ' . $p . '>Your initial setup is complete, which means you\'re officially set up with Innovate Real Estate. We\'re excited to have you with us!</p>'
+        . '<p ' . $p . '>Initial setup is just the first step, and your onboarding is continuing. The next phase includes L.A.U.N.C.H., training, your systems and accounts, marketing, and coaching, all designed to help you build relationships, develop your business, and succeed. We\'ll be with you through each part of it.</p>'
         . '<p style="color:#1a1a1a;font-size:15px;font-weight:700;margin:0 0 10px">Here\'s what\'s next:</p>'
         . '<ul style="margin:0 0 20px;padding-left:20px">'
         . '<li ' . $li . '>Watch your inbox for upcoming training opportunities and company updates.</li>'
@@ -932,17 +932,42 @@ function notify_step_actionable(string $process, string $stepKey, string $stepLa
 // owners find out as soon as it's their turn. Safe to call unconditionally —
 // no-ops if nothing changed. $fromEmail/$fromName identify whoever completed
 // the prior step (the action that made this one actionable).
+//
+// Onboarding only:
+//  - While an active entry's Stage 1 isn't complete, only Stage 1 steps are
+//    eligible — Stage 2 notifications don't start until Stage 1 is done
+//    (complete_initial_setup calls this once to resume the chain).
+//  - A step nobody is assigned to is skipped over (and left un-notified)
+//    instead of consuming the turn, so unassigned steps like Coach/LAUNCH
+//    can't stall the chain for the steps after them.
+// Offboarding keeps the original first-pending-step behavior.
 function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queueId, string $fromEmail = '', string $fromName = ''): void {
     $stepTable  = $process === 'onboard' ? 'onboard_steps' : 'offboard_steps';
     $queueTable = $process === 'onboard' ? 'onboard_queue' : 'offboard_queue';
 
-    $st = $pdo->prepare(
-        "SELECT id, tool_key, tool_label FROM {$stepTable}
-         WHERE queue_id=? AND status='pending' AND notified_at IS NULL
-         ORDER BY id LIMIT 1"
-    );
+    $sql = "SELECT id, tool_key, tool_label FROM {$stepTable}
+            WHERE queue_id=? AND status='pending' AND notified_at IS NULL";
+    if ($process === 'onboard') {
+        $qs = $pdo->prepare("SELECT status, stage1_completed_at FROM onboard_queue WHERE id=?");
+        $qs->execute([$queueId]);
+        $qrow = $qs->fetch(PDO::FETCH_ASSOC);
+        if ($qrow && ($qrow['status'] ?? '') === 'active' && trim((string)($qrow['stage1_completed_at'] ?? '')) === '') {
+            $sql .= " AND stage=1";
+        }
+    }
+    $st = $pdo->prepare($sql . " ORDER BY id");
     $st->execute([$queueId]);
-    $step = $st->fetch(PDO::FETCH_ASSOC);
+    $candidates = $st->fetchAll(PDO::FETCH_ASSOC);
+    if (!$candidates) return;
+
+    $step = null;
+    if ($process === 'onboard') {
+        foreach ($candidates as $c) {
+            if (step_assignees($process, $c['tool_key'])) { $step = $c; break; }
+        }
+    } else {
+        $step = $candidates[0];
+    }
     if (!$step) return;
 
     $q = $pdo->prepare("SELECT agent_name, agent_email FROM {$queueTable} WHERE id=?");

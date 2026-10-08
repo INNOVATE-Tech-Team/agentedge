@@ -9,6 +9,115 @@ require_once __DIR__ . '/roster.php';
 
 const ONBOARD_VALID_STATES = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
 
+// Derived onboarding state — the ONE place that maps onboard_queue.status +
+// stage1_completed_at to a lifecycle state. Callers pass a full onboard_queue
+// row (SELECT * / q.*, so stage1_completed_at is present) and must not
+// re-derive this themselves. status='completed' always wins, so rows that
+// finished before the Stage 1 columns existed (NULL stamp) are still
+// "Onboarding Complete".
+const ONBOARD_STATE_SETUP_PENDING  = 'initial_setup_pending';
+const ONBOARD_STATE_IN_PROGRESS    = 'initial_setup_complete';
+const ONBOARD_STATE_COMPLETE       = 'onboarding_complete';
+const ONBOARD_STATE_CANCELLED      = 'cancelled';
+
+function onboard_queue_state(array $queueRow): string {
+    $status = (string)($queueRow['status'] ?? '');
+    if ($status === 'completed') return ONBOARD_STATE_COMPLETE;
+    if ($status === 'cancelled') return ONBOARD_STATE_CANCELLED;
+    if ($status === 'active') {
+        return trim((string)($queueRow['stage1_completed_at'] ?? '')) === ''
+            ? ONBOARD_STATE_SETUP_PENDING
+            : ONBOARD_STATE_IN_PROGRESS;
+    }
+    return 'unknown';
+}
+
+function onboard_queue_state_label(string $state): string {
+    return [
+        ONBOARD_STATE_SETUP_PENDING => 'Initial Setup Pending',
+        ONBOARD_STATE_IN_PROGRESS   => 'Initial Setup Complete / Onboarding In Progress',
+        ONBOARD_STATE_COMPLETE      => 'Onboarding Complete',
+        ONBOARD_STATE_CANCELLED     => 'Cancelled',
+    ][$state] ?? 'Unknown';
+}
+
+// Stage 1 (Initial Setup / Paperwork) readiness — the ONE definition of what
+// "Complete Initial Setup" requires, shared by the list_queue UI payload and
+// the complete_initial_setup action so they can't disagree.
+//   Derived requirements (existing data, no checklist rows):
+//     intake (agent_intake.submitted), license_state (valid state on the
+//     queue entry), market_centers (>= 1 onboard_queue_mcs row).
+//   Checklist steps that must be done or skipped: doc_signing, mls.
+//     A queue entry with no row for one of them (older entries pre-date the
+//     'mls' step) can't act on it, so it isn't counted as missing.
+//   NOT required (yet): the 'agentedge' step — it's auto-marked done at queue
+//     time and doesn't reflect real login activation.
+function onboard_stage1_readiness(PDO $pdo, array $queueRow): array {
+    $qid   = (int)($queueRow['id'] ?? 0);
+    $items = [];
+
+    $in = $pdo->prepare("SELECT submitted FROM agent_intake WHERE LOWER(email)=LOWER(?)");
+    $in->execute([(string)($queueRow['agent_email'] ?? '')]);
+    $items[] = ['key' => 'intake', 'label' => 'Contact / Intake', 'type' => 'requirement',
+                'met' => (int)$in->fetchColumn() === 1];
+
+    $state = strtoupper(trim((string)($queueRow['state_code'] ?? '')));
+    $items[] = ['key' => 'license_state', 'label' => 'License State', 'type' => 'requirement',
+                'met' => in_array($state, ROSTER_VALID_STATES, true)];
+
+    $mc = $pdo->prepare("SELECT COUNT(*) FROM onboard_queue_mcs WHERE queue_id=?");
+    $mc->execute([$qid]);
+    $items[] = ['key' => 'market_centers', 'label' => 'Market Center(s)', 'type' => 'requirement',
+                'met' => (int)$mc->fetchColumn() > 0];
+
+    $stepSt = $pdo->prepare("SELECT status FROM onboard_steps WHERE queue_id=? AND tool_key=?");
+    foreach (['doc_signing' => 'Document Signing', 'mls' => 'MLS Access'] as $key => $label) {
+        $stepSt->execute([$qid, $key]);
+        $status = $stepSt->fetchColumn();
+        $items[] = ['key' => $key, 'label' => $label, 'type' => 'step',
+                    'met' => $status === false || in_array($status, ['done', 'skipped'], true)];
+    }
+
+    $missing = [];
+    foreach ($items as $it) { if (!$it['met']) $missing[] = $it['label']; }
+    return ['ready' => !$missing, 'items' => $items, 'missing' => $missing];
+}
+
+// Legacy 'email_setup' and 'intranet' rows stay in the database for history
+// but are hidden from the Stage 1/Stage 2 UI (list_queue omits them) and are
+// not in the list below, so the Stage 2 gate ignores them.
+// The canonical Stage 2 checklist, in display order. Complete Onboarding
+// requires every one of these to be explicitly done or skipped.
+const ONBOARD_STAGE2_REQUIRED = ['coach', 'launch', 'fub', 'realscout', 'constellation1', 'dotloop', 'listingstoleads', 'maxa', 'training'];
+
+// Stage 2 readiness — the ONE definition of what "Complete Onboarding"
+// requires beyond Stage 1, shared by the list_queue payload and the
+// complete_onboarding action. Any canonical step that is pending, sent,
+// failed or otherwise unresolved is outstanding. A canonical step with NO row
+// on the entry is a data/configuration problem, not "complete": it is
+// reported as outstanding ("step missing") so it can't be silently bypassed.
+function onboard_stage2_readiness(PDO $pdo, array $queueRow): array {
+    $qid = (int)($queueRow['id'] ?? 0);
+    $defLabels = [];
+    foreach (onboard_tools() as $t) { $defLabels[$t['key']] = $t['label']; }
+
+    $st = $pdo->prepare("SELECT tool_key, tool_label, status FROM onboard_steps WHERE queue_id=?");
+    $st->execute([$qid]);
+    $rows = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) { $rows[$r['tool_key']] = $r; }
+
+    $items = []; $missing = [];
+    foreach (ONBOARD_STAGE2_REQUIRED as $key) {
+        $row    = $rows[$key] ?? null;
+        $label  = $row['tool_label'] ?? ($defLabels[$key] ?? $key);
+        $status = $row ? (string)$row['status'] : 'missing';
+        $met    = $row !== null && in_array($status, ['done', 'skipped'], true);
+        $items[] = ['key' => $key, 'label' => $label, 'status' => $status, 'met' => $met];
+        if (!$met) $missing[] = $row ? "{$label} ({$status})" : "{$label} (step missing from this entry)";
+    }
+    return ['ready' => !$missing, 'items' => $items, 'missing' => $missing];
+}
+
 // Additively records each (market_center, state_code) pair for a queue entry
 // in onboard_queue_mcs — INSERT OR IGNORE so calling this again (e.g. a CRM
 // re-push) never drops a Market Center added since. $normalized entries must
@@ -108,13 +217,13 @@ function queue_onboarding_agent(
 
     $stepIns = $pdo->prepare(
         "INSERT OR IGNORE INTO onboard_steps
-            (queue_id, tool_key, tool_label, is_auto, status, done_by, done_at)
-         VALUES (?,?,?,?,?,?,?)"
+            (queue_id, tool_key, tool_label, is_auto, stage, status, done_by, done_at)
+         VALUES (?,?,?,?,?,?,?,?)"
     );
     foreach (onboard_tools() as $t) {
         $isDone = $t['key'] === 'agentedge';
         $stepIns->execute([
-            $queueId, $t['key'], $t['label'], $t['is_auto'] ? 1 : 0,
+            $queueId, $t['key'], $t['label'], $t['is_auto'] ? 1 : 0, $t['stage'],
             $isDone ? 'done' : 'pending',
             $isDone ? $addedBy : null,
             $isDone ? $now : null,

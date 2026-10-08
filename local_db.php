@@ -30,6 +30,57 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // appear — see the AgentEdge intake duplicate-agent investigation, Aug 2026).
 const LOCAL_DB_SCHEMA_VERSION = 1;
 
+// Onboarding Stage 1 / Stage 2 split — schema foundation only (no behavior
+// reads these yet except lib/onboarding.php's onboard_queue_state() helper).
+//   onboard_queue.stage1_completed_at / stage1_completed_by — NULL until the
+//     future "Complete Initial Setup" action; onboard_queue.status stays
+//     active/completed/cancelled (status='completed' always wins).
+//   step_defs.stage / onboard_steps.stage — 1 = Initial Setup / Paperwork,
+//     2 = Accounts, Marketing, Coaching & Training. Only meaningful for
+//     process='onboard' (offboard rows just carry the default).
+// The classification and the Coach/LAUNCH seeding run only in the call that
+// actually adds the stage column, in one transaction, so re-running is a no-op
+// and an admin-deleted step is never resurrected. The fast path is three
+// read-only PRAGMAs — no write lock on normal page loads.
+function local_db_ensure_onboard_stages(PDO $pdo): void {
+    $cols = function (string $table) use ($pdo): array {
+        return array_column($pdo->query("PRAGMA table_info($table)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+    };
+    try {
+        $q = $cols('onboard_queue'); $d = $cols('step_defs'); $s = $cols('onboard_steps');
+        if (!$q || !$d || !$s) return;
+        if (in_array('stage1_completed_at', $q, true) && in_array('stage1_completed_by', $q, true)
+            && in_array('stage', $d, true) && in_array('stage', $s, true)) return;
+
+        $pdo->exec("BEGIN IMMEDIATE");
+        try {
+            // Re-read inside the lock: another request may have won the race.
+            $q = $cols('onboard_queue'); $d = $cols('step_defs'); $s = $cols('onboard_steps');
+            if (!in_array('stage1_completed_at', $q, true)) $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage1_completed_at TEXT");
+            if (!in_array('stage1_completed_by', $q, true)) $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage1_completed_by TEXT");
+            if (!in_array('stage', $d, true)) {
+                $pdo->exec("ALTER TABLE step_defs ADD COLUMN stage INTEGER NOT NULL DEFAULT 2");
+                $pdo->exec("UPDATE step_defs SET stage=1 WHERE process='onboard' AND step_key IN ('agentedge','doc_signing','mls')");
+                $pdo->exec(
+                    "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord, stage) VALUES
+                       ('onboard','coach',  'Coach',  'Manual — confirm a coach has been assigned',      0, 110, 2),
+                       ('onboard','launch', 'LAUNCH', 'Manual — confirm LAUNCH enrollment or exemption', 0, 111, 2)"
+                );
+            }
+            if (!in_array('stage', $s, true)) {
+                $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN stage INTEGER NOT NULL DEFAULT 2");
+                $pdo->exec("UPDATE onboard_steps SET stage=1 WHERE tool_key IN ('agentedge','doc_signing','mls')");
+            }
+            $pdo->exec("COMMIT");
+        } catch (\Throwable $e) {
+            try { $pdo->exec("ROLLBACK"); } catch (\Throwable $e2) {}
+            throw $e;
+        }
+    } catch (\Throwable $e) {
+        error_log('local_db_ensure_onboard_stages failed: ' . $e->getMessage());
+    }
+}
+
 function local_db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
@@ -64,6 +115,7 @@ function local_db(): PDO {
     // press_contacts. Until that's untangled, new schema additions that must
     // reliably apply go here instead: cheap, always-run, fully idempotent
     // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
+    local_db_ensure_onboard_stages($pdo);
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_notify_prefs (
         email            TEXT PRIMARY KEY,
         notify_requested INTEGER NOT NULL DEFAULT 1,

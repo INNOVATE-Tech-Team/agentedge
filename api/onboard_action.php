@@ -39,7 +39,7 @@ $pdo    = local_db();
 // assigned Market Center — as soon as a valid state+MC pair is known for it.
 // Called right after add_to_queue/add_market_center, and again from set_state
 // in case that data wasn't available yet at add-time. Mirrors
-// complete_onboarding's own per-MC add_or_reactivate_roster_agent() loop,
+// complete_initial_setup's own per-MC add_or_reactivate_roster_agent() loop,
 // just triggered as early as possible instead of only at the very end of the
 // process. Best-effort/no-op per MC if its state is still missing/invalid —
 // roster placement for that MC then just waits for a later call to fill the
@@ -79,16 +79,16 @@ if ($action === 'list_queue') {
     if ($filter === 'all') {
         $rows = $pdo->query(
             "SELECT q.*,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet') AND status='done') as done_count,
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet')) as total_count,
                 COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q ORDER BY q.added_at DESC"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $st = $pdo->prepare(
             "SELECT q.*,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND status='done') as done_count,
-                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id) as total_count,
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet') AND status='done') as done_count,
+                (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet')) as total_count,
                 COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
              FROM onboard_queue q WHERE q.status=? ORDER BY q.added_at DESC"
         );
@@ -130,7 +130,7 @@ if ($action === 'list_queue') {
         $ids = array_column($rows, 'id');
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $st2 = $pdo->prepare(
-            "SELECT * FROM onboard_steps WHERE queue_id IN ({$placeholders}) ORDER BY id"
+            "SELECT * FROM onboard_steps WHERE queue_id IN ({$placeholders}) AND tool_key NOT IN ('email_setup','intranet') ORDER BY id"
         );
         $st2->execute($ids);
         $steps = $st2->fetchAll(PDO::FETCH_ASSOC);
@@ -145,6 +145,16 @@ if ($action === 'list_queue') {
         }
         unset($row);
     }
+
+    // Derived lifecycle state + Stage 1 readiness, from the shared helpers in
+    // lib/onboarding.php (don't re-derive either one client-side).
+    foreach ($rows as &$row) {
+        $row['state']       = onboard_queue_state($row);
+        $row['state_label'] = onboard_queue_state_label($row['state']);
+        $row['stage1']      = ($row['status'] ?? '') === 'active' ? onboard_stage1_readiness($pdo, $row) : null;
+        $row['stage2']      = ($row['status'] ?? '') === 'active' ? onboard_stage2_readiness($pdo, $row) : null;
+    }
+    unset($row);
 
     json_out(['ok'=>true,'queue'=>$rows]);
 }
@@ -464,34 +474,33 @@ if ($action === 'provision') {
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
 }
 
-// ── POST: complete_onboarding ─────────────────────────────────────────────────
-if ($action === 'complete_onboarding') {
+// ── POST: complete_initial_setup (Stage 1) ────────────────────────────────────
+// Everything that used to fire on "Mark Complete" now fires here, once: roster
+// write, welcome email, Market Center-assigned emails, the coach-assignment
+// email (new agents only) and the 10-day check-in text. onboard_queue.status
+// stays 'active' — Stage 1 is recorded in stage1_completed_at/by.
+if ($action === 'complete_initial_setup') {
     $queueId = (int)($body['queue_id'] ?? 0);
     $st = $pdo->prepare("SELECT * FROM onboard_queue WHERE id = ?");
     $st->execute([$queueId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+    if (($row['status'] ?? '') !== 'active') json_out(['ok'=>false,'error'=>'Onboarding is not active for this agent.']);
+    if (trim((string)($row['stage1_completed_at'] ?? '')) !== '') {
+        json_out(['ok'=>false,'error'=>'Initial setup has already been completed for this agent.']);
+    }
+
+    $ready = onboard_stage1_readiness($pdo, $row);
+    if (!$ready['ready']) {
+        json_out(['ok'=>false,'error'=>'Initial setup can\'t be completed yet. Still outstanding: ' . implode(', ', $ready['missing']) . '.']);
+    }
 
     $state = strtoupper(trim($row['state_code'] ?? ''));
-    if (!in_array($state, ROSTER_VALID_STATES, true)) {
-        json_out(['ok'=>false,'error'=>'Set a valid license state for this agent before completing onboarding.']);
-    }
     // An agent can be queued into more than one Market Center — every one of
-    // them gets its own innovate_roster row + notification below. A blank
-    // list here means none were ever set or matched the canonical list (see
-    // normalize_market_center()) and needs a human to fix it.
+    // them gets its own innovate_roster row + notification below.
     $mcSt = $pdo->prepare("SELECT market_center, state_code FROM onboard_queue_mcs WHERE queue_id=? ORDER BY is_primary DESC, id");
     $mcSt->execute([$queueId]);
     $mcs = $mcSt->fetchAll(PDO::FETCH_ASSOC);
-    if (!$mcs) {
-        json_out(['ok'=>false,'error'=>'Set a Market Center for this agent before completing onboarding.']);
-    }
-
-    $intakeCheck = $pdo->prepare("SELECT submitted FROM agent_intake WHERE email = ?");
-    $intakeCheck->execute([$row['agent_email'] ?? '']);
-    if (!(int)$intakeCheck->fetchColumn()) {
-        json_out(['ok'=>false,'error'=>'This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.']);
-    }
 
     foreach ($mcs as $mc) {
         add_or_reactivate_roster_agent(
@@ -507,8 +516,17 @@ if ($action === 'complete_onboarding') {
         );
     }
 
-    $upd = $pdo->prepare("UPDATE onboard_queue SET status='completed' WHERE id=?");
-    $upd->execute([$queueId]);
+    // Atomic claim: only the request that actually flips stage1_completed_at
+    // from NULL gets to fire the side effects below (a double-click or a
+    // second admin racing this one loses here and sends nothing).
+    $claim = $pdo->prepare(
+        "UPDATE onboard_queue SET stage1_completed_at=?, stage1_completed_by=?
+         WHERE id=? AND status='active' AND stage1_completed_at IS NULL"
+    );
+    $claim->execute([date('Y-m-d H:i:s'), $agent['email'], $queueId]);
+    if ($claim->rowCount() !== 1) {
+        json_out(['ok'=>false,'error'=>'Initial setup has already been completed for this agent.']);
+    }
 
     try {
         require_once __DIR__ . '/../lib/notifications.php';
@@ -517,9 +535,9 @@ if ($action === 'complete_onboarding') {
             notify_mc_assigned($row['agent_name'], $row['agent_email'], $mc['market_center'] ?? '', $agent['email'], $agent['name'] ?? '');
         }
 
-        // Step 11 (Coach/LAUNCH assignment) is new-agents-only — determined by
+        // Coach/LAUNCH assignment email is new-agents-only — determined by
         // whether the intake form shows a prior brokerage; blank means new.
-        $intakeSt = $pdo->prepare("SELECT prior_occupation, prior_affiliation FROM agent_intake WHERE email = ?");
+        $intakeSt = $pdo->prepare("SELECT prior_occupation, prior_affiliation FROM agent_intake WHERE LOWER(email) = LOWER(?)");
         $intakeSt->execute([$row['agent_email']]);
         $intake = $intakeSt->fetch(PDO::FETCH_ASSOC);
         $isNewAgent = $intake && trim($intake['prior_occupation'] ?? '') === '' && trim($intake['prior_affiliation'] ?? '') === '';
@@ -527,10 +545,14 @@ if ($action === 'complete_onboarding') {
             notify_coach_assignment_needed($row['agent_name'], $row['agent_email']);
         }
 
-        // Step 13 — schedule the 10-day post-completion check-in text.
+        // Schedule the 10-day post-setup check-in text.
         $pdo->prepare(
             "INSERT INTO scheduled_tasks (task_type, payload_json, fire_at) VALUES (?,?,datetime('now','+10 days'))"
         )->execute(['onboard_followup_text', json_encode(['agent_name' => $row['agent_name'], 'agent_email' => $row['agent_email']])]);
+
+        // Stage 2 steps are now eligible: resume the next-step notification
+        // chain that maybe_notify_next_actionable_step() held back until now.
+        maybe_notify_next_actionable_step($pdo, 'onboard', $queueId);
     } catch (\Throwable $e) {}
 
     http_response_code(200);
@@ -541,6 +563,37 @@ if ($action === 'complete_onboarding') {
         dispatch_notification_queue();
     } catch (\Throwable $e) {}
     exit;
+}
+
+// ── POST: complete_onboarding (Stage 2 close-out) ─────────────────────────────
+// Only closes the process: requires Stage 1 done AND every canonical Stage 2
+// step done/skipped (onboard_stage2_readiness), then flips status to
+// 'completed'. Deliberately NO roster write, welcome email, Market Center or
+// coach-assignment notification, or follow-up-text task — all of that already
+// happened (once) in complete_initial_setup.
+if ($action === 'complete_onboarding') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT status, stage1_completed_at FROM onboard_queue WHERE id = ?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+    if (($row['status'] ?? '') !== 'active') json_out(['ok'=>false,'error'=>'Onboarding is not active for this agent.']);
+    if (trim((string)($row['stage1_completed_at'] ?? '')) === '') {
+        json_out(['ok'=>false,'error'=>'Complete Initial Setup first — onboarding can only be completed after Stage 1.']);
+    }
+    $ready2 = onboard_stage2_readiness($pdo, ['id' => $queueId]);
+    if (!$ready2['ready']) {
+        json_out(['ok'=>false,'error'=>'Onboarding can\'t be completed yet. Still unresolved (mark each Done or Skip): ' . implode(', ', $ready2['missing']) . '.', 'outstanding'=>$ready2['missing']]);
+    }
+
+    $upd = $pdo->prepare(
+        "UPDATE onboard_queue SET status='completed'
+         WHERE id=? AND status='active' AND stage1_completed_at IS NOT NULL"
+    );
+    $upd->execute([$queueId]);
+    if ($upd->rowCount() !== 1) json_out(['ok'=>false,'error'=>'Onboarding is not active for this agent.']);
+
+    json_out(['ok'=>true]);
 }
 
 // ── POST: cancel_onboarding ───────────────────────────────────────────────────
@@ -562,6 +615,40 @@ if ($action === 'send_intake') {
 
     notify_intake_request($row['agent_name'], $row['agent_email'], $queueId);
     $pdo->prepare("UPDATE onboard_queue SET intake_sent_at = datetime('now') WHERE id = ?")->execute([$queueId]);
+
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true]);
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
+    exit;
+}
+
+// ── POST: mark_intake_submitted (admin override when agent filled out form but didn't click submit) ──
+if ($action === 'mark_intake_submitted') {
+    require_once __DIR__ . '/../lib/notifications.php';
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT agent_name, agent_email, market_center FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+
+    $agentEmail = $row['agent_email'];
+
+    // Upsert the intake row as submitted
+    $exists = $pdo->prepare("SELECT COUNT(*) FROM agent_intake WHERE LOWER(email)=LOWER(?)");
+    $exists->execute([$agentEmail]);
+    if ((int)$exists->fetchColumn() > 0) {
+        $pdo->prepare("UPDATE agent_intake SET submitted=1, submitted_at=datetime('now') WHERE LOWER(email)=LOWER(?) AND submitted=0")
+            ->execute([$agentEmail]);
+    } else {
+        $pdo->prepare("INSERT OR IGNORE INTO agent_intake (email, submitted, submitted_at) VALUES (?,1,datetime('now'))")
+            ->execute([$agentEmail]);
+    }
+
+    notify_intake_submitted($row['agent_name'], $agentEmail);
+    if (trim($row['market_center'] ?? '') !== '') {
+        notify_bic_ml_intake_submitted($row['agent_name'], $agentEmail, $row['market_center']);
+    }
 
     http_response_code(200);
     header('Content-Type: application/json');
