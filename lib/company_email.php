@@ -590,3 +590,195 @@ function ce_signature_html(string $email, string $displayName, string $host): st
          . '<td style="vertical-align:top"><div style="font-size:15px;font-weight:700;color:#111">' . htmlspecialchars($displayName, ENT_QUOTES) . '</div>'
          . implode('', $lines) . '</td></tr></table>';
 }
+
+// ── Recipient-level reporting (drill-down behind the history stats strip) ────
+// Read-only. One definition of every stat, shared by the dashboard counts
+// (ce_stat_counts) and the drill-down lists (ce_stat_rows) so the two cannot
+// drift apart. Every stat is a set of DISTINCT recipient emails (lower-cased).
+//
+// SendGrid retries can deliver the same event more than once and
+// company_email_events has no unique key, so event rows are collapsed on
+// (recipient, event, url, occurred_at) before anything is counted or listed.
+// Raw rows are never modified.
+//
+//   sent         notification_queue email rows with status 'sent'
+//   delivered    'delivered' events
+//   open         'open' events
+//   not_opened   sent recipients with no 'open' event ("No recorded open")
+//   click        'click' events
+//   bounce       'bounce' events
+//   dropped      'dropped' events
+const CE_RECIPIENT_STATS = ['sent', 'delivered', 'open', 'not_opened', 'click', 'bounce', 'dropped'];
+
+// Per email id: 'tracked' (has events), 'none_yet' (sent after the webhook went
+// live but no events recorded -- a genuine zero), or 'unavailable' (sent before
+// the first webhook event ever recorded, so zero means "not tracked", not "none").
+// Also reports whether per-recipient send records exist ('sent' stat available).
+function ce_tracking_status(PDO $db, array $emails): array {
+    $webhookStart = $db->query("SELECT MIN(occurred_at) FROM company_email_events")->fetchColumn() ?: null;
+    $out = [];
+    if (!$emails) return $out;
+    $ids = array_map(fn($e) => (int)$e['id'], $emails);
+    $ph  = implode(',', array_fill(0, count($ids), '?'));
+    $ev = [];
+    $s = $db->prepare("SELECT company_email_id, COUNT(*) FROM company_email_events WHERE company_email_id IN ($ph) GROUP BY company_email_id");
+    $s->execute($ids);
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) $ev[(int)$r[0]] = (int)$r[1];
+    $q = [];
+    $s = $db->prepare("SELECT company_email_id, COUNT(*) FROM notification_queue WHERE channel='email' AND company_email_id IN ($ph) GROUP BY company_email_id");
+    $s->execute($ids);
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) $q[(int)$r[0]] = (int)$r[1];
+
+    foreach ($emails as $e) {
+        $id = (int)$e['id'];
+        if (!empty($ev[$id]))                                            $t = 'tracked';
+        elseif ($webhookStart === null || $e['sent_at'] < $webhookStart) $t = 'unavailable';
+        else                                                             $t = 'none_yet';
+        $out[$id] = ['tracking' => $t, 'send_records' => !empty($q[$id])];
+    }
+    return $out;
+}
+
+// Distinct-recipient counts for every stat, for a batch of email ids.
+// Returns [id => [stat => int]].
+function ce_stat_counts(PDO $db, array $ids): array {
+    $out = [];
+    if (!$ids) return $out;
+    $ids = array_map('intval', $ids);
+    $ph  = implode(',', array_fill(0, count($ids), '?'));
+    foreach ($ids as $id) $out[$id] = array_fill_keys(CE_RECIPIENT_STATS, 0);
+
+    $s = $db->prepare(
+        "SELECT company_email_id, COUNT(DISTINCT LOWER(recipient)) FROM notification_queue
+         WHERE channel='email' AND status='sent' AND company_email_id IN ($ph) GROUP BY company_email_id"
+    );
+    $s->execute($ids);
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) $out[(int)$r[0]]['sent'] = (int)$r[1];
+
+    $map = ['delivered'=>'delivered', 'open'=>'open', 'click'=>'click', 'bounce'=>'bounce', 'dropped'=>'dropped'];
+    $s = $db->prepare(
+        "SELECT company_email_id, event, COUNT(DISTINCT recipient) FROM company_email_events
+         WHERE company_email_id IN ($ph) GROUP BY company_email_id, event"
+    );
+    $s->execute($ids);
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) {
+        if (isset($map[$r[1]])) $out[(int)$r[0]][$map[$r[1]]] = (int)$r[2];
+    }
+
+    // No recorded open = sent recipients minus those with any open event.
+    // Done as a set difference here rather than a correlated NOT EXISTS: SQLite
+    // plans that as a scan of every 'sent' queue row (~0.7s per dashboard load).
+    $s = $db->prepare(
+        "SELECT DISTINCT company_email_id, LOWER(recipient) FROM notification_queue
+         WHERE channel='email' AND status='sent' AND company_email_id IN ($ph)"
+    );
+    $s->execute($ids);
+    $sentSet = [];
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) $sentSet[(int)$r[0]][$r[1]] = true;
+    $s = $db->prepare("SELECT DISTINCT company_email_id, recipient FROM company_email_events WHERE event='open' AND company_email_id IN ($ph)");
+    $s->execute($ids);
+    foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) unset($sentSet[(int)$r[0]][$r[1]]);
+    foreach ($sentSet as $id => $set) $out[$id]['not_opened'] = count($set);
+    return $out;
+}
+
+// Best-effort display names for a list of lower-cased emails. Emails with no
+// match are simply absent from the result (callers fall back to the address).
+function ce_recipient_names(PDO $db, array $emails): array {
+    $names = [];
+    $emails = array_values(array_unique($emails));
+    foreach (array_chunk($emails, 400) as $chunk) {
+        $ph = implode(',', array_fill(0, count($chunk), '?'));
+        foreach ([
+            "SELECT LOWER(email), full_name,  ''            FROM agent_intake     WHERE LOWER(email) IN ($ph)",
+            "SELECT LOWER(email), agent_name, market_center FROM innovate_roster  WHERE LOWER(email) IN ($ph) ORDER BY active ASC",
+            "SELECT LOWER(email), name,       ''            FROM imported_agents  WHERE LOWER(email) IN ($ph)",
+        ] as $sql) {
+            try {
+                $s = $db->prepare($sql);
+                $s->execute($chunk);
+                foreach ($s->fetchAll(PDO::FETCH_NUM) as $r) {
+                    $n = trim((string)$r[1]);
+                    if (!isset($names[$r[0]])) $names[$r[0]] = ['name' => '', 'mc' => ''];
+                    if ($names[$r[0]]['name'] === '' && $n !== '') $names[$r[0]]['name'] = $n;
+                    if ($names[$r[0]]['mc'] === '' && trim((string)$r[2]) !== '') $names[$r[0]]['mc'] = trim((string)$r[2]);
+                }
+            } catch (\Throwable $e) { /* optional source missing: fall back to email */ }
+        }
+    }
+    return $names;
+}
+
+// SendGrid bounce reasons embed the VERP return path
+// ("... <bounces+123-abcd-user=domain@em9101...>: ..."); strip that noise.
+function ce_clean_reason(string $r): string {
+    $r = preg_replace('/<bounces\+[^>]*>:?\s*/i', '', $r);
+    return trim(preg_replace('/\s+/', ' ', $r));
+}
+
+// The recipient list behind one stat for one email. Row count always equals
+// ce_stat_counts()[id][stat]. Returns a list of rows keyed for the UI/CSV.
+function ce_stat_rows(PDO $db, int $id, string $stat): array {
+    if (!in_array($stat, CE_RECIPIENT_STATS, true)) return [];
+    $rows = [];
+
+    // Deduplicated events for this email: one row per (recipient, event, url, time).
+    $ev = $db->prepare(
+        "SELECT recipient, event, url, MAX(reason) AS reason, occurred_at
+         FROM company_email_events WHERE company_email_id=?
+         GROUP BY recipient, event, url, occurred_at ORDER BY occurred_at"
+    );
+    $ev->execute([$id]);
+    $byRecipient = [];
+    foreach ($ev->fetchAll(PDO::FETCH_ASSOC) as $e) $byRecipient[$e['recipient']][$e['event']][] = $e;
+
+    $sent = [];
+    $q = $db->prepare(
+        "SELECT LOWER(recipient) AS r, MIN(sent_at) AS sent_at FROM notification_queue
+         WHERE channel='email' AND status='sent' AND company_email_id=? GROUP BY LOWER(recipient)"
+    );
+    $q->execute([$id]);
+    foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $r) $sent[$r['r']] = $r['sent_at'];
+
+    $deliveryOf = function (string $r) use ($byRecipient): string {
+        $e = $byRecipient[$r] ?? [];
+        if (!empty($e['bounce']))    return 'Bounced';
+        if (!empty($e['dropped']))   return 'Dropped';
+        if (!empty($e['delivered'])) return 'Delivered';
+        return 'No delivery event';
+    };
+
+    if ($stat === 'sent' || $stat === 'not_opened') {
+        foreach ($sent as $r => $at) {
+            if ($stat === 'not_opened' && !empty($byRecipient[$r]['open'])) continue;
+            $rows[] = ['email' => $r, 'time' => $at, 'delivery' => $deliveryOf($r)];
+        }
+    } else {
+        foreach ($byRecipient as $r => $events) {
+            if (empty($events[$stat])) continue;
+            $list = $events[$stat];
+            $row = ['email' => $r, 'time' => $list[0]['occurred_at']];
+            if ($stat === 'open') {
+                $row['first_open'] = $list[0]['occurred_at'];
+                $row['last_open']  = end($list)['occurred_at'];
+                $row['open_count'] = count($list);
+            } elseif ($stat === 'click') {
+                $row['click_count'] = count($list);
+                $row['clicks'] = array_map(fn($c) => ['url' => $c['url'], 'time' => $c['occurred_at']], $list);
+            } elseif ($stat === 'bounce' || $stat === 'dropped') {
+                $reasons = array_values(array_unique(array_filter(array_map(fn($c) => ce_clean_reason((string)$c['reason']), $list))));
+                $row['reason'] = $reasons ? implode(' | ', $reasons) : 'No reason provided';
+            }
+            $rows[] = $row;
+        }
+    }
+
+    $names = ce_recipient_names($db, array_column($rows, 'email'));
+    foreach ($rows as &$row) {
+        $row['name'] = $names[$row['email']]['name'] ?? '';
+        $row['mc']   = $names[$row['email']]['mc']   ?? '';
+    }
+    unset($row);
+    usort($rows, fn($a, $b) => strcasecmp($a['name'] !== '' ? $a['name'] : $a['email'], $b['name'] !== '' ? $b['name'] : $b['email']));
+    return $rows;
+}

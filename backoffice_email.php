@@ -145,6 +145,22 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .btn-view-email svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .btn-view-email:hover{background:#e0eed4;border-color:#82C112;transform:translateY(-1px)}
 .btn-view-email:active{transform:translateY(0)}
+.stat-chip{background:none;border:none;padding:2px 4px;margin:-2px -4px;font:inherit;color:inherit;border-radius:4px}
+button.stat-chip{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline:none}
+.stat-na{color:#999}
+.stat-na b{color:#999}
+.stat-note{flex-basis:100%;text-align:right;color:#8a6d00;font-size:11px}
+.rcpt-box{max-width:900px}
+.rcpt-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;border-bottom:1px solid #eee;font-size:12px;color:#555}
+.rcpt-warn{margin:12px 18px 0;padding:9px 12px;background:#fff8e1;border:1px solid #f0d98c;border-radius:6px;font-size:12px;color:#6b5400}
+.rcpt-scroll{overflow:auto;padding:0 18px 14px}
+.rcpt-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+.rcpt-table th{position:sticky;top:0;background:#fff;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding:6px 8px;border-bottom:1px solid #ddd}
+.rcpt-table td{padding:7px 8px;border-bottom:1px solid #f0f0f0;vertical-align:top;word-break:break-word}
+.rcpt-table .sub{color:#777;font-size:11px}
+.btn-csv{padding:5px 12px;background:#82C112;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer}
+.btn-csv:disabled{background:#ccc;cursor:default}
 .section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:0 0 8px}
 
 /* Preview modal */
@@ -593,6 +609,20 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
     <div class="modal-subject" id="preview-subject-line"></div>
     <iframe id="preview-frame" title="Email preview"></iframe>
     <p class="modal-note" id="preview-modal-note">Personalized using your own info as a stand-in for the recipient's name, Market Center, etc. — the real send fills these in per recipient.</p>
+  </div>
+</div>
+
+<div id="rcpt-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this) closeRecipients()">
+  <div class="modal-box rcpt-box" role="dialog" aria-modal="true" aria-labelledby="rcpt-title">
+    <div class="modal-header">
+      <strong id="rcpt-title">Recipients</strong>
+      <button type="button" class="modal-close" onclick="closeRecipients()" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-subject" id="rcpt-subject"></div>
+    <div class="rcpt-bar"><span id="rcpt-summary"></span><button type="button" class="btn-csv" id="rcpt-csv" onclick="downloadRecipientsCsv()">Export CSV</button></div>
+    <div id="rcpt-warn" class="rcpt-warn" style="display:none"></div>
+    <div class="rcpt-scroll"><table class="rcpt-table"><thead id="rcpt-head"></thead><tbody id="rcpt-body"></tbody></table></div>
+    <p class="modal-note" id="rcpt-note"></p>
   </div>
 </div>
 
@@ -1090,17 +1120,139 @@ function loadHistory() {
 // attempted delivery, e.g. suppression list/spam-report history) mean
 // different things and call for different follow-up. Recipients/Sent are
 // live now since those come from our own send records, not SendGrid.
+const STAT_DEFS = [
+  ['sent',       'Sent'],
+  ['delivered',  'Delivered'],
+  ['open',       'Opens'],
+  ['not_opened', 'No Recorded Open'],
+  ['click',      'Clicks'],
+  ['bounce',     'Bounces'],
+  ['dropped',    'Dropped'],
+];
+// A null stat means "not available" (historical email sent before tracking /
+// per-recipient send records existed) -- shown as an em dash, never as 0.
+// A real 0 renders as 0 and is not clickable (nothing to list).
 function statsStrip(r) {
-  const stat = (label, val) => `<span>${label} <b>${val}</b></span>`;
+  const stats = r.stats || {};
+  const unavailable = STAT_DEFS.some(d => stats[d[0]] === null || stats[d[0]] === undefined);
+  const chips = STAT_DEFS.map(([key, label]) => {
+    const v = stats[key];
+    if (v === null || v === undefined) {
+      return `<span class="stat-chip stat-na" title="Not available: this email was sent before tracking was recording.">${label} <b>&mdash;</b></span>`;
+    }
+    if (v > 0) {
+      return `<button type="button" class="stat-chip" title="Click to see who" onclick="showRecipients(${r.id}, '${key}')">${label} <b>${v}</b></button>`;
+    }
+    return `<span class="stat-chip">${label} <b>0</b></span>`;
+  }).join('');
   return '<div class="stats-strip">' +
-    stat('Recipients', r.recipient_count) +
-    stat('Sent', r.sent_count) +
-    stat('Opens', r.opens) +
-    stat('Clicks', r.clicks) +
-    stat('Bounces', r.bounces) +
-    stat('Dropped', r.dropped) +
+    `<span>Recipients <b>${r.recipient_count}</b></span>` + chips +
+    (unavailable ? '<span class="stat-note">&mdash; = not tracked for this older email (not the same as 0).</span>' : '') +
     '</div>';
 }
+
+// ---- Recipient drill-down -------------------------------------------------
+let rcptCurrent = null;
+const STAT_TITLES = {sent:'Sent', delivered:'Delivered', open:'Opened', not_opened:'No Recorded Open', click:'Clicked', bounce:'Bounced', dropped:'Dropped'};
+
+function fmtEt(utc) {
+  if (!utc) return '';
+  const d = new Date(String(utc).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return utc;
+  return d.toLocaleString('en-US', {timeZone:'America/New_York', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'}) + ' ET';
+}
+
+function showRecipients(id, stat) {
+  rcptCurrent = null;
+  document.getElementById('rcpt-title').textContent = STAT_TITLES[stat] + ' — loading…';
+  document.getElementById('rcpt-subject').textContent = '';
+  document.getElementById('rcpt-summary').textContent = '';
+  document.getElementById('rcpt-warn').style.display = 'none';
+  document.getElementById('rcpt-head').innerHTML = '';
+  document.getElementById('rcpt-body').innerHTML = '';
+  document.getElementById('rcpt-note').textContent = '';
+  document.getElementById('rcpt-csv').disabled = true;
+  document.getElementById('rcpt-modal').style.display = 'flex';
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'recipients_detail', id, stat})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) { closeRecipients(); alert('Could not load recipients: ' + (d.error || 'Unknown')); return; }
+    rcptCurrent = d;
+    renderRecipients(d);
+  })
+  .catch(() => { closeRecipients(); alert('Could not load recipients.'); });
+}
+
+function closeRecipients() { document.getElementById('rcpt-modal').style.display = 'none'; }
+
+function rcptColumns(stat) {
+  const who = [['Name', r => r.name || r.email], ['Email', r => r.email], ['Market Center', r => r.mc]];
+  switch (stat) {
+    case 'sent':       return who.concat([['Sent', r => fmtEt(r.time)], ['Delivery status', r => r.delivery]]);
+    case 'not_opened': return who.concat([['Sent', r => fmtEt(r.time)], ['Delivery status', r => r.delivery]]);
+    case 'delivered':  return who.concat([['Delivered', r => fmtEt(r.time)]]);
+    case 'open':       return who.concat([['First recorded open', r => fmtEt(r.first_open)], ['Last recorded open', r => fmtEt(r.last_open)], ['Opens (deduplicated)', r => r.open_count]]);
+    case 'click':      return who.concat([['Links clicked', r => r.clicks.map(c => c.url || '(no URL)').join('\n')], ['Clicked at', r => r.clicks.map(c => fmtEt(c.time)).join('\n')]]);
+    case 'bounce':     return who.concat([['Bounced', r => fmtEt(r.time)], ['Reason', r => r.reason]]);
+    case 'dropped':    return who.concat([['Dropped', r => fmtEt(r.time)], ['Reason', r => r.reason]]);
+  }
+  return who;
+}
+
+function renderRecipients(d) {
+  const label = STAT_TITLES[d.stat];
+  document.getElementById('rcpt-title').textContent = label + ' (' + d.count + ')';
+  document.getElementById('rcpt-subject').textContent = d.subject;
+  const warn = document.getElementById('rcpt-warn');
+  if (!d.available) {
+    warn.textContent = 'Not available: this email was sent before tracking was recording, so there is no recipient-level data to show. This is not the same as zero.';
+    warn.style.display = 'block';
+    document.getElementById('rcpt-summary').textContent = 'No data';
+    return;
+  }
+  const cols = rcptColumns(d.stat);
+  document.getElementById('rcpt-head').innerHTML = '<tr>' + cols.map(c => '<th>' + escapeHtml(c[0]) + '</th>').join('') + '</tr>';
+  document.getElementById('rcpt-body').innerHTML = d.rows.map(r =>
+    '<tr>' + cols.map((c, i) => {
+      const v = String(c[1](r) ?? '');
+      const html = escapeHtml(v).replace(/\n/g, '<br>');
+      return '<td>' + (i === 0 && !r.name ? '<span class="sub">' + html + '</span>' : html) + '</td>';
+    }).join('') + '</tr>').join('');
+  document.getElementById('rcpt-summary').textContent = d.count + ' unique recipient' + (d.count === 1 ? '' : 's');
+  document.getElementById('rcpt-csv').disabled = d.rows.length === 0;
+  const notes = {
+    open: 'Open counts are unique open events (repeat SendGrid webhook deliveries are collapsed). Email apps that pre-load images (e.g. Apple Mail Privacy Protection) can record opens the recipient never made.',
+    not_opened: '"No recorded open" means no open event was received. It does not prove the recipient did not read the email (image blocking and plain-text readers do not report opens).',
+    click: 'Link scanners can occasionally record clicks the recipient did not make.',
+  };
+  document.getElementById('rcpt-note').textContent = notes[d.stat] || 'Recipients without a matching agent name are shown by email address.';
+}
+
+// Client-side CSV of exactly what is on screen. Cells starting with = + - @ are
+// prefixed with an apostrophe so spreadsheets do not run them as formulas.
+function csvCell(v) {
+  let s = String(v ?? '').replace(/\r?\n/g, ' | ');
+  if (/^[=+\-@\t]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function downloadRecipientsCsv() {
+  const d = rcptCurrent;
+  if (!d || !d.available || !d.rows.length) return;
+  const cols = rcptColumns(d.stat);
+  const lines = [cols.map(c => csvCell(c[0])).join(',')].concat(
+    d.rows.map(r => cols.map(c => csvCell(c[1](r))).join(',')));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'company-email-' + d.id + '-' + d.stat + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRecipients(); });
 
 function viewSentEmail(id) {
   fetch('api/company_email_action.php', {

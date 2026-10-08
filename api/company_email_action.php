@@ -244,24 +244,34 @@ if ($action === 'history') {
         $d->execute($ids);
         foreach ($d->fetchAll(PDO::FETCH_ASSOC) as $r) $delivery[(int)$r['company_email_id']] = $r;
 
-        $events = [];
-        $e = $db->prepare(
-            "SELECT company_email_id, event, COUNT(DISTINCT recipient) AS cnt
-             FROM company_email_events WHERE company_email_id IN ($placeholders) GROUP BY company_email_id, event"
-        );
-        $e->execute($ids);
-        foreach ($e->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $events[(int)$r['company_email_id']][$r['event']] = (int)$r['cnt'];
-        }
+        // Recipient-level stats come from the same helpers the drill-down uses
+        // (lib/company_email.php), so each count equals its list's row count.
+        $counts   = ce_stat_counts($db, $ids);
+        $tracking = ce_tracking_status($db, $rows);
 
         foreach ($rows as &$row) {
             $id = (int)$row['id'];
-            $row['sent_count']   = (int)($delivery[$id]['sent_count']   ?? 0);
+            $c  = $counts[$id];
+            $t  = $tracking[$id];
+            $row['sent_count']   = (int)($delivery[$id]['sent_count']   ?? 0); // legacy raw queue rows; kept for compatibility
             $row['failed_count'] = (int)($delivery[$id]['failed_count'] ?? 0);
-            $row['opens']        = $events[$id]['open']    ?? 0;
-            $row['clicks']       = $events[$id]['click']   ?? 0;
-            $row['bounces']      = $events[$id]['bounce']  ?? 0;
-            $row['dropped']      = $events[$id]['dropped'] ?? 0;
+            $row['opens']        = $c['open'];
+            $row['clicks']       = $c['click'];
+            $row['bounces']      = $c['bounce'];
+            $row['dropped']      = $c['dropped'];
+            // null = not available (no tracking / no send records for this
+            // historical email), as distinct from a real 0.
+            $trk = $t['tracking'] !== 'unavailable';
+            $row['tracking']     = $t['tracking'];
+            $row['stats'] = [
+                'sent'       => $t['send_records'] ? $c['sent'] : null,
+                'delivered'  => $trk ? $c['delivered'] : null,
+                'open'       => $trk ? $c['open']      : null,
+                'not_opened' => ($trk && $t['send_records']) ? $c['not_opened'] : null,
+                'click'      => $trk ? $c['click']     : null,
+                'bounce'     => $trk ? $c['bounce']    : null,
+                'dropped'    => $trk ? $c['dropped']   : null,
+            ];
         }
         unset($row);
     }
@@ -298,6 +308,33 @@ if ($action === 'history_detail') {
     $sigHtml = ce_signature_html($senderEmail, $senderName, $_SERVER['HTTP_HOST']);
 
     echo json_encode(['ok'=>true, 'subject'=>$row['subject'], 'html'=>$row['body'] . $sigHtml]);
+    exit;
+}
+
+// Read-only recipient list behind one history stat (Sent / Delivered / Opens /
+// No Recorded Open / Clicks / Bounces / Dropped). Same visibility rule as
+// history_detail: admins see any send, everyone else only their own.
+if ($action === 'recipients_detail') {
+    $id   = (int)($body['id'] ?? 0);
+    $stat = (string)($body['stat'] ?? '');
+    if (!$id || !in_array($stat, CE_RECIPIENT_STATS, true)) { echo json_encode(['ok'=>false,'error'=>'id and valid stat required']); exit; }
+    $stmt = is_admin()
+        ? $db->prepare("SELECT id, subject, sent_at FROM company_emails WHERE id=?")
+        : $db->prepare("SELECT id, subject, sent_at FROM company_emails WHERE id=? AND sender_email=?");
+    is_admin() ? $stmt->execute([$id]) : $stmt->execute([$id, $me]);
+    $email = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$email) { echo json_encode(['ok'=>false,'error'=>'Not found']); exit; }
+
+    $t = ce_tracking_status($db, [$email])[$id];
+    $needsTracking = $stat !== 'sent';
+    $available = ($stat === 'sent' || $stat === 'not_opened') ? $t['send_records'] : true;
+    if ($needsTracking && $t['tracking'] === 'unavailable') $available = false;
+
+    $rows = $available ? ce_stat_rows($db, $id, $stat) : [];
+    echo json_encode([
+        'ok' => true, 'id' => $id, 'stat' => $stat, 'subject' => $email['subject'], 'sent_at' => $email['sent_at'],
+        'tracking' => $t['tracking'], 'available' => $available, 'count' => count($rows), 'rows' => $rows,
+    ]);
     exit;
 }
 
