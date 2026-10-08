@@ -10,7 +10,10 @@ require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/lib/dotloop.php';
 
 $agent = require_login();
-if (!is_admin()) { http_response_code(403); exit('Forbidden'); }
+// Was is_admin() until the 'admin' role was split off from 'super_admin'
+// 2026-10-08 specifically so the new tier doesn't see Finance — this page
+// is under the Finance nav dept, so it narrows the same way.
+if (!is_super_admin()) { http_response_code(403); exit('Forbidden'); }
 
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES); }
 

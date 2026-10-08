@@ -472,6 +472,11 @@ function render_sidebar(string $current, array $agent): void {
             $mlsCostsBypass = $mlsCostsAccess && $deptName === 'Finance';
             $mlsapBypass = $mlsapAccess && $deptName === 'Finance';
             if (!$admin && in_array($deptName, $leaderHiddenDepts, true) && !$financeChecklistBypass && !$annualReportsBypass && !$mlsCostsBypass && !$mlsapBypass) continue;
+            // Finance stays hidden from the 'admin' role too (is_admin() but
+            // not is_super_admin(), split off 2026-10-08) — unlike HR/
+            // Technology just above, which 'admin' sees in full like any
+            // other admin-tier role.
+            if ($deptName === 'Finance' && !$superAdmin && !$financeChecklistBypass && !$annualReportsBypass && !$mlsCostsBypass && !$mlsapBypass) continue;
             if (!$admin && $deptName === 'Operations' && !$isMcLeaderOrBic) continue;
             $dItems  = $byDept[$deptName] ?? [];
             $visible = array_values(array_filter($dItems, fn($it) =>

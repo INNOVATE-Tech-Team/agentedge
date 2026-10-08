@@ -9,6 +9,7 @@ require_once __DIR__ . '/auth.php';
 
 const ROLE_LABELS = [
     'super_admin'          => 'Super Admin',
+    'admin'                => 'Admin',
     'staff'                => 'Staff',
     'recruiter'            => 'Recruiter',
     'bic'                  => 'Broker in Charge',
@@ -45,7 +46,7 @@ function default_perms(string $role = 'agent'): array {
         'role'          => $r,
         'roles'         => [$r],
         'isSuperAdmin'  => $r === 'super_admin',
-        'isAdmin'       => in_array($r, ['super_admin', 'staff'], true),
+        'isAdmin'       => in_array($r, ['super_admin', 'admin', 'staff'], true),
         'mc_slugs'      => [],
         'own_mc_slug'   => '',
         'own_mc_slugs'  => [],
@@ -381,7 +382,11 @@ function my_roles(?array $perms = null): array         { return ($perms ?? curre
 // both finance_checklists.php and its api/ counterpart need the same check.
 const FINANCE_CHECKLIST_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com', 'dominic@innovateonline.com'];
 function can_access_finance_checklists(): bool {
-    if (is_admin()) return true;
+    // Was is_admin() (any admin-tier role) until the 'admin' role was split
+    // off from 'super_admin' 2026-10-08 specifically so the new tier does
+    // NOT see Finance — narrowed to is_super_admin() to match every other
+    // Finance gate in this file, rather than leaving this one wider.
+    if (is_super_admin()) return true;
     $email = strtolower(trim(current_agent()['email'] ?? ''));
     return $email !== '' && in_array($email, FINANCE_CHECKLIST_EMAILS, true);
 }
