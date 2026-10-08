@@ -474,6 +474,52 @@ if ($action === 'provision') {
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
 }
 
+// ── POST: resend_document ─────────────────────────────────────────────────────
+// Replaces the agent's outstanding PandaDoc signing request with a fresh one
+// (see pandadoc_resend_document()). Only valid while the doc_signing step is
+// 'sent' (awaiting signature) with a tracked PandaDoc document id -- a failed
+// or pending step is recovered with Provision Now instead. The step is changed
+// ONLY by the compare-and-swap below (new id, only if the row still holds the
+// id/status this request started from); every failure or refusal leaves it
+// exactly as it was. The webhook flips the step to 'done' once the agent signs.
+if ($action === 'resend_document') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $q = $pdo->prepare("SELECT * FROM onboard_queue WHERE id=?");
+    $q->execute([$queueId]);
+    $entry = $q->fetch(PDO::FETCH_ASSOC);
+    $q->closeCursor();   // don't hold a read snapshot open across the slow PandaDoc calls below
+    if (!$entry) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+    if (($entry['status'] ?? '') !== 'active') json_out(['ok'=>false,'error'=>'Onboarding is not active for this agent.']);
+
+    $st = $pdo->prepare("SELECT status, pandadoc_document_id FROM onboard_steps WHERE queue_id=? AND tool_key='doc_signing'");
+    $st->execute([$queueId]);
+    $step = $st->fetch(PDO::FETCH_ASSOC);
+    $st->closeCursor();  // (an open cursor would make the later UPDATE fail with 'database is locked' if anything else wrote meanwhile)
+    if (!$step) json_out(['ok'=>false,'error'=>'No document signing step on this entry.']);
+    $oldDocId = trim((string)($step['pandadoc_document_id'] ?? ''));
+    if ($step['status'] !== 'sent' || $oldDocId === '') {
+        json_out(['ok'=>false,'error'=>"Resend is only available while documents are out for signature (step status 'sent' with a PandaDoc document). This step is '{$step['status']}'" . ($oldDocId === '' ? ' with no document on file' : '') . '; use Provision Now to send or recover it.']);
+    }
+
+    require_once __DIR__ . '/../lib/pandadoc.php';
+    $result = pandadoc_resend_document(
+        $entry['agent_name'], $entry['agent_email'], $oldDocId,
+        function (string $newDocId) use ($pdo, $queueId, $oldDocId, $agent): bool {
+            // Compare-and-swap: only replace the id if no one else already changed it.
+            $upd = $pdo->prepare(
+                "UPDATE onboard_steps SET pandadoc_document_id=?, done_by=?, done_at=?, error_msg=NULL
+                 WHERE queue_id=? AND tool_key='doc_signing' AND status='sent' AND pandadoc_document_id=?"
+            );
+            $upd->execute([$newDocId, $agent['email'], date('Y-m-d H:i:s'), $queueId, $oldDocId]);
+            return $upd->rowCount() === 1;
+        },
+        $entry['state_code'] ?? null
+    );
+
+    if (!$result['ok']) json_out(['ok'=>false,'error'=>$result['error'] ?? 'Unknown error']);
+    json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
+}
+
 // ── POST: complete_initial_setup (Stage 1) ────────────────────────────────────
 // Everything that used to fire on "Mark Complete" now fires here, once: roster
 // write, welcome email, Market Center-assigned emails, the coach-assignment

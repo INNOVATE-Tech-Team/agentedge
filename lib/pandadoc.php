@@ -166,6 +166,71 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
     return ['ok'=>true,'document_id'=>$docId];
 }
 
+// Re-issues the onboarding agreement to an agent whose earlier document is
+// lost, expired, went to a wrong address, or was never received. A sent
+// PandaDoc document can't be re-sent in place, so this creates and sends a
+// fresh document from the state's template, swaps it in as the step's tracked
+// document, and only then deletes the superseded one.
+//
+// Safe under concurrent calls and partial failures:
+//   - $swap($newDocId) must atomically replace the tracked document id ONLY if
+//     the step still holds $oldDocId (compare-and-swap) and return true when it
+//     won. It runs after the new document has been created AND sent, and is the
+//     only thing that ever changes the step.
+//   - If $swap loses (returns false) or throws (e.g. SQLite "database is
+//     locked"), the NEW document is deleted (best-effort) and the old one stays
+//     tracked and live.
+//   - If creating or sending the new document fails, the partly created draft
+//     is deleted (best-effort); nothing about the old document changes.
+//   - Deleting the OLD document is best-effort and never undoes a successful swap.
+// Refuses if the current document is already completed/paid, and when its state
+// can't be determined (anything but a 404, which means it no longer exists in
+// PandaDoc -- the "lost document" case this exists for).
+// Returns ['ok'=>bool, 'error'?, 'note'?, 'document_id'?, 'conflict'?, 'already_signed'?].
+function pandadoc_resend_document(string $agentName, string $agentEmail, string $oldDocId, callable $swap, ?string $stateCode = null): array {
+    $check = pandadoc_request('GET', "/public/v1/documents/{$oldDocId}/details");
+    if ($check['ok']) {
+        $status = $check['data']['status'] ?? '';
+        if (in_array($status, ['document.completed', 'document.paid'], true)) {
+            return ['ok'=>false,'already_signed'=>true,'error'=>'This document has already been signed, so there is nothing to resend. The signed copy is attached to the agent\'s profile automatically within about 15 minutes.'];
+        }
+    } elseif (($check['code'] ?? 0) !== 404) {
+        return ['ok'=>false,'error'=>'Could not check the current document in PandaDoc (HTTP ' . (int)($check['code'] ?? 0) . '); nothing was changed. Try again shortly.'];
+    }
+
+    // Deletes a PandaDoc document; a 404 means it's already gone, which is fine.
+    $deleteDoc = function (string $id): bool {
+        $del = pandadoc_request('DELETE', "/public/v1/documents/{$id}");
+        return $del['ok'] || (int)($del['code'] ?? 0) === 404;
+    };
+
+    $result = pandadoc_send_document($agentName, $agentEmail, null, null, $stateCode);
+    $newId  = $result['document_id'] ?? null;
+    if (!$result['ok']) {
+        $error = ($result['error'] ?? 'Unknown error') . ' The existing document was left in place.';
+        if ($newId && !$deleteDoc($newId)) $error .= " The unsent replacement ({$newId}) could not be deleted in PandaDoc; remove it manually.";
+        return ['ok'=>false,'error'=>$error];
+    }
+
+    $dbError = null;
+    try { $won = (bool)$swap($newId); }
+    catch (\Throwable $e) { $won = false; $dbError = $e->getMessage(); }
+    if (!$won) {
+        $cleanup = $deleteDoc($newId) ? '' : " The replacement ({$newId}) could not be deleted in PandaDoc; remove it manually.";
+        if ($dbError !== null) {
+            $why = stripos($dbError, 'locked') !== false ? 'the database was busy' : 'a database error occurred';
+            return ['ok'=>false,'error'=>"Could not save the replacement document ({$why}); the existing document was left in place. Please try again." . $cleanup];
+        }
+        return ['ok'=>false,'conflict'=>true,'error'=>'This document was changed while resending (someone else may have just resent it), so nothing was changed. Refresh and check the current status.' . $cleanup];
+    }
+
+    $out = ['ok'=>true,'document_id'=>$newId];
+    if ($oldDocId !== $newId && !$deleteDoc($oldDocId)) {
+        $out['note'] = "Resent, but the previous document ({$oldDocId}) could not be deleted in PandaDoc; remove it manually.";
+    }
+    return $out;
+}
+
 // Downloads the final PDF for a completed document. Uses the plain /download
 // endpoint (not /download-protected) since that one requires a production
 // API key and 401s on a sandbox key — this repo's key may be either.

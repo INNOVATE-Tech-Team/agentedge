@@ -454,6 +454,9 @@
         // Done automatically; these are just manual overrides.
         actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Signed</button>
                        <button class="ob-btn-sm ob-btn-undo" onclick="markStep(${queueId},'${esc(step.tool_key)}','pending',this)">Undo</button>`;
+        if (step.tool_key === 'doc_signing') {
+          actionsHtml += ` <button class="ob-btn-sm ob-btn-provision" onclick="resendDocument(${queueId},this)">Resend Documents</button>`;
+        }
       } else {
         // pending or failed
         actionsHtml = `<button class="ob-btn-sm ob-btn-done" onclick="markStep(${queueId},'${esc(step.tool_key)}','done',this)">Mark Done</button>
@@ -675,6 +678,28 @@
         btn.textContent = origText;
         btn.style.opacity = '1';
       });
+  };
+
+  // ── Resend the PandaDoc signing request ────────────────────────────────────
+  window.resendDocument = function (queueId, btn) {
+    if (!confirm('Send a fresh copy of the onboarding documents to this agent? The previous unsigned document will be deleted in PandaDoc.')) return;
+    btn.disabled    = true;
+    const origText  = btn.textContent;
+    btn.textContent = '⏳';
+
+    post('api/onboard_action.php?action=resend_document', { queue_id: queueId })
+      .then(d => {
+        if (d.ok) {
+          if (d.note) alert(d.note);
+          loadQueue();
+        } else {
+          btn.disabled    = false;
+          btn.textContent = origText;
+          alert('Resend failed: ' + (d.error || 'Unknown error'));
+          loadQueue();
+        }
+      })
+      .catch(() => { btn.disabled = false; btn.textContent = origText; });
   };
 
   // ── Set license state on a queue entry ─────────────────────────────────────
