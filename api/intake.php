@@ -151,42 +151,61 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 header('Content-Type: application/json');
 $postAction = $_GET['action'] ?? ($_POST['action'] ?? '');
 
-// Headshots come straight off phones (up to the 10 MB cap enforced below) but
-// are only ever displayed as a small avatar/thumbnail, and are served inline
-// on every profile page view — an unresized upload made agent_profile.php
-// painfully slow to load. Downscale in place so what's stored on disk is
-// close to what's actually rendered.
-function resize_headshot_in_place(string $path, string $mime, int $maxDim = 1200): void {
+// Minimum shortest side for a headshot, in pixels. The website shows
+// headshots up to ~480px wide, so anything smaller looks blurry; the upload
+// pages' cropper (assets/headshot-crop.js) enforces the same floor.
+const HEADSHOT_MIN_SIDE = 400;
+const HEADSHOT_MAX_SIDE = 800;
+
+// Normalizes a stored headshot to a square JPEG, at most HEADSHOT_MAX_SIDE
+// on a side. Uploads from the cropper are already square, so this is mostly
+// a no-op re-encode for them; anything else (an old cached page posting the
+// raw file) gets cropped here instead: centered horizontally, and toward the
+// top on portrait photos, where a headshot's face usually sits. Never
+// upscales. Returns false (file untouched) when GD can't safely process it.
+function square_headshot_in_place(string $path, string $mime): bool {
     $create = [
         'image/jpeg' => 'imagecreatefromjpeg',
         'image/png'  => 'imagecreatefrompng',
         'image/webp' => 'imagecreatefromwebp',
+        'image/gif'  => 'imagecreatefromgif',
     ][$mime] ?? null;
-    if (!$create || !function_exists($create)) return; // leave GIFs (animation) and anything unhandled alone
+    if (!$create || !function_exists($create)) return false;
+
+    $info = @getimagesize($path);
+    if (!$info) return false;
+    // Full-size phone originals can need more memory to decode than PHP
+    // allows, and running out is a fatal error, not a catchable one.
+    if ($info[0] * $info[1] * 5 > 120 * 1024 * 1024) return false;
+    @ini_set('memory_limit', '256M');
 
     $src = @$create($path);
-    if (!$src) return;
+    if (!$src) return false;
+
+    // Phone JPEGs often store rotation as EXIF metadata, which GD ignores.
+    if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
+        $exif = @exif_read_data($path);
+        $angle = [3 => 180, 6 => -90, 8 => 90][(int)($exif['Orientation'] ?? 1)] ?? 0;
+        if ($angle) {
+            $rotated = imagerotate($src, $angle, 0);
+            if ($rotated) { imagedestroy($src); $src = $rotated; }
+        }
+    }
+
     $w = imagesx($src);
     $h = imagesy($src);
-    if ($w <= $maxDim && $h <= $maxDim) { imagedestroy($src); return; }
+    $side = min($w, $h);
+    $sx = (int)round(($w - $side) / 2);
+    $sy = $h > $w ? (int)round(($h - $side) * 0.2) : 0;
+    $out = min($side, HEADSHOT_MAX_SIDE);
 
-    $scale = $maxDim / max($w, $h);
-    $nw = max(1, (int)round($w * $scale));
-    $nh = max(1, (int)round($h * $scale));
-    $dst = imagecreatetruecolor($nw, $nh);
-    if ($mime === 'image/png') {
-        imagealphablending($dst, false);
-        imagesavealpha($dst, true);
-    }
-    imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
-
-    switch ($mime) {
-        case 'image/jpeg': imagejpeg($dst, $path, 85); break;
-        case 'image/png':  imagepng($dst, $path, 6); break;
-        case 'image/webp': imagewebp($dst, $path, 85); break;
-    }
+    $dst = imagecreatetruecolor($out, $out);
+    imagefill($dst, 0, 0, imagecolorallocate($dst, 255, 255, 255)); // flatten transparency
+    imagecopyresampled($dst, $src, 0, 0, $sx, $sy, $out, $out, $side, $side);
+    $ok = imagejpeg($dst, $path, 88);
     imagedestroy($src);
     imagedestroy($dst);
+    return $ok;
 }
 
 // ── POST: upload headshot ─────────────────────────────────────────────────────
@@ -208,6 +227,14 @@ if ($postAction === 'upload') {
     if (!in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true)) {
         intake_json_out(['ok' => false, 'error' => 'Only JPEG, PNG, GIF, or WebP images are allowed'], 400);
     }
+    $dims = @getimagesize($f['tmp_name']);
+    if (!$dims) {
+        intake_json_out(['ok' => false, 'error' => 'Could not read that image. Please choose a JPEG or PNG photo.'], 400);
+    }
+    if (min($dims[0], $dims[1]) < HEADSHOT_MIN_SIDE) {
+        intake_json_out(['ok' => false, 'error' => 'This photo is only ' . $dims[0] . '×' . $dims[1]
+            . ' pixels. Please choose a photo at least ' . HEADSHOT_MIN_SIDE . '×' . HEADSHOT_MIN_SIDE . '.'], 400);
+    }
     $cnt = $pdo->prepare("SELECT COUNT(*) FROM agent_intake_files WHERE agent_email=?");
     $cnt->execute([$targetEmail]);
     if ((int)$cnt->fetchColumn() >= 5) {
@@ -224,7 +251,19 @@ if ($postAction === 'upload') {
     if (!move_uploaded_file($f['tmp_name'], $destPath)) {
         intake_json_out(['ok' => false, 'error' => 'Could not save uploaded file'], 500);
     }
-    resize_headshot_in_place($destPath, $mime);
+    // Stored as a square JPEG from here on; renamed to .jpg so the key's
+    // extension matches. If processing isn't possible the original is kept.
+    if (square_headshot_in_place($destPath, $mime)) {
+        $mime = 'image/jpeg';
+        if ($ext !== 'jpg') {
+            $jpgKey = pathinfo($key, PATHINFO_FILENAME) . '.jpg';
+            if (@rename($destPath, $hsDir . '/' . $jpgKey)) {
+                $key = $jpgKey;
+                $destPath = $hsDir . '/' . $jpgKey;
+            }
+        }
+    }
+    clearstatcache(true, $destPath);
     $sizeBytes = @filesize($destPath) ?: $f['size'];
     $pdo->prepare(
         "INSERT INTO agent_intake_files (agent_email, file_key, orig_name, mime_type, size_bytes)
