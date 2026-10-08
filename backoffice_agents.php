@@ -892,21 +892,17 @@ $missingCount = count($missingAgents);
     if (!file) return;
     var msg = document.getElementById('hs-msg-' + idx);
     if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
-    msg.textContent = '';
-    HeadshotCrop.pick(file)
-      .then(function (blob) {
-        msg.textContent = 'Uploading…';
-        var fd = new FormData();
-        fd.append('headshot', blob, 'headshot.jpg');
-        fd.append('email', email);
-        return fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
-          .then(function (r) { return r.json(); });
-      })
+    msg.textContent = 'Uploading…';
+    var fd = new FormData();
+    fd.append('headshot', file);
+    fd.append('email', email);
+    fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(function (r) { return r.json(); })
       .then(function (res) {
         if (res.ok) { location.reload(); }
         else { msg.textContent = res.error || 'Upload failed.'; }
       })
-      .catch(function (err) { msg.textContent = HeadshotCrop.errorText(err); });
+      .catch(function () { msg.textContent = 'Network error.'; });
     inputEl.value = '';
   };
 
@@ -1609,6 +1605,5 @@ $missingCount = count($missingAgents);
   };
 }());
 </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>

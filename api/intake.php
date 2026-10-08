@@ -2,16 +2,21 @@
 // Agent intake form API — native replacement for the Google Form.
 // GET (no action)           → load own (or admin: any agent's) intake data + headshot list
 // GET action=list           → admin: all agents with intake status
-// GET action=headshot&key=  → serve a headshot image file
+// GET action=headshot&key=  → serve a headshot image file (a small thumbnail; &full=1 for the
+//                             original inline, as the headshot cropper needs; &dl=1 to download it)
 // POST action=save (default)→ upsert intake data
 // POST action=upload        → upload a headshot (multipart/form-data, field: headshot; optional field email, admin only)
 // POST action=delete_file   → delete a headshot by key
+// POST action=set_headshot  → choose one uploaded photo as the headshot, with its square crop
+//                             (multipart: key, crop file, rect JSON; optional email, admin only)
+// GET  action=headshot_crop&email= → serve the agent's chosen square headshot crop
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/crypto.php';
 require_once __DIR__ . '/../lib/notifications.php';
+require_once __DIR__ . '/../lib/headshot_select.php';
 
 function intake_json_out(array $d, int $code = 200, bool $dispatch = false): void {
     http_response_code($code);
@@ -60,7 +65,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'headshot') {
     // For inline display serve a small JPEG thumbnail (≤128px, ~5-20 KB)
     // instead of the raw upload (often 1-2 MB PNG). Falls back to the
     // original if thumbnail generation fails (e.g. unsupported format).
-    if (!$isDl) {
+    // &full=1 skips the thumbnail: the headshot cropper frames the original.
+    if (!$isDl && empty($_GET['full'])) {
         require_once __DIR__ . '/../lib/headshot_thumb.php';
         $thumbPath = ensure_headshot_thumbnail($path, $key);
         if ($thumbPath) {
@@ -98,6 +104,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'list') {
     intake_json_out(['ok' => true, 'agents' => $rows]);
 }
 
+// ── GET: serve the chosen square headshot crop ────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'headshot_crop') {
+    $email = strtolower(trim($_GET['email'] ?? '')) ?: $myEmail;
+    if (!is_leader() && $email !== $myEmail) {
+        header('Content-Type: application/json'); intake_json_out(['error' => 'forbidden'], 403);
+    }
+    $sel  = headshot_select_get($pdo, $email);
+    $path = $sel ? headshot_crop_dir() . '/' . basename($sel['crop_key']) : '';
+    if (!$sel || !is_file($path)) { header('Content-Type: application/json'); intake_json_out(['error' => 'no headshot chosen'], 404); }
+    header('Content-Type: image/jpeg');
+    header('Cache-Control: private, no-cache');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    exit;
+}
+
 // ── GET: load a single agent's intake data ────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     header('Content-Type: application/json');
@@ -127,6 +150,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     );
     $fst->execute([$email]);
     $headshots = $fst->fetchAll(PDO::FETCH_ASSOC);
+    $hsDataDir = (function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null) ?: (__DIR__ . '/../data');
+    foreach ($headshots as &$hs) {
+        $dims = @getimagesize($hsDataDir . '/headshots/' . basename($hs['file_key']));
+        $hs['width']  = $dims ? $dims[0] : null;
+        $hs['height'] = $dims ? $dims[1] : null;
+    }
+    unset($hs);
 
     $lst = $pdo->prepare(
         "SELECT license_number, license_state, license_exp FROM agent_intake_licenses WHERE agent_email=? ORDER BY id"
@@ -140,7 +170,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $mst->execute([$email]);
     $mlsMemberships = $mst->fetchAll(PDO::FETCH_ASSOC);
 
-    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots, 'additional_licenses' => $additionalLicenses, 'mls_memberships' => $mlsMemberships]);
+    $selected = headshot_select_get($pdo, $email);
+
+    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots, 'headshot' => $selected, 'additional_licenses' => $additionalLicenses, 'mls_memberships' => $mlsMemberships]);
 }
 
 // ── All remaining actions require POST ────────────────────────────────────────
@@ -151,71 +183,83 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 header('Content-Type: application/json');
 $postAction = $_GET['action'] ?? ($_POST['action'] ?? '');
 
-// Minimum shortest side for a headshot, in pixels. The website shows
-// headshots up to ~480px wide, so anything smaller looks blurry; the upload
-// pages' cropper (assets/headshot-crop.js) enforces the same floor.
-const HEADSHOT_MIN_SIDE = 400;
-const HEADSHOT_MAX_SIDE = 800;
+// Minimum shortest side for an uploaded photo, in pixels. The website shows
+// headshots up to ~480px wide, so anything smaller looks blurry; the photo
+// manager (assets/headshot-manager.js) checks the same floor before upload.
+const HEADSHOT_MIN_SIDE  = 400;
+// Uploaded originals are kept for marketing use, capped at this size. The
+// photo manager already scales and re-encodes in the browser (which also
+// applies phone rotation correctly); this only catches raw uploads.
+const HEADSHOT_ORIG_MAX  = 3000;
+// The chosen headshot's square crop.
+const HEADSHOT_CROP_MAX  = 800;
 
-// Normalizes a stored headshot to a square JPEG, at most HEADSHOT_MAX_SIDE
-// on a side. Uploads from the cropper are already square, so this is mostly
-// a no-op re-encode for them; anything else (an old cached page posting the
-// raw file) gets cropped here instead: centered horizontally, and toward the
-// top on portrait photos, where a headshot's face usually sits. Never
-// upscales. Returns false (file untouched) when GD can't safely process it.
-function square_headshot_in_place(string $path, string $mime): bool {
+function headshot_gd_open(string $path, string $mime) {
     $create = [
         'image/jpeg' => 'imagecreatefromjpeg',
         'image/png'  => 'imagecreatefrompng',
         'image/webp' => 'imagecreatefromwebp',
         'image/gif'  => 'imagecreatefromgif',
     ][$mime] ?? null;
-    if (!$create || !function_exists($create)) return false;
-
+    if (!$create || !function_exists($create)) return null;
     $info = @getimagesize($path);
-    if (!$info) return false;
+    if (!$info) return null;
     // Full-size phone originals can need more memory to decode than PHP
     // allows, and running out is a fatal error, not a catchable one.
-    if ($info[0] * $info[1] * 5 > 120 * 1024 * 1024) return false;
+    if ($info[0] * $info[1] * 5 > 120 * 1024 * 1024) return null;
     @ini_set('memory_limit', '256M');
+    return @$create($path) ?: null;
+}
 
-    $src = @$create($path);
-    if (!$src) return false;
-
-    // Phone JPEGs often store rotation as EXIF metadata, which GD ignores.
-    if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
-        $exif = @exif_read_data($path);
-        $angle = [3 => 180, 6 => -90, 8 => 90][(int)($exif['Orientation'] ?? 1)] ?? 0;
-        if ($angle) {
-            $rotated = imagerotate($src, $angle, 0);
-            if ($rotated) { imagedestroy($src); $src = $rotated; }
-        }
+// Scales an uploaded original down to HEADSHOT_ORIG_MAX if it's larger,
+// keeping its format (PNG transparency included). Smaller files are left
+// byte-for-byte untouched.
+function limit_original_in_place(string $path, string $mime): void {
+    $info = @getimagesize($path);
+    if (!$info || max($info[0], $info[1]) <= HEADSHOT_ORIG_MAX || $mime === 'image/gif') return;
+    $src = headshot_gd_open($path, $mime);
+    if (!$src) return;
+    $w = imagesx($src); $h = imagesy($src);
+    $scale = HEADSHOT_ORIG_MAX / max($w, $h);
+    $nw = max(1, (int)round($w * $scale)); $nh = max(1, (int)round($h * $scale));
+    $dst = imagecreatetruecolor($nw, $nh);
+    if ($mime === 'image/png') { imagealphablending($dst, false); imagesavealpha($dst, true); }
+    imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
+    switch ($mime) {
+        case 'image/jpeg': imagejpeg($dst, $path, 90); break;
+        case 'image/png':  imagepng($dst, $path, 6); break;
+        case 'image/webp': imagewebp($dst, $path, 90); break;
     }
+    imagedestroy($src); imagedestroy($dst);
+}
 
-    $w = imagesx($src);
-    $h = imagesy($src);
+// Re-encodes a headshot crop as a square JPEG of at most HEADSHOT_CROP_MAX,
+// center-cropping if it somehow isn't square. Never upscales.
+function square_headshot_in_place(string $path, string $mime): bool {
+    $src = headshot_gd_open($path, $mime);
+    if (!$src) return false;
+    $w = imagesx($src); $h = imagesy($src);
     $side = min($w, $h);
-    $sx = (int)round(($w - $side) / 2);
-    $sy = $h > $w ? (int)round(($h - $side) * 0.2) : 0;
-    $out = min($side, HEADSHOT_MAX_SIDE);
-
-    $dst = imagecreatetruecolor($out, $out);
+    $out  = min($side, HEADSHOT_CROP_MAX);
+    $dst  = imagecreatetruecolor($out, $out);
     imagefill($dst, 0, 0, imagecolorallocate($dst, 255, 255, 255)); // flatten transparency
-    imagecopyresampled($dst, $src, 0, 0, $sx, $sy, $out, $out, $side, $side);
+    imagecopyresampled($dst, $src, 0, 0, (int)(($w - $side) / 2), (int)(($h - $side) / 2), $out, $out, $side, $side);
     $ok = imagejpeg($dst, $path, 88);
-    imagedestroy($src);
-    imagedestroy($dst);
+    imagedestroy($src); imagedestroy($dst);
     return $ok;
+}
+
+// Admins may act on another agent's photos via an `email` field.
+function headshot_target_email(string $myEmail, bool $isAdmin): string {
+    if (empty($_POST['email'])) return $myEmail;
+    $requested = strtolower(trim($_POST['email']));
+    if (!$isAdmin && $requested !== $myEmail) intake_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
+    return $requested;
 }
 
 // ── POST: upload headshot ─────────────────────────────────────────────────────
 if ($postAction === 'upload') {
-    $targetEmail = $myEmail;
-    if (!empty($_POST['email'])) {
-        $requested = strtolower(trim($_POST['email']));
-        if (!$isAdmin && $requested !== $myEmail) intake_json_out(['ok' => false, 'error' => 'Forbidden'], 403);
-        $targetEmail = $requested;
-    }
+    $targetEmail = headshot_target_email($myEmail, $isAdmin);
     if (empty($_FILES['headshot']) || $_FILES['headshot']['error'] !== UPLOAD_ERR_OK) {
         intake_json_out(['ok' => false, 'error' => 'No valid file received'], 400);
     }
@@ -251,18 +295,9 @@ if ($postAction === 'upload') {
     if (!move_uploaded_file($f['tmp_name'], $destPath)) {
         intake_json_out(['ok' => false, 'error' => 'Could not save uploaded file'], 500);
     }
-    // Stored as a square JPEG from here on; renamed to .jpg so the key's
-    // extension matches. If processing isn't possible the original is kept.
-    if (square_headshot_in_place($destPath, $mime)) {
-        $mime = 'image/jpeg';
-        if ($ext !== 'jpg') {
-            $jpgKey = pathinfo($key, PATHINFO_FILENAME) . '.jpg';
-            if (@rename($destPath, $hsDir . '/' . $jpgKey)) {
-                $key = $jpgKey;
-                $destPath = $hsDir . '/' . $jpgKey;
-            }
-        }
-    }
+    // Kept uncropped: staff use the originals for marketing. Only the photo
+    // chosen as the headshot gets a square crop (set_headshot below).
+    limit_original_in_place($destPath, $mime);
     clearstatcache(true, $destPath);
     $sizeBytes = @filesize($destPath) ?: $f['size'];
     $pdo->prepare(
@@ -271,6 +306,51 @@ if ($postAction === 'upload') {
     )->execute([$targetEmail, $key, basename($f['name']), $mime, $sizeBytes]);
 
     intake_json_out(['ok' => true, 'file_key' => $key, 'orig_name' => basename($f['name']), 'size_bytes' => $sizeBytes]);
+}
+
+// ── POST: choose the headshot ─────────────────────────────────────────────────
+// The browser sends the square crop it made from one of the agent's
+// uploaded photos, plus the frame it used (so "Adjust crop" can reopen it).
+if ($postAction === 'set_headshot') {
+    $targetEmail = headshot_target_email($myEmail, $isAdmin);
+    $sourceKey   = trim($_POST['key'] ?? '');
+    $own = $pdo->prepare("SELECT 1 FROM agent_intake_files WHERE file_key=? AND agent_email=?");
+    $own->execute([$sourceKey, $targetEmail]);
+    if (!$sourceKey || !$own->fetchColumn()) intake_json_out(['ok' => false, 'error' => 'Photo not found'], 404);
+
+    if (empty($_FILES['crop']) || $_FILES['crop']['error'] !== UPLOAD_ERR_OK) {
+        intake_json_out(['ok' => false, 'error' => 'No cropped image received'], 400);
+    }
+    $f    = $_FILES['crop'];
+    $mime = mime_content_type($f['tmp_name']);
+    $dims = @getimagesize($f['tmp_name']);
+    if (!in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true) || !$dims) {
+        intake_json_out(['ok' => false, 'error' => 'Could not read the cropped image'], 400);
+    }
+    // The cropper never frames less than HEADSHOT_MIN_SIDE source pixels;
+    // allow a little rounding slack.
+    if (min($dims[0], $dims[1]) < HEADSHOT_MIN_SIDE - 10) {
+        intake_json_out(['ok' => false, 'error' => 'The cropped headshot is too small. Please zoom out a little.'], 400);
+    }
+
+    $rect = json_decode($_POST['rect'] ?? '', true);
+    $rect = is_array($rect) && isset($rect['x'], $rect['y'], $rect['size'])
+        ? ['x' => (int)$rect['x'], 'y' => (int)$rect['y'], 'size' => (int)$rect['size']]
+        : null;
+
+    $dir = headshot_crop_dir();
+    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    $cropKey  = bin2hex(random_bytes(16)) . '.jpg';
+    $cropPath = $dir . '/' . $cropKey;
+    if (!move_uploaded_file($f['tmp_name'], $cropPath)) {
+        intake_json_out(['ok' => false, 'error' => 'Could not save the headshot'], 500);
+    }
+    if (!square_headshot_in_place($cropPath, $mime)) {
+        @unlink($cropPath);
+        intake_json_out(['ok' => false, 'error' => 'Could not process the headshot'], 500);
+    }
+    headshot_select_save($pdo, $targetEmail, $sourceKey, $cropKey, $rect);
+    intake_json_out(['ok' => true, 'headshot' => headshot_select_get($pdo, $targetEmail)]);
 }
 
 // ── POST: delete headshot ─────────────────────────────────────────────────────
@@ -290,6 +370,7 @@ if ($postAction === 'delete_file') {
     $dataDir = $cfgDir ?: (__DIR__ . '/../data');
     @unlink($dataDir . '/headshots/' . basename($key));
     $pdo->prepare("DELETE FROM agent_intake_files WHERE file_key=?")->execute([$key]);
+    headshot_select_forget_source($pdo, strtolower($row['agent_email']), $key);
     intake_json_out(['ok' => true]);
 }
 

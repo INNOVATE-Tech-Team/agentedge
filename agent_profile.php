@@ -6,6 +6,7 @@ require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/lib/crypto.php';
 require_once __DIR__ . '/lib/agent_profile.php';
+require_once __DIR__ . '/lib/headshot_select.php';
 
 $agent = require_login();
 $perms = current_perms();
@@ -47,6 +48,7 @@ $extraLicenses = $targetEmail !== '' ? load_agent_additional_licenses($targetEma
 $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) : 0;
 $headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
 $headshots     = $targetEmail !== '' ? load_agent_headshots($targetEmail) : [];
+$chosenHeadshot = $targetEmail !== '' ? headshot_select_get(local_db(), $targetEmail) : null;
 $queueStatus   = $targetEmail !== '' ? load_agent_queue_status($targetEmail) : ['onboarding' => null, 'offboarding' => null];
 $rosterNotesStmt = $targetEmail !== '' ? local_db()->prepare("SELECT COALESCE(retention_notes,'') AS retention_notes FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1") : null;
 if ($rosterNotesStmt) { $rosterNotesStmt->execute([$targetEmail]); }
@@ -227,7 +229,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 <div class="content">
   <div class="content-top">
     <div class="ap-header-row">
-      <?php if ($headshotKey): ?>
+      <?php if ($chosenHeadshot): ?>
+        <img class="ap-avatar-img" src="api/intake.php?action=headshot_crop&email=<?= urlencode($targetEmail) ?>" alt="">
+      <?php elseif ($headshotKey): ?>
         <img class="ap-avatar-img" src="api/intake.php?action=headshot&key=<?= urlencode($headshotKey) ?>" alt="">
       <?php else: ?>
         <div class="ap-avatar-fallback"><?php
@@ -371,24 +375,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <?php endif; ?>
           </div>
 
-          <div class="dg-section">Headshots</div>
+          <div class="dg-section">Photos &amp; headshot</div>
           <div class="dg-field" style="grid-column:1/-1">
-            <div class="hs-grid" id="hs-grid">
-              <?php foreach ($headshots as $hsFile): ?>
-                <div class="hs-thumb" data-key="<?= h($hsFile['file_key']) ?>">
-                  <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                    <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>">
-                  </a>
-                  <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>', this.parentElement)">&#10005;</button>
-                </div>
-              <?php endforeach; ?>
-            </div>
-            <label class="hs-upload-label<?= $headshotCount >= 5 ? ' disabled' : '' ?>" id="hs-upload-label" for="hs-file">
-              <span>&#43; Add Headshot</span>
-            </label>
-            <input type="file" id="hs-file" accept="image/*" <?= $headshotCount >= 5 ? 'disabled' : '' ?>>
-            <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
-            <div class="hs-msg" id="hs-msg"></div>
+            <div id="hs-manager"></div>
           </div>
 
           <?php if ($retentionNotes !== ''): ?>
@@ -734,6 +723,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
+<script src="assets/headshot-crop.js"></script>
+<script src="assets/headshot-manager.js"></script>
 <script>
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
@@ -790,79 +781,9 @@ window.switchApTab = function (t) {
 };
 
 // ── Headshots ────────────────────────────────────────────────────────────────
-function hsCount() { return document.getElementById('hs-grid').querySelectorAll('.hs-thumb').length; }
-
-function hsSyncUploadState(count) {
-  var lbl = document.getElementById('hs-upload-label');
-  var inp = document.getElementById('hs-file');
-  lbl.classList.toggle('disabled', count >= 5);
-  inp.disabled = count >= 5;
+if (document.getElementById('hs-manager')) {
+  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL });
 }
-
-function hsAddThumb(key, origName) {
-  var grid = document.getElementById('hs-grid');
-  var wrap = document.createElement('div');
-  wrap.className = 'hs-thumb';
-  wrap.dataset.key = key;
-  wrap.innerHTML =
-    '<a href="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" target="_blank" title="' + esc(origName || '') + '">' +
-      '<img src="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" alt="' + esc(origName || '') + '">' +
-    '</a>' +
-    '<button type="button" class="hs-del">&#10005;</button>';
-  wrap.querySelector('.hs-del').addEventListener('click', function () { deleteHeadshot(key, wrap); });
-  grid.appendChild(wrap);
-}
-
-window.deleteHeadshot = function (key, wrap) {
-  if (!confirm('Delete this headshot?')) return;
-  var msg = document.getElementById('hs-msg');
-  msg.textContent = 'Deleting…';
-  fetch('api/intake.php?action=delete_file', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: key })
-  }).then(function (r) { return r.json(); }).then(function (res) {
-    if (res.ok) {
-      wrap.remove();
-      hsSyncUploadState(hsCount());
-      msg.textContent = 'Deleted.';
-      setTimeout(function () { msg.textContent = ''; }, 2000);
-    } else {
-      msg.textContent = res.error || 'Delete failed.';
-    }
-  }).catch(function () { msg.textContent = 'Network error.'; });
-};
-
-var hsFileInput = document.getElementById('hs-file');
-if (hsFileInput) hsFileInput.addEventListener('change', function () {
-  var file = this.files[0];
-  var msg = document.getElementById('hs-msg');
-  if (!file) return;
-  if (hsCount() >= 5) { msg.textContent = 'Maximum 5 headshots reached.'; return; }
-  if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
-
-  msg.textContent = '';
-  HeadshotCrop.pick(file).then(function (blob) {
-    msg.textContent = 'Uploading…';
-    var fd = new FormData();
-    fd.append('headshot', blob, 'headshot.jpg');
-    fd.append('email', PROFILE_EMAIL);
-    return fetch('api/intake.php?action=upload', {
-      method: 'POST', credentials: 'same-origin', body: fd
-    }).then(function (r) { return r.json(); });
-  }).then(function (res) {
-    if (res.ok && res.file_key) {
-      hsAddThumb(res.file_key, res.orig_name);
-      hsSyncUploadState(hsCount());
-      msg.textContent = 'Uploaded.';
-      setTimeout(function () { msg.textContent = ''; }, 2000);
-    } else {
-      msg.textContent = res.error || 'Upload failed.';
-    }
-  }).catch(function (err) { msg.textContent = HeadshotCrop.errorText(err); });
-
-  this.value = '';
-});
 
 // ── Documents tab ────────────────────────────────────────────────────────────
 function fmtBytes(n) {
@@ -1633,6 +1554,5 @@ if (CAN_EDIT_PERMISSIONS && document.getElementById('ap-tab-permission') && docu
   permissionLoaded = true; loadPermissionTab();
 }
 </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>
