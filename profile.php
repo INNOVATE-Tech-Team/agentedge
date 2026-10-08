@@ -114,12 +114,13 @@ $agent = require_login();
         <section class="card" style="margin-top:20px">
           <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Profile Photo</h2>
           <p class="form-sub" style="margin:0 0 18px">Shown on the agent roster and your profile across INNOVATE.</p>
+          <div id="hs-lowres" class="banner" hidden style="margin-bottom:12px"></div>
           <div class="hs-grid" id="hs-grid"></div>
           <label class="hs-upload-label" id="hs-upload-label" for="hs-file">
             <span>&#43; Upload Photo</span>
           </label>
           <input type="file" id="hs-file" accept="image/*">
-          <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
+          <div class="hs-note">Upload up to 5 photos. At least 400×400 pixels, max 10 MB. You'll frame it as a square before it uploads.</div>
           <div class="hs-msg" id="hs-msg"></div>
         </section>
 
@@ -206,6 +207,7 @@ $agent = require_login();
     </div>
   </div>
   <script src="assets/profile.js"></script>
+  <script src="assets/headshot-crop.js"></script>
   <script>
   // ── Notification preferences ────────────────────────────────────────────────
   (function(){
@@ -271,26 +273,46 @@ $agent = require_login();
       if (hsCount() >= 5) { msg.textContent = 'Maximum 5 photos reached.'; return; }
       if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
 
-      msg.textContent = 'Uploading…';
-      const fd = new FormData();
-      fd.append('headshot', file);
-      fetch('api/intake.php?action=upload', {
-        method: 'POST', credentials: 'same-origin', body: fd,
-      }).then(r => r.json()).then(res => {
+      msg.textContent = '';
+      HeadshotCrop.pick(file).then(blob => {
+        msg.textContent = 'Uploading…';
+        const fd = new FormData();
+        fd.append('headshot', blob, 'headshot.jpg');
+        return fetch('api/intake.php?action=upload', {
+          method: 'POST', credentials: 'same-origin', body: fd,
+        }).then(r => r.json());
+      }).then(res => {
         if (res.ok && res.file_key) {
           addThumb(res.file_key);
           syncUploadState();
+          document.getElementById('hs-lowres').hidden = true;
           msg.textContent = 'Uploaded.';
           setTimeout(() => msg.textContent = '', 2000);
         } else {
           msg.textContent = res.error || 'Upload failed.';
         }
-      }).catch(() => { msg.textContent = 'Network error.'; });
+      }).catch(err => { msg.textContent = HeadshotCrop.errorText(err); });
     });
 
     fetch('api/intake.php', { credentials: 'same-origin' }).then(r => r.json()).then(data => {
-      (data.headshots || []).forEach(h => addThumb(h.file_key));
+      const shots = data.headshots || [];
+      shots.forEach(h => addThumb(h.file_key));
       syncUploadState();
+      // The website uses the most recent upload. Older uploads predate the
+      // 400px minimum, so nudge the agent if theirs is below it.
+      const latest = shots[shots.length - 1];
+      if (latest) {
+        const probe = new Image();
+        probe.onload = function(){
+          const w = probe.naturalWidth, h = probe.naturalHeight;
+          if (Math.min(w, h) >= HeadshotCrop.MIN_SIDE) return;
+          const note = document.getElementById('hs-lowres');
+          note.textContent = 'Your current photo is only ' + w + '×' + h + ' pixels, so it looks blurry on the website. '
+            + 'Please upload a higher-quality photo (at least 400×400).';
+          note.hidden = false;
+        };
+        probe.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(latest.file_key);
+      }
     }).catch(() => {});
   })();
 

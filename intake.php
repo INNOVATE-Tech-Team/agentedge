@@ -435,15 +435,17 @@ $intakeMarketCenters = local_db()
       if (hsCount() >= 5) { el('hs-msg').textContent = 'Maximum 5 headshots reached.'; return; }
       if (file.size > 10 * 1024 * 1024) { el('hs-msg').textContent = 'File exceeds 10 MB limit.'; return; }
 
-      el('hs-msg').textContent = 'Uploading…';
-      const fd = new FormData();
-      fd.append('headshot', file);
-
-      fetch('api/intake.php?action=upload', {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: fd
-      }).then(function(r) { return r.json(); }).then(function(res) {
+      el('hs-msg').textContent = '';
+      HeadshotCrop.pick(file).then(function(blob) {
+        el('hs-msg').textContent = 'Uploading…';
+        const fd = new FormData();
+        fd.append('headshot', blob, 'headshot.jpg');
+        return fetch('api/intake.php?action=upload', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: fd
+        }).then(function(r) { return r.json(); });
+      }).then(function(res) {
         if (res.ok && res.file_key) {
           addThumb(res.file_key);
           syncUploadState(hsCount());
@@ -452,7 +454,7 @@ $intakeMarketCenters = local_db()
         } else {
           el('hs-msg').textContent = res.error || 'Upload failed.';
         }
-      }).catch(function() { el('hs-msg').textContent = 'Network error.'; });
+      }).catch(function(err) { el('hs-msg').textContent = HeadshotCrop.errorText(err); });
 
       this.value = '';
     });
@@ -581,5 +583,6 @@ $intakeMarketCenters = local_db()
       .catch(function() { updateProgress(); });
   })();
   </script>
+<script src="assets/headshot-crop.js"></script>
 </body>
 </html>
