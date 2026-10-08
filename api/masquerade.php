@@ -23,7 +23,11 @@ if ($action === 'stop') {
     exit;
 }
 
-// Start masquerade: must be a real (non-masquerading) super_admin
+// Start masquerade: must be a real (non-masquerading) super_admin or admin.
+// Deliberately checking the role directly rather than isSuperAdmin — the
+// 'admin' role (split off 2026-10-08) keeps "Log In As" per Darren even
+// though it doesn't see Finance or the handful of other things still
+// reserved to 'super_admin' literally (Role Assignments, Teams, etc.).
 if (is_masquerading()) {
     http_response_code(400);
     echo json_encode(['error' => 'Stop current masquerade before starting another.']);
@@ -31,9 +35,9 @@ if (is_masquerading()) {
 }
 
 $perms = current_perms();
-if (empty($perms['isSuperAdmin'])) {
+if (!in_array($perms['role'] ?? '', ['super_admin', 'admin'], true)) {
     http_response_code(403);
-    echo json_encode(['error' => 'Super admin access required.']);
+    echo json_encode(['error' => 'Admin access required.']);
     exit;
 }
 
@@ -73,6 +77,21 @@ if ($bridge && $btoken) {
             'photo' => $d['photo'] ?? null,
         ];
     }
+}
+
+// The bridge only knows agents with a real Perfex (tblstaff) record — someone
+// who exists only in our own roster (no Perfex staff row at all) falls through
+// with name still equal to their email, showing as e.g. "Viewing as
+// jane@gmail.com" instead of their real name. Fall back to the roster name
+// here, same as attempt_login()'s local-password-override path already does,
+// so impersonating them doesn't show a worse name than their own real login.
+if ($target['name'] === $email) {
+    try {
+        $stmt = local_db()->prepare("SELECT agent_name FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1");
+        $stmt->execute([strtolower($email)]);
+        $rname = $stmt->fetchColumn();
+        if ($rname) $target['name'] = $rname;
+    } catch (\Throwable $e) {}
 }
 
 start_masquerade($target);

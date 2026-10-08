@@ -89,10 +89,41 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     .rm-save{padding:9px 20px;border:none;background:#82C112;color:#000;font-size:13px;font-weight:700;border-radius:4px;cursor:pointer}
     .rm-cancel{padding:9px 14px;border:1px solid #ccc;background:white;color:#555;font-size:13px;border-radius:4px;cursor:pointer}
     .rm-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;line-height:1;color:#888}
+
+    /* Roster filters */
+    .filters-toggle{padding:8px 14px;border:1px solid #ccc;background:#fff;color:#555;font-size:12px;font-weight:700;border-radius:6px;cursor:pointer;white-space:nowrap}
+    .filters-toggle:hover{border-color:#82C112;color:#5b8e0d}
+    .filters-toggle.active{border-color:#82C112;background:#eef5e8;color:#5b8e0d}
+    .filters-panel{display:none;gap:24px;flex-wrap:wrap;margin:10px 0 16px;padding:14px 16px;background:#fafbfa;border:1px solid #e5e9e0;border-radius:8px}
+    .filters-panel.open{display:flex}
+    .filters-group{min-width:220px}
+    .filters-group-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px}
+    .filters-group-sub{font-size:11px;color:#999;font-weight:400;text-transform:none;letter-spacing:0;display:block;margin-top:2px}
+    #roster-languages-checks{width:220px}
+    #referral-location{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:260px;box-sizing:border-box}
+    #referral-location:focus{outline:2px solid #82C112;outline-offset:-1px}
+    .loc-dropdown{display:none;position:absolute;z-index:20;top:calc(100% + 2px);left:0;right:0;
+      max-height:220px;overflow-y:auto;background:#fff;border:1px solid #ccc;border-radius:6px;
+      box-shadow:0 4px 14px rgba(0,0,0,.14)}
+    .loc-dropdown.open{display:block}
+    .loc-opt{padding:7px 10px;font-size:13px;cursor:pointer}
+    .loc-opt:hover{background:#f5f7f3}
+    .loc-opt .loc-kind{color:#999;font-size:11px;margin-left:6px}
+    .loc-empty{padding:7px 10px;font-size:12px;color:#999;font-style:italic}
+    .filters-clear{background:none;border:none;color:#888;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;align-self:flex-start;margin-top:8px}
+    .filters-clear:hover{color:#c00}
   </style>
   <script>
     const IS_ADMIN       = <?= json_encode(is_leader()) ?>;
     const IS_SUPER_ADMIN = <?= json_encode(is_super_admin()) ?>;
+    // Separate from IS_SUPER_ADMIN (which still strictly gates Assign Role) —
+    // the 'admin' role (split off 2026-10-08) keeps "Log in as" per Darren
+    // even though it doesn't get Assign Role or see Finance.
+    const CAN_MASQUERADE = <?= json_encode(in_array(current_perms()['role'] ?? '', ['super_admin', 'admin'], true)) ?>;
+    // Narrower than IS_ADMIN (is_leader — includes BICs/MC leaders): this must
+    // match agent_profile.php's own access check exactly, since it's used to
+    // decide whether the roster links a name to that page.
+    const CAN_VIEW_PROFILE = <?= json_encode(is_admin()) ?>;
     const IS_RECRUITER   = <?= json_encode(is_recruiter()) ?>;
     const CSRF           = <?= json_encode($csrf) ?>;
     const MC_OPTS       = <?= json_encode($mc_opts) ?>;
@@ -111,15 +142,34 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <div class="content-title">Agent Roster</div>
         <div style="display:flex;align-items:center;gap:10px">
           <input id="roster-search" class="search" type="search" placeholder="Search by name, email, location…">
+          <button type="button" id="filters-toggle" class="filters-toggle" onclick="toggleFilters()">Filters</button>
           <?php if (is_admin()): ?>
           <a href="admin_import.php" style="flex-shrink:0;padding:8px 14px;background:#82C112;color:#000;font-size:12px;font-weight:800;border-radius:6px;text-decoration:none;white-space:nowrap">+ Import CSV</a>
           <?php endif; ?>
         </div>
       </header>
       <main class="wrap">
+        <div id="filters-panel" class="filters-panel">
+          <div class="filters-group">
+            <div class="filters-group-label">Languages
+              <span class="filters-group-sub">Please pick one or more</span>
+            </div>
+            <input type="hidden" id="roster-languages">
+            <div id="roster-languages-checks"></div>
+          </div>
+          <div class="filters-group">
+            <div class="filters-group-label">Referral Location
+              <span class="filters-group-sub">City/borough, county, township, zip, state, or community — matches agents whose MLS covers it</span>
+            </div>
+            <div style="position:relative">
+              <input type="text" id="referral-location" placeholder="Start typing…" autocomplete="off">
+              <div id="referral-location-dropdown" class="loc-dropdown"></div>
+            </div>
+          </div>
+          <button type="button" class="filters-clear" onclick="clearFilters()">Clear filters</button>
+        </div>
         <section class="card">
           <div class="roster-count" id="roster-count">Loading agents…</div>
-          <div style="overflow-x:auto">
           <table class="tx sortable" id="roster-table" hidden>
             <thead><tr>
               <th data-sort="name">Agent</th>
@@ -130,7 +180,6 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
             </tr></thead>
             <tbody id="roster-body"></tbody>
           </table>
-          </div>
           <div id="roster-empty" class="network-empty" hidden>No agents found.</div>
         </section>
       </main>
@@ -174,6 +223,7 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
     </div>
   </div>
 
+  <script src="assets/language_options.js"></script>
   <script src="assets/roster.js"></script>
   <script>
     function openRoleModal(email, name, mc) {
