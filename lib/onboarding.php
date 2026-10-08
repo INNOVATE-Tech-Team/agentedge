@@ -184,7 +184,7 @@ function queue_onboarding_agent(
     $stateCode    = $primary['state_code'];
 
     $existing = $pdo->prepare(
-        "SELECT id FROM onboard_queue WHERE agent_email = ? AND status = 'active' LIMIT 1"
+        "SELECT id FROM onboard_queue WHERE LOWER(agent_email) = LOWER(?) AND status = 'active' LIMIT 1"
     );
     $existing->execute([$email]);
     $row = $existing->fetch(PDO::FETCH_ASSOC);

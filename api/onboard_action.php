@@ -81,7 +81,7 @@ if ($action === 'list_queue') {
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet') AND status='done') as done_count,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet')) as total_count,
-                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
+                COALESCE((SELECT submitted FROM agent_intake WHERE LOWER(email)=LOWER(q.agent_email)), 0) as intake_submitted
              FROM onboard_queue q ORDER BY q.added_at DESC"
         )->fetchAll(PDO::FETCH_ASSOC);
     } else {
@@ -89,7 +89,7 @@ if ($action === 'list_queue') {
             "SELECT q.*,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet') AND status='done') as done_count,
                 (SELECT COUNT(*) FROM onboard_steps WHERE queue_id=q.id AND tool_key NOT IN ('email_setup','intranet')) as total_count,
-                COALESCE((SELECT submitted FROM agent_intake WHERE email=q.agent_email), 0) as intake_submitted
+                COALESCE((SELECT submitted FROM agent_intake WHERE LOWER(email)=LOWER(q.agent_email)), 0) as intake_submitted
              FROM onboard_queue q WHERE q.status=? ORDER BY q.added_at DESC"
         );
         $st->execute([$filter]);
