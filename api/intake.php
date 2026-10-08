@@ -281,8 +281,8 @@ if ($postAction === 'upload') {
     }
     $cnt = $pdo->prepare("SELECT COUNT(*) FROM agent_intake_files WHERE agent_email=?");
     $cnt->execute([$targetEmail]);
-    if ((int)$cnt->fetchColumn() >= 5) {
-        intake_json_out(['ok' => false, 'error' => 'Maximum 5 headshots allowed per agent'], 400);
+    if ((int)$cnt->fetchColumn() >= 10) {
+        intake_json_out(['ok' => false, 'error' => 'Maximum 10 photos allowed per agent. Delete one to upload another.'], 400);
     }
     $cfgDir  = function_exists('cfg') ? (cfg()['local_db_dir'] ?? null) : null;
     $dataDir = $cfgDir ?: (__DIR__ . '/../data');

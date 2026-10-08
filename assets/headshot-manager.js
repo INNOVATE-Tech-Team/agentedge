@@ -1,7 +1,16 @@
 // Photo manager shared by My Profile, the intake form and the admin agent
-// profile: upload up to 5 photos (kept uncropped, for marketing use), pick
-// one as the headshot and frame its square crop, adjust or switch later,
-// download or delete photos.
+// profile. Two separate areas:
+//
+//   1. Headshot: the square crop shown on the website and in the app.
+//      "Upload headshot" uploads a photo and goes straight to framing it;
+//      "Adjust crop" reopens the saved framing.
+//   2. Marketing photos: full, uncropped photos (more torso, wider shots)
+//      that staff download for marketing graphics. Never cropped; any one
+//      of them can also be made the headshot.
+//
+// Every upload is stored as an original in agent_intake_files (the
+// headshot's source photo included, so its uncropped version is always
+// available); the headshot crop is a separate file (lib/headshot_select.php).
 //
 //   HeadshotManager.mount(containerEl, { email: 'agent@x.com' })
 //
@@ -9,7 +18,7 @@
 // assets/headshot-crop.js loaded first. Talks to api/intake.php
 // (upload / set_headshot / delete_file / headshot / headshot_crop).
 (function () {
-  var MAX_PHOTOS = 5;
+  var MAX_PHOTOS = 10;
   var ORIG_MAX = 3000;
 
   function injectStyles() {
@@ -17,31 +26,34 @@
     var s = document.createElement('style');
     s.id = 'hsm-styles';
     s.textContent =
-      '.hsm-current{display:flex;gap:16px;align-items:center;padding:14px;border:1px solid var(--border,#e3e3e3);border-radius:10px;background:#fafcf7;margin-bottom:16px}' +
-      '.hsm-current-img{width:96px;height:96px;border-radius:8px;object-fit:cover;background:#eee;flex-shrink:0}' +
-      '.hsm-current-empty{width:96px;height:96px;border-radius:8px;border:1px dashed #c9c9c9;display:flex;align-items:center;justify-content:center;font-size:11px;color:#999;text-align:center;flex-shrink:0}' +
-      '.hsm-current-title{font-size:13px;font-weight:800;margin-bottom:3px}' +
-      '.hsm-current-text{font-size:12px;color:#777;line-height:1.45}' +
+      '.hsm-section{border:1px solid var(--border,#e3e3e3);border-radius:10px;padding:16px;margin-bottom:16px;background:#fff}' +
+      '.hsm-h{font-size:14px;font-weight:800;margin:0 0 2px}' +
+      '.hsm-sub{font-size:12px;color:#777;line-height:1.45;margin:0 0 14px}' +
+      '.hsm-head{display:flex;gap:18px;align-items:center;flex-wrap:wrap}' +
+      '.hsm-head-img{width:128px;height:128px;border-radius:10px;object-fit:cover;background:#eee;flex-shrink:0}' +
+      '.hsm-head-empty{width:128px;height:128px;border-radius:10px;border:1px dashed #c9c9c9;display:flex;align-items:center;justify-content:center;font-size:11px;color:#999;text-align:center;flex-shrink:0;padding:8px}' +
+      '.hsm-head-side{display:flex;flex-direction:column;gap:8px;align-items:flex-start}' +
       '.hsm-grid{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px}' +
+      '.hsm-grid:empty{display:none}' +
       '.hsm-card{width:140px;border:1px solid var(--border,#e3e3e3);border-radius:8px;overflow:hidden;background:#fff}' +
-      '.hsm-card.is-headshot{border-color:#82C112;box-shadow:0 0 0 2px rgba(130,193,18,.35)}' +
       '.hsm-photo{position:relative;height:128px;background:#f2f2f2;display:flex;align-items:center;justify-content:center}' +
       '.hsm-photo img{max-width:100%;max-height:100%;object-fit:contain}' +
       '.hsm-badge{position:absolute;left:6px;top:6px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;border-radius:999px;padding:2px 8px;background:#82C112;color:#fff}' +
       '.hsm-badge.low{left:auto;right:6px;background:#b26a00}' +
       '.hsm-actions{display:flex;flex-direction:column;gap:4px;padding:8px}' +
-      '.hsm-btn{font-size:12px;font-weight:700;border-radius:6px;padding:6px 8px;border:1px solid #ccc;background:#fff;color:#444;cursor:pointer;text-align:center;text-decoration:none;display:block}' +
+      '.hsm-btn{font-size:12px;font-weight:700;border-radius:6px;padding:6px 10px;border:1px solid #ccc;background:#fff;color:#444;cursor:pointer;text-align:center;text-decoration:none;display:block}' +
       '.hsm-btn:hover{border-color:#82C112;color:#5b8e0d}' +
-      '.hsm-btn.primary{background:#82C112;border-color:#82C112;color:#fff}' +
-      '.hsm-btn.primary:hover{background:#6fa60f;color:#fff}' +
       '.hsm-row{display:flex;gap:4px}.hsm-row .hsm-btn{flex:1;min-width:0;padding:6px 2px}' +
       '.hsm-btn.danger:hover{border-color:#c00;color:#c00}' +
       '.hsm-upload{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f5e8;border:1px dashed #82C112;border-radius:7px;font-size:13px;font-weight:700;color:#5b8e0d;cursor:pointer}' +
       '.hsm-upload:hover{background:#e4f0d8}' +
+      '.hsm-upload.primary{background:#82C112;border:1px solid #82C112;color:#fff}' +
+      '.hsm-upload.primary:hover{background:#6fa60f}' +
       '.hsm-upload.disabled{opacity:.5;cursor:not-allowed}' +
       '.hsm-upload input{display:none}' +
       '.hsm-note{font-size:11px;color:var(--faint,#999);margin-top:6px}' +
-      '.hsm-msg{font-size:12px;color:#777;margin-top:6px;min-height:16px}' +
+      '.hsm-empty{font-size:12px;color:#999;font-style:italic;margin:0 0 12px}' +
+      '.hsm-msg{font-size:12px;color:#777;margin-top:8px;min-height:16px}' +
       '.hsm-msg.err{color:#c00}';
     document.head.appendChild(s);
   }
@@ -51,6 +63,15 @@
     if (cls) n.className = cls;
     if (text != null) n.textContent = text;
     return n;
+  }
+
+  function uploadButton(label, multiple, primary) {
+    var lbl = el('label', 'hsm-upload' + (primary ? ' primary' : ''));
+    var input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*'; input.multiple = !!multiple;
+    lbl.appendChild(el('span', null, label));
+    lbl.appendChild(input);
+    return { label: lbl, input: input };
   }
 
   // Scales a photo to at most ORIG_MAX on its long side and re-encodes it in
@@ -97,76 +118,109 @@
       return 'api/intake.php?action=headshot_crop' + (email ? '&email=' + encodeURIComponent(email) : '') + '&v=' + bust;
     }
 
+    // ── Layout ──
     root.innerHTML = '';
-    var current = el('div', 'hsm-current');
+    var headSec = el('div', 'hsm-section');
+    headSec.appendChild(el('div', 'hsm-h', 'Headshot'));
+    headSec.appendChild(el('div', 'hsm-sub', 'The square photo shown on the website and in the app. Upload a photo and frame your head and shoulders in the square.'));
+    var headBody = el('div', 'hsm-head');
+    headSec.appendChild(headBody);
+    var headUpload = uploadButton('Upload headshot', false, true);
+    var headMsg = el('div', 'hsm-msg');
+    headSec.appendChild(headMsg);
+
+    var photoSec = el('div', 'hsm-section');
+    photoSec.appendChild(el('div', 'hsm-h', 'Marketing photos'));
+    photoSec.appendChild(el('div', 'hsm-sub', 'Full, uncropped photos for marketing graphics (more torso, wider shots). These are kept exactly as uploaded and the marketing team can download them.'));
     var grid = el('div', 'hsm-grid');
-    var upload = el('label', 'hsm-upload');
-    var input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
-    upload.appendChild(el('span', null, '+ Upload photos'));
-    upload.appendChild(input);
-    var note = el('div', 'hsm-note', 'Up to ' + MAX_PHOTOS + ' photos, at least 400×400 pixels, max 10 MB each. ' +
-      'Photos are kept as uploaded; only the one you choose as your headshot is cropped to a square.');
-    var msg = el('div', 'hsm-msg');
-    root.appendChild(current); root.appendChild(grid); root.appendChild(upload); root.appendChild(note); root.appendChild(msg);
+    var empty = el('div', 'hsm-empty', 'No marketing photos yet.');
+    photoSec.appendChild(empty);
+    photoSec.appendChild(grid);
+    var photoUpload = uploadButton('+ Upload photos', true, false);
+    photoSec.appendChild(photoUpload.label);
+    var note = el('div', 'hsm-note');
+    photoSec.appendChild(note);
+    var photoMsg = el('div', 'hsm-msg');
+    photoSec.appendChild(photoMsg);
 
-    function say(text, isErr) { msg.textContent = text || ''; msg.classList.toggle('err', !!isErr); }
-    function flash(text) { say(text); setTimeout(function () { if (msg.textContent === text) say(''); }, 2500); }
+    root.appendChild(headSec);
+    root.appendChild(photoSec);
 
+    function sayTo(box, text, isErr) { box.textContent = text || ''; box.classList.toggle('err', !!isErr); }
+    function flashTo(box, text) { sayTo(box, text); setTimeout(function () { if (box.textContent === text) sayTo(box, ''); }, 3000); }
+
+    // ── Render ──
     function render() {
       var hs = state.headshot;
-      current.innerHTML = '';
+      var full = state.photos.length >= MAX_PHOTOS;
+
+      headBody.innerHTML = '';
       if (hs) {
-        var img = el('img', 'hsm-current-img'); img.src = cropUrl(); img.alt = 'Current headshot';
-        current.appendChild(img);
+        var img = el('img', 'hsm-head-img'); img.src = cropUrl(); img.alt = 'Current headshot';
+        headBody.appendChild(img);
       } else {
-        current.appendChild(el('div', 'hsm-current-empty', 'No headshot chosen'));
+        headBody.appendChild(el('div', 'hsm-head-empty', 'No headshot yet'));
       }
-      var text = el('div');
-      text.appendChild(el('div', 'hsm-current-title', 'Website & app headshot'));
-      text.appendChild(el('div', 'hsm-current-text', hs
-        ? 'This square crop is what shows on the website and in the app. Use "Adjust crop" or pick a different photo below to change it.'
-        : (state.photos.length
-          ? 'Choose one of your photos below with "Use as headshot" and frame it as a square.'
-          : 'Upload a photo, then frame it as a square for the website and app.')));
-      current.appendChild(text);
+      var side = el('div', 'hsm-head-side');
+      side.appendChild(headUpload.label);
+      if (hs) {
+        var adjust = el('button', 'hsm-btn', 'Adjust crop');
+        adjust.type = 'button';
+        adjust.addEventListener('click', function () { chooseHeadshot(hs.source_key); });
+        side.appendChild(adjust);
+        var dlSrc = el('a', 'hsm-btn', 'Download original');
+        dlSrc.href = photoUrl(hs.source_key) + '&dl=1';
+        side.appendChild(dlSrc);
+      }
+      headBody.appendChild(side);
+      headUpload.label.classList.toggle('disabled', full);
+      headUpload.input.disabled = full;
 
       grid.innerHTML = '';
       state.photos.forEach(function (p) {
         var isHs = hs && hs.source_key === p.file_key;
-        var card = el('div', 'hsm-card' + (isHs ? ' is-headshot' : ''));
+        var card = el('div', 'hsm-card');
         var box = el('div', 'hsm-photo');
         var img = el('img'); img.src = photoUrl(p.file_key); img.alt = p.orig_name || 'Photo'; img.loading = 'lazy';
         box.appendChild(img);
+        if (isHs) {
+          var used = el('span', 'hsm-badge', 'Headshot');
+          used.title = 'Your headshot is cropped from this photo';
+          box.appendChild(used);
+        }
         // The grid loads 128px thumbnails, so the real size comes from the API.
         if (p.width && Math.min(p.width, p.height) < HeadshotCrop.MIN_SIDE) {
           var low = el('span', 'hsm-badge low', 'Low res');
           low.title = p.width + '×' + p.height + ' pixels. A larger photo will look sharper.';
           box.appendChild(low);
         }
-        if (isHs) box.appendChild(el('span', 'hsm-badge', 'Headshot'));
         card.appendChild(box);
 
         var actions = el('div', 'hsm-actions');
-        var choose = el('button', 'hsm-btn' + (isHs ? '' : ' primary'), isHs ? 'Adjust crop' : 'Use as headshot');
-        choose.type = 'button';
-        choose.addEventListener('click', function () { chooseHeadshot(p.file_key); });
-        actions.appendChild(choose);
         var row = el('div', 'hsm-row');
         var dl = el('a', 'hsm-btn', 'Download'); dl.href = photoUrl(p.file_key) + '&dl=1';
         var del = el('button', 'hsm-btn danger', 'Delete'); del.type = 'button';
         del.addEventListener('click', function () { deletePhoto(p.file_key, isHs); });
         row.appendChild(dl); row.appendChild(del);
         actions.appendChild(row);
+        if (!isHs) {
+          var use = el('button', 'hsm-btn', 'Use as headshot'); use.type = 'button';
+          use.addEventListener('click', function () { chooseHeadshot(p.file_key); });
+          actions.appendChild(use);
+        }
         card.appendChild(actions);
         grid.appendChild(card);
       });
+      empty.style.display = state.photos.length ? 'none' : '';
 
-      var full = state.photos.length >= MAX_PHOTOS;
-      upload.classList.toggle('disabled', full);
-      input.disabled = full;
+      photoUpload.label.classList.toggle('disabled', full);
+      photoUpload.input.disabled = full;
+      note.textContent = full
+        ? 'You have reached the ' + MAX_PHOTOS + '-photo limit. Delete one to upload another.'
+        : 'Up to ' + MAX_PHOTOS + ' photos in total (headshot included), at least 400×400 pixels, max 10 MB each.';
     }
 
+    // ── Data ──
     function load() {
       return fetch('api/intake.php' + (email ? '?email=' + encodeURIComponent(email) : ''), { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
@@ -188,74 +242,87 @@
         });
     }
 
-    // keepMsg: leave an upload summary (e.g. a skipped photo) on screen.
-    function chooseHeadshot(key, keepMsg) {
+    function uploadOne(file) {
+      return HeadshotCrop.checkFile(file)
+        .then(function () { return prepareUpload(file); })
+        .then(function (prepared) {
+          var fd = new FormData();
+          fd.append('headshot', prepared, prepared.name || file.name);
+          return post('upload', fd);
+        });
+    }
+
+    // Frame one stored photo as the headshot (reopening the saved framing
+    // when it's already the headshot's source).
+    function chooseHeadshot(key) {
       var hs = state.headshot;
       var rect = hs && hs.source_key === key ? hs.crop_rect : null;
-      if (!keepMsg) say('');
+      sayTo(headMsg, '');
       return HeadshotCrop.crop(fullUrl(key), rect).then(function (result) {
-        say('Saving headshot…');
+        sayTo(headMsg, 'Saving headshot…');
         var fd = new FormData();
         fd.append('key', key);
         fd.append('crop', result.blob, 'headshot.jpg');
         fd.append('rect', JSON.stringify(result.rect));
         return post('set_headshot', fd);
       }).then(function () {
-        return load().then(function () { flash('Headshot saved. The website picks it up overnight.'); });
-      }).catch(function (err) { say(HeadshotCrop.errorText(err), true); });
+        return load().then(function () { flashTo(headMsg, 'Headshot saved. The website picks it up overnight.'); });
+      }).catch(function (err) { sayTo(headMsg, HeadshotCrop.errorText(err), true); });
     }
 
     function deletePhoto(key, isHs) {
-      if (!confirm(isHs ? 'Delete this photo? It is your current headshot, so you will need to choose another.' : 'Delete this photo?')) return;
-      say('Deleting…');
+      if (!confirm(isHs ? 'Delete this photo? Your headshot is cropped from it, so the headshot will be removed too.' : 'Delete this photo?')) return;
+      sayTo(photoMsg, 'Deleting…');
       fetch('api/intake.php?action=delete_file', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: key }),
       }).then(function (r) { return r.json(); }).then(function (res) {
         if (!res.ok) throw HeadshotCrop.userError(res.error || 'Delete failed.');
-        return load().then(function () { flash('Deleted.'); });
-      }).catch(function (err) { say(HeadshotCrop.errorText(err), true); });
+        return load().then(function () { flashTo(photoMsg, 'Deleted.'); });
+      }).catch(function (err) { sayTo(photoMsg, HeadshotCrop.errorText(err), true); });
     }
 
-    // Uploads run one at a time; a too-small or oversized file is skipped
-    // with a message without stopping the rest.
-    input.addEventListener('change', function () {
-      var files = Array.from(input.files || []);
-      input.value = '';
-      var room = MAX_PHOTOS - state.photos.length;
+    // Headshot upload: store the original, then go straight to framing it.
+    headUpload.input.addEventListener('change', function () {
+      var file = (headUpload.input.files || [])[0];
+      headUpload.input.value = '';
+      if (!file) return;
+      sayTo(headMsg, 'Uploading…');
+      uploadOne(file)
+        .then(function (res) { return load().then(function () { sayTo(headMsg, ''); return chooseHeadshot(res.file_key); }); })
+        .catch(function (err) { sayTo(headMsg, HeadshotCrop.errorText(err), true); });
+    });
+
+    // Marketing photos: uploaded one at a time, never cropped. A too-small
+    // or oversized file is skipped with a message without stopping the rest.
+    photoUpload.input.addEventListener('change', function () {
+      var files = Array.from(photoUpload.input.files || []);
+      photoUpload.input.value = '';
       if (!files.length) return;
+      var room = MAX_PHOTOS - state.photos.length;
       var skipped = [];
       if (files.length > room) {
-        skipped.push((files.length - room) + ' photo(s) over the ' + MAX_PHOTOS + '-photo limit');
+        skipped.push((files.length - room) + ' photo(s) over the ' + MAX_PHOTOS + '-photo limit.');
         files = files.slice(0, room);
       }
-      var hadHeadshot = !!state.headshot;
-      var firstNewKey = null;
+      var done = 0;
       var chain = Promise.resolve();
       files.forEach(function (file, i) {
         chain = chain.then(function () {
-          say('Uploading ' + (i + 1) + ' of ' + files.length + '…');
-          return HeadshotCrop.checkFile(file)
-            .then(function () { return prepareUpload(file); })
-            .then(function (prepared) {
-              var fd = new FormData();
-              fd.append('headshot', prepared, prepared.name || file.name);
-              return post('upload', fd);
-            })
-            .then(function (res) { if (!firstNewKey) firstNewKey = res.file_key; })
+          sayTo(photoMsg, 'Uploading ' + (i + 1) + ' of ' + files.length + '…');
+          return uploadOne(file)
+            .then(function () { done++; })
             .catch(function (err) { skipped.push(HeadshotCrop.errorText(err) || file.name); });
         });
       });
       chain.then(load).then(function () {
-        if (skipped.length) say('Some photos were not uploaded: ' + skipped.join(' '), true);
-        else flash(files.length === 1 ? 'Photo uploaded.' : files.length + ' photos uploaded.');
-        // First photo for someone with no headshot yet: go straight to framing it.
-        if (!hadHeadshot && firstNewKey) chooseHeadshot(firstNewKey, skipped.length > 0);
-      }).catch(function () { say('Network error.', true); });
+        if (skipped.length) sayTo(photoMsg, (done ? done + ' uploaded. ' : '') + 'Not uploaded: ' + skipped.join(' '), true);
+        else flashTo(photoMsg, done === 1 ? 'Photo uploaded.' : done + ' photos uploaded.');
+      }).catch(function () { sayTo(photoMsg, 'Network error.', true); });
     });
 
-    load().catch(function () { say('Could not load photos.', true); });
+    load().catch(function () { sayTo(photoMsg, 'Could not load photos.', true); });
     return { reload: load };
   }
 

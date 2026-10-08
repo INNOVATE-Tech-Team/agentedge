@@ -112,8 +112,8 @@ $agent = require_login();
         </section>
 
         <section class="card" style="margin-top:20px">
-          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Profile Photo</h2>
-          <p class="form-sub" style="margin:0 0 18px">Upload your photos, then choose one as your headshot for the website and app.</p>
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Headshot &amp; Photos</h2>
+          <p class="form-sub" style="margin:0 0 18px">Your square headshot for the website and app, plus full photos the marketing team can use.</p>
           <div id="hs-manager"></div>
         </section>
 
