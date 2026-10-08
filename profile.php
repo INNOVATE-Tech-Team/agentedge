@@ -87,7 +87,7 @@ $agent = require_login();
                   <input type="checkbox" id="f-reviewRequestsOptIn" style="width:16px;height:16px;accent-color:#82C112;cursor:pointer">
                   Send automatic Google review requests to my clients when a transaction closes
                 </label>
-                <div class="hs-note">When a dotloop transaction of yours closes, a draft review-request email is prepared for staff to review and send — nothing goes out automatically without this checked, and every send is still approved by staff before it reaches your client.</div>
+                <div class="hs-note">When a dotloop transaction of yours closes, your client gets a short thank-you email asking for a Google review, 3 days after closing. It links to your Google page, or your Market Center's page if you don't have one. Nothing goes out unless this is checked.</div>
               </div>
 
               <div class="section-h">Zillow</div>
@@ -101,7 +101,7 @@ $agent = require_login();
                   <input type="checkbox" id="f-zillowReviewRequestsOptIn" style="width:16px;height:16px;accent-color:#82C112;cursor:pointer">
                   Send automatic Zillow review requests to my clients when a transaction closes
                 </label>
-                <div class="hs-note">Same approval flow as Google above — nothing goes out automatically without this checked and a link on file, and every send is still approved by staff before it reaches your client.</div>
+                <div class="hs-note">Nothing goes out without this checked and a link on file. Unlike Google, each Zillow request is still approved by staff before it reaches your client.</div>
               </div>
             </div>
             <div class="form-actions">

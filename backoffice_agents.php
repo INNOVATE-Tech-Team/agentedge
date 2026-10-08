@@ -106,6 +106,11 @@ foreach ($intakeAgentsBase as $baseRow) {
 // only if that offboarding is cancelled), so this page stays focused on
 // current agents instead of showing departed ones as stale Draft/Submitted rows.
 $intakeAgents = array_values(array_filter($intakeAgents, fn($a) => empty($a['terminated_date'])));
+// Drop INNOVATE staff accounts — the intake form is agent-only (real estate
+// license/MLS/office are required fields staff have no way to fill in), so a
+// staff member's stray draft row here (e.g. from reaching intake.php by
+// mistake) shouldn't show up in an agent-onboarding view.
+$intakeAgents = array_values(array_filter($intakeAgents, fn($a) => ($a['role'] ?? '') !== 'staff'));
 if ($myMcSlugs !== null) {
     $intakeAgents = array_values(array_filter($intakeAgents, function($a) use ($rosterMcSlugsByEmail, $myMcSlugs) {
         $email = strtolower(trim($a['email'] ?? ''));
@@ -275,7 +280,14 @@ $missingCount = count($missingAgents);
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px}
 .detail-grid.full{grid-template-columns:1fr}
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
-.dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
+.dg-section:first-child,.dg-toolbar+.dg-section{margin-top:0;padding-top:0;border-top:none}
+.dg-section.dg-collapsible{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.dg-section.dg-collapsible:hover{color:var(--ink)}
+.dg-section.dg-collapsible::before{content:'';width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid currentColor;transition:transform .15s}
+.dg-section.dg-collapsible.dg-closed::before{transform:rotate(-90deg)}
+.dg-hidden{display:none!important}
+.dg-toolbar{grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px;font-size:11px;margin-bottom:-2px}
+.dg-toolbar button{background:none;border:0;padding:0;color:var(--faint);font-weight:700;cursor:pointer;text-decoration:underline}
 .dg-field{display:flex;flex-direction:column;gap:2px}
 .dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
 .dg-value{font-size:12.5px;color:var(--muted)}
@@ -312,6 +324,17 @@ $missingCount = count($missingAgents);
 .hs-thumb .hs-dl:hover{background:rgba(0,110,0,.85)}
 .hs-upload-label{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#f0f5e8;border:1px dashed #82C112;border-radius:6px;font-size:11px;font-weight:700;color:#5b8e0d;cursor:pointer}
 .hs-upload-label:hover{background:#e4f0d8}
+.em-ac-wrap{position:relative}
+/* position:fixed, not absolute -- .modal-body scrolls (overflow-y:auto), which
+   would clip an absolutely-positioned dropdown the moment it renders below
+   the container's own bounds. Position/size set in JS from the input's
+   getBoundingClientRect() instead of anchoring to the wrapper. */
+.em-ac-dropdown{position:fixed;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:2000;max-height:220px;overflow-y:auto}
+.em-ac-item{display:flex;flex-direction:column;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+.em-ac-item:last-child{border-bottom:none}
+.em-ac-item:hover,.em-ac-item.active{background:#f9fdf5}
+.em-ac-name{font-size:13px;font-weight:700;color:#222}
+.em-ac-email{font-size:11px;color:#888}
 </style>
 </head>
 <body>
@@ -629,7 +652,7 @@ $missingCount = count($missingAgents);
         <div class="em-field"><label>Blog</label><input id="em-blog"></div>
 
         <div class="em-section">Bio &amp; Marketing</div>
-        <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
+        <div class="em-field em-ac-wrap"><label>Referring Agent</label><input id="em-referring_agent" autocomplete="off"><div id="em-referring_agent-dropdown" class="em-ac-dropdown" hidden></div></div>
         <div class="em-field em-full"><label>Bio</label><textarea id="em-bio" style="min-height:110px"></textarea></div>
       </div>
 
@@ -700,7 +723,6 @@ $missingCount = count($missingAgents);
 <script>
 (function () {
   initLanguageChecklist('em-languages-checks', 'em-languages');
-  var MLS_OPTIONS = <?= json_encode($mlsOptions) ?>;
   var MERGE_AGENTS = <?= json_encode(array_map(fn($a) => ['email' => $a['email'], 'full_name' => $a['full_name']], $intakeAgents)) ?>;
   var searchEl = document.getElementById('agSearch');
   var tabs = document.querySelectorAll('.ag-tab');
@@ -962,6 +984,81 @@ $missingCount = count($missingAgents);
   var emBtnAddLicense = document.getElementById('em-btn-add-license');
   if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
+  // Referring Agent typeahead — searches every active roster agent (not just
+  // ones already resolvable in the Network Tree, unlike api/agent_search.php),
+  // since the whole point here is picking someone who may not be linked yet.
+  (function () {
+    var input = document.getElementById('em-referring_agent');
+    var dd = document.getElementById('em-referring_agent-dropdown');
+    if (!input || !dd) return;
+    var timer = null, active = -1;
+    var scrollParent = input.closest('.modal-body');
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    }); }
+    function close() { dd.hidden = true; active = -1; }
+    function position() {
+      var r = input.getBoundingClientRect();
+      dd.style.left = r.left + 'px';
+      dd.style.top = r.bottom + 'px';
+      dd.style.width = r.width + 'px';
+    }
+    function render(agents) {
+      if (!agents.length) { close(); return; }
+      dd.innerHTML = agents.map(function (a) {
+        return '<div class="em-ac-item" data-name="' + esc(a.name) + '">' +
+          '<div class="em-ac-name">' + esc(a.name) + '</div>' +
+          '<div class="em-ac-email">' + esc(a.email) + '</div></div>';
+      }).join('');
+      position();
+      dd.hidden = false;
+      active = -1;
+      dd.querySelectorAll('.em-ac-item').forEach(function (el) {
+        el.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          input.value = el.dataset.name;
+          close();
+        });
+      });
+    }
+    // The dropdown is position:fixed (see CSS comment), so it doesn't move
+    // with the modal's own scroll -- just close it if the user scrolls.
+    if (scrollParent) scrollParent.addEventListener('scroll', close, { passive: true });
+    window.addEventListener('resize', function () { if (!dd.hidden) close(); });
+    input.addEventListener('input', function () {
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { close(); return; }
+      timer = setTimeout(function () {
+        fetch('api/roster_agent_search.php?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) { render(d.agents || []); })
+          .catch(close);
+      }, 250);
+    });
+    input.addEventListener('keydown', function (e) {
+      var items = dd.hidden ? [] : [].slice.call(dd.querySelectorAll('.em-ac-item'));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        active = Math.min(active + 1, items.length - 1);
+        items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        active = Math.max(active - 1, -1);
+        items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+      } else if (e.key === 'Enter' && active >= 0 && items[active]) {
+        e.preventDefault();
+        items[active].dispatchEvent(new MouseEvent('mousedown'));
+      } else if (e.key === 'Escape') {
+        close();
+      }
+    });
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.em-ac-wrap')) close();
+    });
+  })();
+
   // Roster agents with no agent_intake row yet often have no email on file
   // either (older/manually-added rows). Rather than asking the admin to
   // retype everything, try a CRM lookup by name first (same search_crm
@@ -1082,6 +1179,18 @@ $missingCount = count($missingAgents);
         document.getElementById('em-team-status').innerHTML =
           '<div style="font-size:12px;color:#c00">Network error creating team.</div>';
       });
+  };
+
+  window.loginAsAgent = function (email) {
+    if (!confirm('Log in as ' + email + '?\n\nYou will see AgentEdge as this agent. Click "Back to Admin" in the yellow bar to return.')) return;
+    fetch('api/masquerade.php', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'start', email: email }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) { location.href = d.redirect || 'index.php'; }
+      else { alert('Error: ' + (d.error || 'unknown')); }
+    }).catch(function () { alert('Network error — please try again.'); });
   };
 
   window.openEditModal = function (email, name, prefill) {
@@ -1220,6 +1329,46 @@ $missingCount = count($missingAgents);
   // ── Lazy-loaded agent detail panel (intake rows only) ───────────────────
   var detailLoadedIdx = {};
 
+  // Collapsible sections in the expanded agent panel: each .dg-section heading
+  // toggles every sibling after it up to the next heading (or the bottom
+  // .detail-actions row), so the action buttons are reachable without
+  // scrolling past every section. Display-only (class toggle) -- the notes
+  // widget, staff-managed fields etc. stay in the DOM and keep working.
+  function makeSectionsCollapsible(root) {
+    var grid = root.querySelector('.detail-grid');
+    if (!grid || grid.querySelector('.dg-toolbar')) return;
+    var heads = Array.prototype.slice.call(grid.children).filter(function (n) { return n.classList.contains('dg-section'); });
+    if (!heads.length) return;
+    function bodyOf(h) {
+      var out = [];
+      for (var n = h.nextElementSibling; n && !n.classList.contains('dg-section') && !n.classList.contains('detail-actions'); n = n.nextElementSibling) out.push(n);
+      return out;
+    }
+    function setClosed(h, closed) {
+      h.classList.toggle('dg-closed', closed);
+      h.setAttribute('aria-expanded', closed ? 'false' : 'true');
+      bodyOf(h).forEach(function (n) { n.classList.toggle('dg-hidden', closed); });
+    }
+    heads.forEach(function (h) {
+      h.classList.add('dg-collapsible');
+      h.setAttribute('role', 'button');
+      h.setAttribute('tabindex', '0');
+      h.setAttribute('aria-expanded', 'true');
+      function toggle() { setClosed(h, !h.classList.contains('dg-closed')); }
+      h.addEventListener('click', toggle);
+      h.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    });
+    var bar = document.createElement('div');
+    bar.className = 'dg-toolbar';
+    bar.innerHTML = '<button type="button" data-a="collapse">Collapse all</button><button type="button" data-a="expand">Expand all</button>';
+    bar.addEventListener('click', function (e) {
+      var act = e.target.dataset && e.target.dataset.a;
+      if (act) heads.forEach(function (h) { setClosed(h, act === 'collapse'); });
+    });
+    grid.insertBefore(bar, grid.firstChild);
+    heads.forEach(function (h) { setClosed(h, true); }); // start with headers only
+  }
+
   window.loadAgentDetail = function (detailId, idx, email, force) {
     if (detailLoadedIdx[idx] && !force) return Promise.resolve();
     var detailRow = document.getElementById(detailId);
@@ -1231,6 +1380,7 @@ $missingCount = count($missingAgents);
       .then(function (res) {
         if (res.status !== 200 || !res.body.ok) throw new Error(res.body.error || 'load failed');
         td.innerHTML = res.body.html;
+        makeSectionsCollapsible(td);
         detailLoadedIdx[idx] = true;
       })
       .catch(function () {

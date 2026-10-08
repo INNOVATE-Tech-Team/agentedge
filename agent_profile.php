@@ -84,7 +84,14 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .ap-tab-pane{display:none}.ap-tab-pane.active{display:block}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px}
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
-.dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
+.dg-section:first-child,.dg-toolbar+.dg-section{margin-top:0;padding-top:0;border-top:none}
+.dg-section.dg-collapsible{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.dg-section.dg-collapsible:hover{color:var(--text,#222)}
+.dg-section.dg-collapsible::before{content:'';width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid currentColor;transition:transform .15s}
+.dg-section.dg-collapsible.dg-closed::before{transform:rotate(-90deg)}
+.dg-hidden{display:none!important}
+.dg-toolbar{grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px;font-size:11px;margin-bottom:-2px}
+.dg-toolbar button{background:none;border:0;padding:0;color:var(--faint);font-weight:700;cursor:pointer;text-decoration:underline}
 .dg-field{display:flex;flex-direction:column;gap:2px}
 .dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
 .dg-value{font-size:12.5px;color:var(--muted)}
@@ -201,6 +208,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .sponsor-connector{text-align:center;font-size:14px;color:#ccc;line-height:1;margin-bottom:4px;margin-top:-4px}
 .chip{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap}
 .chip-rec{background:#fff4e0;color:#a06000}
+.em-ac-wrap{position:relative}
+/* position:fixed, not absolute -- .modal-body scrolls (overflow-y:auto), which
+   would clip an absolutely-positioned dropdown the moment it renders below
+   the container's own bounds. Position/size set in JS from the input's
+   getBoundingClientRect() instead of anchoring to the wrapper. */
+.em-ac-dropdown{position:fixed;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:2000;max-height:220px;overflow-y:auto}
+.em-ac-item{display:flex;flex-direction:column;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+.em-ac-item:last-child{border-bottom:none}
+.em-ac-item:hover,.em-ac-item.active{background:#f9fdf5}
+.em-ac-name{font-size:13px;font-weight:700;color:#222}
+.em-ac-email{font-size:11px;color:#888}
 </style>
 </head>
 <body>
@@ -697,7 +715,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Skype</label><input id="em-skype"></div>
 
             <div class="em-section">Bio &amp; Marketing</div>
-            <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
+            <div class="em-field em-ac-wrap"><label>Referring Agent</label><input id="em-referring_agent" autocomplete="off"><div id="em-referring_agent-dropdown" class="em-ac-dropdown" hidden></div></div>
             <div class="em-field em-full"><label>Bio</label><textarea id="em-bio" style="min-height:110px"></textarea></div>
           </div>
 
@@ -722,6 +740,45 @@ const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
 let networkLoaded = false;
 let permissionLoaded = false;
 let documentsLoaded = false;
+
+// Collapsible sections on the Profile tab: each .dg-section heading toggles
+// every sibling after it up to the next heading (or the bottom action row), so
+// the Edit Profile / Onboarding Steps buttons are reachable without scrolling
+// past every section. Pure display toggle via a class -- no data is touched.
+(function () {
+  const grid = document.querySelector('#ap-tab-profile .detail-grid');
+  if (!grid) return;
+  const heads = [...grid.querySelectorAll(':scope > .dg-section')];
+  if (!heads.length) return;
+  const bodyOf = h => {
+    const out = [];
+    for (let n = h.nextElementSibling; n && !n.classList.contains('dg-section') && !n.classList.contains('detail-actions'); n = n.nextElementSibling) out.push(n);
+    return out;
+  };
+  const setClosed = (h, closed) => {
+    h.classList.toggle('dg-closed', closed);
+    h.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    bodyOf(h).forEach(n => n.classList.toggle('dg-hidden', closed));
+  };
+  heads.forEach(h => {
+    h.classList.add('dg-collapsible');
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.setAttribute('aria-expanded', 'true');
+    const toggle = () => setClosed(h, !h.classList.contains('dg-closed'));
+    h.addEventListener('click', toggle);
+    h.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  const bar = document.createElement('div');
+  bar.className = 'dg-toolbar';
+  bar.innerHTML = '<button type="button" data-a="collapse">Collapse all</button><button type="button" data-a="expand">Expand all</button>';
+  bar.addEventListener('click', e => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (a) heads.forEach(h => setClosed(h, a === 'collapse'));
+  });
+  grid.insertBefore(bar, grid.firstChild);
+  heads.forEach(h => setClosed(h, true)); // start with headers only
+})();
 
 window.switchApTab = function (t) {
   document.querySelectorAll('.ap-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
@@ -1041,6 +1098,81 @@ function emCollectAdditionalLicenses() {
 var emBtnAddLicense = document.getElementById('em-btn-add-license');
 if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
 
+// Referring Agent typeahead — searches every active roster agent (not just
+// ones already resolvable in the Network Tree, unlike api/agent_search.php),
+// since the whole point here is picking someone who may not be linked yet.
+(function () {
+  var input = document.getElementById('em-referring_agent');
+  var dd = document.getElementById('em-referring_agent-dropdown');
+  if (!input || !dd) return;
+  var timer = null, active = -1;
+  var scrollParent = input.closest('.modal-body');
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  }); }
+  function close() { dd.hidden = true; active = -1; }
+  function position() {
+    var r = input.getBoundingClientRect();
+    dd.style.left = r.left + 'px';
+    dd.style.top = r.bottom + 'px';
+    dd.style.width = r.width + 'px';
+  }
+  function render(agents) {
+    if (!agents.length) { close(); return; }
+    dd.innerHTML = agents.map(function (a) {
+      return '<div class="em-ac-item" data-name="' + esc(a.name) + '">' +
+        '<div class="em-ac-name">' + esc(a.name) + '</div>' +
+        '<div class="em-ac-email">' + esc(a.email) + '</div></div>';
+    }).join('');
+    position();
+    dd.hidden = false;
+    active = -1;
+    dd.querySelectorAll('.em-ac-item').forEach(function (el) {
+      el.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        input.value = el.dataset.name;
+        close();
+      });
+    });
+  }
+  // The dropdown is position:fixed (see CSS comment), so it doesn't move with
+  // the modal's own scroll -- just close it if the user scrolls the form.
+  if (scrollParent) scrollParent.addEventListener('scroll', close, { passive: true });
+  window.addEventListener('resize', function () { if (!dd.hidden) close(); });
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (q.length < 2) { close(); return; }
+    timer = setTimeout(function () {
+      fetch('api/roster_agent_search.php?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { render(d.agents || []); })
+        .catch(close);
+    }, 250);
+  });
+  input.addEventListener('keydown', function (e) {
+    var items = dd.hidden ? [] : [].slice.call(dd.querySelectorAll('.em-ac-item'));
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      active = Math.min(active + 1, items.length - 1);
+      items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = Math.max(active - 1, -1);
+      items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+    } else if (e.key === 'Enter' && active >= 0 && items[active]) {
+      e.preventDefault();
+      items[active].dispatchEvent(new MouseEvent('mousedown'));
+    } else if (e.key === 'Escape') {
+      close();
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.em-ac-wrap')) close();
+  });
+})();
+
 window.openEditModal = function () {
   emLoaded = false;
   document.getElementById('em-save-btn').disabled = true;
@@ -1292,7 +1424,7 @@ function renderTree(tree, totalCount, sponsor, reason) {
 
   if (!tree) {
     wrap.innerHTML = reason === 'not_in_perfex'
-      ? '<div class="empty-prompt">This agent hasn\'t been added to Perfex yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once a Perfex staff record is created for them.</div>'
+      ? '<div class="empty-prompt">This agent is new and doesn\'t have a back-office staff record yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once one is created for them.</div>'
       : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
   }

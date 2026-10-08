@@ -54,10 +54,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'headshot') {
     $path    = $dataDir . '/headshots/' . basename($key);
     if (!file_exists($path)) { header('Content-Type: application/json'); intake_json_out(['error' => 'file not found'], 404); }
 
-    $disposition = !empty($_GET['dl']) ? 'attachment' : 'inline';
+    $isDl = !empty($_GET['dl']);
+    $disposition = $isDl ? 'attachment' : 'inline';
+
+    // For inline display serve a small JPEG thumbnail (≤128px, ~5-20 KB)
+    // instead of the raw upload (often 1-2 MB PNG). Falls back to the
+    // original if thumbnail generation fails (e.g. unsupported format).
+    if (!$isDl) {
+        require_once __DIR__ . '/../lib/headshot_thumb.php';
+        $thumbPath = ensure_headshot_thumbnail($path, $key);
+        if ($thumbPath) {
+            header('Content-Type: image/jpeg');
+            header('Content-Disposition: inline; filename="' . addslashes(pathinfo($file['orig_name'], PATHINFO_FILENAME)) . '.jpg"');
+            header('Cache-Control: public, max-age=86400');
+            header('X-Content-Type-Options: nosniff');
+            header('Content-Length: ' . filesize($thumbPath));
+            readfile($thumbPath);
+            exit;
+        }
+    }
+
+    // Download, or thumbnail generation failed — serve the original.
     header('Content-Type: ' . ($file['mime_type'] ?: 'image/jpeg'));
     header('Content-Disposition: ' . $disposition . '; filename="' . addslashes(basename($file['orig_name'])) . '"');
-    header('Cache-Control: private, max-age=86400');
+    header('Cache-Control: ' . ($isDl ? 'private' : 'public') . ', max-age=86400');
     header('X-Content-Type-Options: nosniff');
     header('Content-Length: ' . filesize($path));
     readfile($path);
