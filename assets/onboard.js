@@ -389,6 +389,7 @@
     const footerHtml = editable ? `
       <div class="ob-footer">
         <a class="ob-btn-sm ob-btn-done" style="text-decoration:none;display:inline-block" href="agent_profile.php?email=${encodeURIComponent(entry.agent_email)}" target="_blank">Edit Profile →</a>
+        <button class="ob-btn-sm ob-btn-undo" onclick="requestMissingItems(${entry.id}, this)">Request Missing Items</button>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
@@ -772,6 +773,41 @@
       .then(d => {
         if (d.ok) { loadQueue(); }
         else { btn.disabled = false; alert(d.error || 'Error'); }
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
+  // ── Request missing items (email the agent exactly what's outstanding) ─────
+  window.requestMissingItems = function (queueId, btn) {
+    btn.disabled = true;
+    post('api/onboard_action.php?action=request_missing_items', { queue_id: queueId })
+      .then(d => {
+        btn.disabled = false;
+        if (!d.ok) { alert(d.error || 'Error'); return; }
+        if (!d.missing.length) { alert('Nothing is missing for this agent right now.'); return; }
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+        ov.innerHTML = `
+          <div style="background:#fff;border-radius:10px;padding:22px;width:420px;max-width:92vw;font-size:14px">
+            <div style="font-weight:800;font-size:16px;margin-bottom:4px">Request missing items</div>
+            <div style="color:#888;font-size:12px;margin-bottom:12px">Emails ${esc(d.agent_email)} asking for the checked items.</div>
+            ${d.missing.map(m => `<label style="display:block;margin:6px 0"><input type="checkbox" class="rmi-item" value="${esc(m.key)}" checked> ${esc(m.label)}</label>`).join('')}
+            <textarea class="rmi-note" rows="3" placeholder="Optional note to the agent…" style="width:100%;margin-top:10px;box-sizing:border-box"></textarea>
+            <div style="text-align:right;margin-top:12px">
+              <button class="ob-btn-sm ob-btn-undo rmi-cancel">Cancel</button>
+              <button class="ob-btn-sm ob-btn-done rmi-send" style="margin-left:6px">Send Email</button>
+            </div>
+          </div>`;
+        document.body.appendChild(ov);
+        ov.querySelector('.rmi-cancel').onclick = () => ov.remove();
+        ov.querySelector('.rmi-send').onclick = function () {
+          const items = [...ov.querySelectorAll('.rmi-item:checked')].map(i => i.value);
+          if (!items.length) { alert('Select at least one item.'); return; }
+          this.disabled = true;
+          post('api/onboard_action.php?action=request_missing_items', { queue_id: queueId, items, note: ov.querySelector('.rmi-note').value })
+            .then(r => { if (r.ok) { ov.remove(); alert('Email sent.'); } else { this.disabled = false; alert(r.error || 'Error'); } })
+            .catch(() => { this.disabled = false; });
+        };
       })
       .catch(() => { btn.disabled = false; });
   };

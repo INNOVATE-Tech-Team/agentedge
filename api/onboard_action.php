@@ -703,4 +703,44 @@ if ($action === 'mark_intake_submitted') {
     exit;
 }
 
+// ── POST: request_missing_items ──────────────────────────────────────────────
+// With no `items`, returns what's currently missing for the agent (so the UI
+// can show checkboxes). With `items` (keys), emails the agent asking for those.
+if ($action === 'request_missing_items') {
+    require_once __DIR__ . '/../lib/notifications.php';
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT * FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+    if (($row['status'] ?? '') !== 'active') json_out(['ok'=>false,'error'=>'Onboarding is not active for this agent.']);
+
+    $missing = onboard_missing_items($pdo, $row);
+    $picked  = $body['items'] ?? null;
+    if ($picked === null) {
+        $list = [];
+        foreach ($missing as $k => $it) $list[] = ['key'=>$k, 'label'=>$it['label']];
+        json_out(['ok'=>true, 'missing'=>$list, 'agent_email'=>$row['agent_email']]);
+    }
+
+    // Only ever ask for items that are still outstanding right now.
+    $send = [];
+    foreach ((array)$picked as $k) {
+        if (isset($missing[$k])) $send[$k] = $missing[$k];
+    }
+    if (!$send) json_out(['ok'=>false,'error'=>'None of the selected items are missing any more.']);
+    if (!filter_var($row['agent_email'], FILTER_VALIDATE_EMAIL)) json_out(['ok'=>false,'error'=>'Agent has no valid email on the queue entry.']);
+
+    notify_missing_items_request(
+        $row['agent_name'], $row['agent_email'], array_values($send),
+        (string)($body['note'] ?? ''), $agent['email'], $agent['name'] ?? ''
+    );
+
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['ok'=>true, 'sent'=>array_keys($send)]);
+    try { dispatch_notification_queue(); } catch (\Throwable $e) {}
+    exit;
+}
+
 json_out(['ok'=>false,'error'=>'Unknown action'], 400);

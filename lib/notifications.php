@@ -384,6 +384,110 @@ function notify_intake_request(string $agentName, string $agentEmail, int $queue
     )->execute([$agentEmail, 'email', $subject, $body, '', '', '']);
 }
 
+// Items an onboarding agent can still owe us, computed live from their intake
+// row / uploaded files / checklist steps. Returns [key => ['label','detail','url']]
+// for every item that is currently MISSING. Used by the queue's "Request
+// Missing Items" button (api/onboard_action.php) so the email only ever asks
+// for things that are genuinely outstanding.
+function onboard_missing_items(PDO $pdo, array $queueRow): array {
+    $qid   = (int)$queueRow['id'];
+    $email = (string)($queueRow['agent_email'] ?? '');
+    $base  = 'https://agentedge.innovateonline.com';
+    $out   = [];
+
+    $st = $pdo->prepare("SELECT submitted, bio, license_number FROM agent_intake WHERE LOWER(email)=LOWER(?)");
+    $st->execute([$email]);
+    $intake    = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    $submitted = $intake && (int)$intake['submitted'] === 1;
+
+    if (!$submitted) {
+        $out['intake_form'] = ['label' => 'Complete your onboarding intake form',
+            'detail' => 'Your personal, licensing and MLS details.', 'url' => intake_link_url($qid)];
+    }
+
+    $fst = $pdo->prepare("SELECT COUNT(*) FROM agent_intake_files WHERE LOWER(agent_email)=LOWER(?)");
+    $fst->execute([$email]);
+    if ((int)$fst->fetchColumn() === 0) {
+        $out['headshot'] = ['label' => 'Upload a professional headshot',
+            'detail' => 'Log in to AgentEdge and add it in the Headshot section of your intake form.', 'url' => $base . '/intake.php'];
+    }
+
+    if ($submitted && trim((string)$intake['bio']) === '') {
+        $out['bio'] = ['label' => 'Add your agent bio',
+            'detail' => 'A short bio used on your profile and website.', 'url' => $base . '/intake.php'];
+    }
+    if ($submitted && trim((string)$intake['license_number']) === '') {
+        $out['license_number'] = ['label' => 'Provide your license number',
+            'detail' => 'Needed to finish your license and roster setup.', 'url' => $base . '/intake.php'];
+    }
+
+    $dst = $pdo->prepare("SELECT status FROM onboard_steps WHERE queue_id=? AND tool_key='doc_signing'");
+    $dst->execute([$qid]);
+    $docStatus = $dst->fetchColumn();
+    if ($docStatus !== false && !in_array($docStatus, ['done', 'skipped'], true)) {
+        $out['doc_signing'] = ['label' => 'Sign your onboarding documents',
+            'detail' => 'Check your inbox for the signing request from PandaDoc (look in spam if you don\'t see it).', 'url' => ''];
+    }
+    return $out;
+}
+
+// Queue one email asking the agent for the specific outstanding items in
+// $items (a subset of onboard_missing_items()). $note is an optional
+// free-text line from the admin. Callers must call
+// dispatch_notification_queue() after flushing the HTTP response.
+function notify_missing_items_request(string $agentName, string $agentEmail, array $items, string $note, string $fromEmail, string $fromName): void {
+    $firstName = htmlspecialchars(explode(' ', trim($agentName))[0], ENT_QUOTES);
+    $p  = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 16px"';
+    $li = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 10px"';
+
+    $list = '';
+    foreach ($items as $it) {
+        $label = htmlspecialchars($it['label'], ENT_QUOTES);
+        $detail = htmlspecialchars($it['detail'], ENT_QUOTES);
+        $link = $it['url'] !== ''
+            ? ' <a href="' . htmlspecialchars($it['url'], ENT_QUOTES) . '" style="color:#5b8e0d;font-weight:700">Open &rarr;</a>' : '';
+        $list .= '<li ' . $li . '><strong>' . $label . '</strong><br>' . $detail . $link . '</li>';
+    }
+    $noteHtml = trim($note) !== ''
+        ? '<p ' . $p . '>' . nl2br(htmlspecialchars(trim($note), ENT_QUOTES)) . '</p>' : '';
+
+    $body = notification_email_html(
+        '<p ' . $p . '>Hi ' . $firstName . ',</p>'
+        . '<p ' . $p . '>We\'re almost done getting you set up at Innovate, but we\'re still missing a few things from you:</p>'
+        . '<ul style="margin:0 0 20px;padding-left:20px">' . $list . '</ul>'
+        . $noteHtml
+        . '<p ' . $p . '>Once these are in, we can finish your onboarding. Just reply to this email if you have any questions.</p>'
+        . sender_signature_html($fromEmail, $fromName)
+    );
+
+    local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, is_html, from_email, from_name) VALUES (?,?,?,?,?,1,?,?)"
+    )->execute([$agentEmail, 'email', 'Action needed: a few items to finish your Innovate onboarding', $body, '', $fromEmail, $fromName]);
+}
+
+// Automatic follow-up when an onboarding agent still hasn't submitted their
+// intake form ~48h after the last send (cron/intake_reminders.php). Same
+// tokenized no-login link as notify_intake_request(), reminder wording.
+function notify_intake_reminder(string $agentName, string $agentEmail, int $queueId): void {
+    $firstName = trim(explode(' ', trim($agentName))[0]) ?: 'there';
+    $body = implode("\n", [
+        "Hi {$firstName},",
+        "",
+        "Just a friendly reminder — we haven't received your onboarding intake form yet, and we can't finish setting up your account until it's in.",
+        "",
+        "It only takes a few minutes. Complete it here:",
+        intake_link_url($queueId),
+        "",
+        "This link is unique to you — no login required. If you've already filled it out or run into any trouble, just reply to this email and we'll help.",
+        "",
+        "Thank you,",
+        "— AgentEdge",
+    ]);
+    local_db()->prepare(
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name) VALUES (?,?,?,?,?,?,?)"
+    )->execute([$agentEmail, 'email', 'Reminder: please complete your Innovate intake form', $body, '', '', '']);
+}
+
 // Queue an email when an agent enters the offboarding queue.
 function notify_offboard_added(
     string $agentName,
