@@ -154,11 +154,20 @@ function pandadoc_send_document(string $agentName, string $agentEmail, ?string $
         return ['ok'=>false,'error'=>"Document still processing (status: {$status}) — try Provision Now again shortly",'document_id'=>$docId];
     }
 
-    $send = pandadoc_request('POST', "/public/v1/documents/{$docId}/send", [
+    $sendBody = [
         'message' => "Hi {$first}, please review and sign your onboarding paperwork.",
         'subject' => 'INNOVATE Onboarding — Signature Required',
         'silent'  => false,
-    ]);
+    ];
+    // Without this, PandaDoc sends (and shows as "From") whichever workspace
+    // member owns 'pandadoc_api_key' — set 'pandadoc_sender_email' (config.php)
+    // to have the agent-facing invite/reminder/completion emails come from a
+    // specific team member instead (must already be a member of the same
+    // PandaDoc workspace the API key belongs to).
+    if (!empty($c['pandadoc_sender_email'])) {
+        $sendBody['sender'] = ['email' => $c['pandadoc_sender_email']];
+    }
+    $send = pandadoc_request('POST', "/public/v1/documents/{$docId}/send", $sendBody);
     if (!$send['ok']) {
         return ['ok'=>false,'error'=>"Send failed: " . pandadoc_error_message($send),'document_id'=>$docId];
     }
