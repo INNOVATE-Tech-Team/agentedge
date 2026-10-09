@@ -328,17 +328,23 @@ function ce_resolve_single_audience(string $audience, array $mcSlugs, array $tar
     // Launch Coaches + the Director of Coaching — a role, not a cohort
     // membership, so this stays on agent_roles like 'admin' above.
     if ($audience === 'launch_coaches') {
-        $rows = $db->query("SELECT email FROM agent_roles WHERE role IN ('launch_coach','director_of_coaching')")->fetchAll(PDO::FETCH_COLUMN);
+        // Effective role (primary OR extra_roles_json) via the shared helper in
+        // roles.php -- these roles are normally held as an extra role, which a
+        // primary-role-only query never sees. launch_facilitator is not included.
+        $rows = list_launch_coaches($db);
         $optOut = $db->query("SELECT email FROM notification_prefs WHERE notify_email=0")->fetchAll(PDO::FETCH_COLUMN);
         $optOutSet = array_flip(array_map(fn($e) => strtolower(trim($e)), $optOut));
         $out = [];
-        foreach ($rows as $email) {
-            $email = strtolower(trim($email));
-            if (!$email || isset($optOutSet[$email])) continue;
+        foreach ($rows as $coach) {
+            $email = strtolower(trim($coach['email']));
+            if (!$email || isset($optOutSet[$email]) || isset($out[$email])) continue;
+            // The helper falls back to the email itself when there's no intake name.
+            $fullName = trim($coach['full_name'] ?? '');
             $localPart = strstr($email, '@', true) ?: $email;
-            $out[] = ['email' => $email, 'name' => ucwords(str_replace(['.', '_'], ' ', $localPart))];
+            $name = ($fullName !== '' && strtolower($fullName) !== $email) ? $fullName : ucwords(str_replace(['.', '_'], ' ', $localPart));
+            $out[$email] = ['email' => $email, 'name' => $name];
         }
-        return $out;
+        return array_values($out);
     }
 
     $roster = ce_fetch_crm_roster();
