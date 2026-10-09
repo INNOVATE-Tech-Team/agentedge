@@ -349,12 +349,13 @@
         ${icon}
         <div style="flex:1;min-width:0">
           <span class="ob-step-label">${esc(label)}</span>
-          <span class="ob-step-note"> · ${met ? '' : '<strong style="color:#8a5a00">Missing</strong> — '}${detail}</span>
+          <span class="ob-step-note"> · ${met ? '' : '<strong style="color:#8a5a00">Blocking</strong> — '}${detail}</span>
         </div>
         <div class="ob-step-actions" style="flex-wrap:wrap;justify-content:flex-end;align-items:center">${controls}</div>
       </div>`;
     }
     const readinessHtml = rd ? `
+          <div style="font-size:12px;color:#888;margin:6px 0 4px">Required before Initial Setup can be completed. These setup requirements are tracked separately from items the agent still owes us, which can be requested with Request Items from Agent.</div>
           ${readinessRow('intake', 'Contact / Intake', entry.intake_submitted ? 'Intake form submitted' : 'Intake form not submitted', editable ? intakeStatusHtml : '')}
           ${readinessRow('license_state', 'License State', entry.state_code ? esc(entry.state_code) : 'No license state set', stateSelectHtml)}
           ${readinessRow('market_centers', 'Market Center(s)', assignedNames.length ? esc(assignedNames.length + ' assigned') : 'None assigned', editable ? (mcChips + addMcSelectHtml) : '')}` : '';
@@ -365,7 +366,7 @@
     } else if (editable) {
       stage1Action = `<button class="ob-btn-sm ob-btn-done" data-ready="${rd && rd.ready ? '1' : '0'}" data-missing="${esc(rd ? rd.missing.join(', ') : '')}"
                 onclick="completeInitialSetup(${entry.id}, this)">Complete Initial Setup</button>`
-        + (rd && !rd.ready ? `<span style="font-size:11px;color:#8a5a00;margin-left:8px">Outstanding: ${esc(rd.missing.join(', '))}</span>` : '');
+        + (rd && !rd.ready ? `<span style="font-size:11px;color:#8a5a00;margin-left:8px">Still required for initial setup: ${esc(rd.missing.join(', '))}</span>` : '');
     }
     const stage1ActionRow = stage1Action ? `<div style="padding:10px 0 4px">${stage1Action}</div>` : '';
 
@@ -389,7 +390,7 @@
     const footerHtml = editable ? `
       <div class="ob-footer">
         <a class="ob-btn-sm ob-btn-done" style="text-decoration:none;display:inline-block" href="agent_profile.php?email=${encodeURIComponent(entry.agent_email)}" target="_blank">Edit Profile →</a>
-        <button class="ob-btn-sm ob-btn-undo" onclick="requestMissingItems(${entry.id}, this)">Request Missing Items</button>
+        <button class="ob-btn-sm ob-btn-undo" onclick="requestMissingItems(${entry.id}, this)">Request Items from Agent</button>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
 
@@ -752,7 +753,7 @@
   // the data-ready/data-missing attributes just save a round trip.
   window.completeInitialSetup = function (queueId, btn) {
     if (btn.dataset.ready !== '1') {
-      alert('Initial setup can\'t be completed yet. Still outstanding: ' + (btn.dataset.missing || 'see the checklist') + '.');
+      alert('Initial setup can\'t be completed yet. Still required for initial setup: ' + (btn.dataset.missing || 'see the checklist') + '.');
       return;
     }
     if (!confirm('Complete initial setup for this agent?\n\nThis makes sure they\'re on the roster, sends their welcome email, notifies their Market Center leaders, and schedules the 10-day check-in text. It can only be done once.')) return;
@@ -784,13 +785,13 @@
       .then(d => {
         btn.disabled = false;
         if (!d.ok) { alert(d.error || 'Error'); return; }
-        if (!d.missing.length) { alert('Nothing is missing for this agent right now.'); return; }
+        if (!d.missing.length) { alert('The agent isn\'t missing anything we can request. Initial Setup may still be waiting on other setup requirements — see the Stage 1 checklist.'); return; }
         const ov = document.createElement('div');
         ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
         ov.innerHTML = `
           <div style="background:#fff;border-radius:10px;padding:22px;width:420px;max-width:92vw;font-size:14px">
-            <div style="font-weight:800;font-size:16px;margin-bottom:4px">Request missing items</div>
-            <div style="color:#888;font-size:12px;margin-bottom:12px">Emails ${esc(d.agent_email)} asking for the checked items.</div>
+            <div style="font-weight:800;font-size:16px;margin-bottom:4px">Request items from the agent</div>
+            <div style="color:#888;font-size:12px;margin-bottom:12px">Emails ${esc(d.agent_email)} listing only items we still need from the agent. Other Initial Setup requirements, such as License State, Market Center and MLS Number, are tracked separately and are not included here.</div>
             ${d.missing.map(m => `<label style="display:block;margin:6px 0"><input type="checkbox" class="rmi-item" value="${esc(m.key)}" checked> ${esc(m.label)}</label>`).join('')}
             <textarea class="rmi-note" rows="3" placeholder="Optional note to the agent…" style="width:100%;margin-top:10px;box-sizing:border-box"></textarea>
             <div style="text-align:right;margin-top:12px">

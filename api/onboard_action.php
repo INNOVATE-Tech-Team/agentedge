@@ -538,7 +538,7 @@ if ($action === 'complete_initial_setup') {
 
     $ready = onboard_stage1_readiness($pdo, $row);
     if (!$ready['ready']) {
-        json_out(['ok'=>false,'error'=>'Initial setup can\'t be completed yet. Still outstanding: ' . implode(', ', $ready['missing']) . '.']);
+        json_out(['ok'=>false,'error'=>'Initial setup can\'t be completed yet. Still required for initial setup: ' . implode(', ', $ready['missing']) . '.']);
     }
 
     $state = strtoupper(trim($row['state_code'] ?? ''));
