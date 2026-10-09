@@ -759,7 +759,14 @@ function notify_onboard_completed(string $agentName, string $agentEmail, string 
 // brokerage affiliation on their intake form) — experienced transfers skip this.
 function notify_coach_assignment_needed(string $agentName, string $agentEmail, string $fromEmail = '', string $fromName = ''): void {
     $db   = local_db();
-    $st   = $db->prepare("SELECT email FROM agent_roles WHERE role IN ('director_of_coaching','launch_facilitator')");
+    // These are normally held as an *extra* role (extra_roles_json), not a primary
+    // role, so match either; same json_each pattern as lib/company_email.php.
+    $st   = $db->prepare(
+        "SELECT email FROM agent_roles
+         WHERE role IN ('director_of_coaching','launch_facilitator')
+            OR EXISTS (SELECT 1 FROM json_each(agent_roles.extra_roles_json)
+                       WHERE json_extract(value,'$.role') IN ('director_of_coaching','launch_facilitator'))"
+    );
     $st->execute();
     $emails = array_values(array_unique(array_filter(array_map('trim', $st->fetchAll(PDO::FETCH_COLUMN)))));
     if (!$emails) return;
