@@ -99,6 +99,12 @@ return [
     // app.regrid.com → Account → API. Leave blank to show the "coming soon" banner.
     'regrid_api_key' => '',
 
+    // PandaDoc e-signature (lib/pandadoc.php) - optional. Email of the PandaDoc
+    // workspace member the agent-facing onboarding emails (invite, reminder,
+    // completion) are sent from. Leave blank to send from the owner of the
+    // PandaDoc API key. Must belong to the same workspace as that key.
+    'pandadoc_sender_email' => '',
+
     // Google Places API — powers the Google Business Audit dashboard (rating,
     // review count, open/closed status per agent's self-entered Place ID).
     // Setup: console.cloud.google.com → APIs & Services → enable "Places API" →
