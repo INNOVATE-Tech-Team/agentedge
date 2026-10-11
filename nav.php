@@ -168,6 +168,14 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_state_reports',          'label'=>'State Annual Reports','href'=>'backoffice_state_reports.php', 'dept'=>'Broker Files'],
         ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
         ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'dept'=>'Broker Files'],
+        // Second nav entry into the SAME vault.php — gives the HR Onboarding
+        // & Employee Records vault dept (Darren + Michele only, see
+        // vault_user_depts) a home in the Human Resources sidebar section
+        // instead of only being reachable via Broker Files > The Vault.
+        // Human Resources is already in $leaderHiddenDepts below, so this
+        // link itself stays admin-tier-only same as Finance/Technology;
+        // the actual restricted content is still gated inside vault.php.
+        ['key'=>'vault_hr',                  'label'=>'HR Vault',            'href'=>'vault.php',                     'dept'=>'Human Resources'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
         // 'mc_events' existed and worked (own API, own_mc_slugs+mc_slugs-scoped
@@ -184,6 +192,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_sage',                   'label'=>'Sage: Google & Reviews','href'=>'backoffice_sage.php',        'dept'=>'Agent Communications'],
         ['key'=>'bo_zillow_reviews',         'label'=>'Zillow Review Requests','href'=>'backoffice_zillow_reviews.php', 'dept'=>'Agent Communications'],
         // ── Events ──────────────────────────────────────────────────────────────
+        ['key'=>'bo_create_event',           'label'=>'Create Event',        'href'=>'backoffice_create_event.php',   'dept'=>'Events', 'leaderVisible'=>true],
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
         // ── Agent Development ───────────────────────────────────────────────────
