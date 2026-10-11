@@ -41,6 +41,20 @@ $db = local_db();
 
 $allDepts = $db->query("SELECT * FROM vault_depts ORDER BY sort_ord, name")->fetchAll(PDO::FETCH_ASSOC);
 
+// Per-tab deep link (?dept=slug) — each Back Office nav tab gets its own
+// "Vault" link straight into just that department's folders, instead of
+// everyone landing on one page listing every department at once. Falls
+// back to the full unscoped view (every accessible department) if the
+// slug is missing, unknown, or the viewer doesn't actually have access to
+// it — never reveals that a restricted department exists via the param.
+$scopedDeptSlug = trim((string) ($_GET['dept'] ?? ''));
+$scopedDept = null;
+if ($scopedDeptSlug !== '') {
+    foreach ($allDepts as $d) {
+        if ($d['slug'] === $scopedDeptSlug) { $scopedDept = $d; break; }
+    }
+}
+
 
 
 // A "restricted" department (e.g. Legal & Contracts) is a real confidentiality
@@ -66,6 +80,15 @@ if ($admin) {
     $userDeptSlugs = $grantedSlugs;
 
 }
+
+// Only honor the deep link if this viewer can actually see that department —
+// otherwise silently fall back to the normal unscoped view rather than
+// exposing (via an empty scoped page) that a restricted department exists.
+if ($scopedDept && !in_array($scopedDeptSlug, $userDeptSlugs, true)) {
+    $scopedDept = null;
+    $scopedDeptSlug = '';
+}
+$vaultTitle = $scopedDept ? ($scopedDept['name'] . ' Vault') : 'The Vault';
 
 
 
@@ -176,6 +199,12 @@ foreach ($rootFolders as $f) {
 
 }
 
+// Scoped view: collapse the tree down to just this one department — no
+// My Documents, no Public, no other departments listed alongside it.
+if ($scopedDept) {
+    $grouped = [$scopedDeptSlug => $grouped[$scopedDeptSlug] ?? []];
+}
+
 ?>
 
 <!doctype html>
@@ -188,7 +217,7 @@ foreach ($rootFolders as $f) {
 
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <title>The Vault — AgentEdge</title>
+  <title><?= htmlspecialchars($vaultTitle) ?> — AgentEdge</title>
 
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 
@@ -302,7 +331,7 @@ foreach ($rootFolders as $f) {
 
     <header class="content-top">
 
-      <div class="content-title">The Vault</div>
+      <div class="content-title"><?= htmlspecialchars($vaultTitle) ?></div>
 
       <div class="content-hello">Documents &amp; Resources</div>
 
@@ -316,8 +345,11 @@ foreach ($rootFolders as $f) {
 
       <div class="vault-tree" id="vault-tree">
 
-        <?php if ($canManageVaultStructure): ?>
+        <?php if ($canManageVaultStructure && !$scopedDept): ?>
         <div style="padding:6px 14px 10px"><button class="btn-sm btn-green" style="width:100%" onclick="addCategory()">+ Add Category</button></div>
+        <?php endif; ?>
+        <?php if ($scopedDept): ?>
+        <div style="padding:6px 14px 10px"><a href="vault.php" class="btn-sm" style="display:block;text-align:center;text-decoration:none">&larr; All Departments</a></div>
         <?php endif; ?>
 
         <?php
@@ -408,7 +440,7 @@ foreach ($rootFolders as $f) {
 
           <div style="font-size:40px;margin-bottom:12px"></div>
 
-          <div style="font-size:15px;font-weight:600;color:#555;margin-bottom:6px">The Vault</div>
+          <div style="font-size:15px;font-weight:600;color:#555;margin-bottom:6px"><?= htmlspecialchars($vaultTitle) ?></div>
 
           <div>Select a folder from the left to browse files.</div>
 
@@ -433,6 +465,8 @@ foreach ($rootFolders as $f) {
 const IS_ADMIN = <?= $admin ? 'true' : 'false' ?>;
 
 const IS_VAULT_MANAGER = <?= $canManageVaultStructure ? 'true' : 'false' ?>;
+
+const VAULT_TITLE = <?= json_encode($vaultTitle) ?>;
 
 let currentFolderId = null;
 
@@ -492,7 +526,7 @@ function renderFolder(data, name) {
 
     html += '<div class="vault-breadcrumb">';
 
-    html += '<a href="#" onclick="resetVault();return false">The Vault</a>';
+    html += '<a href="#" onclick="resetVault();return false">' + escH(VAULT_TITLE) + '</a>';
 
     for (let i = 0; i < breadcrumb.length; i++) {
 
@@ -658,7 +692,7 @@ function resetVault() {
 
     document.querySelectorAll('.vault-folder-item').forEach(x => x.classList.remove('active'));
 
-    document.getElementById('vault-main').innerHTML = '<div class="vault-empty"><div style="font-size:40px;margin-bottom:12px"></div><div style="font-size:15px;font-weight:600;color:#555;margin-bottom:6px">The Vault</div><div>Select a folder from the left to browse files.</div></div>';
+    document.getElementById('vault-main').innerHTML = '<div class="vault-empty"><div style="font-size:40px;margin-bottom:12px"></div><div style="font-size:15px;font-weight:600;color:#555;margin-bottom:6px">' + escH(VAULT_TITLE) + '</div><div>Select a folder from the left to browse files.</div></div>';
 
 }
 

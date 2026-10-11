@@ -147,6 +147,14 @@ function backoffice_nav_items(bool $superAdmin): array {
         // 'leaderVisible' items are the only Operations items mc_leader/bic see
         // (render_sidebar() filters to these for that role) — the pages
         // themselves scope their data to the leader's own Market Center(s).
+        // Each Back Office tab gets its own scoped Vault link (?dept=slug)
+        // straight into just that department's folders — see vault.php's
+        // $scopedDept handling, added 2026-10-11 per Darren ("each tab will
+        // have its own vault instead of it all being under HR Vault").
+        // Not leaderVisible: vault.php itself is strictly admin-tier-gated
+        // (redirects anyone who isn't $admin), so showing this to a plain
+        // MC leader/BIC would just be a dead link.
+        ['key'=>'vault_operations',          'label'=>'Vault',               'href'=>'vault.php?dept=operations',     'dept'=>'Operations'],
         ['key'=>'backoffice_agents',         'label'=>'Agent Profiles',      'href'=>'backoffice_agents.php',         'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'onboarding',                'label'=>'Onboarding Queue',    'href'=>'onboarding.php',                'dept'=>'Operations', 'leaderVisible'=>true],
         ['key'=>'offboarding',               'label'=>'Offboarding Queue',   'href'=>'offboarding.php',               'dept'=>'Operations'],
@@ -167,15 +175,16 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
         ['key'=>'bo_state_reports',          'label'=>'State Annual Reports','href'=>'backoffice_state_reports.php', 'dept'=>'Broker Files'],
         ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
-        ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php',                     'dept'=>'Broker Files'],
-        // Second nav entry into the SAME vault.php — gives the HR Onboarding
-        // & Employee Records vault dept (Darren + Michele only, see
-        // vault_user_depts) a home in the Human Resources sidebar section
-        // instead of only being reachable via Broker Files > The Vault.
-        // Human Resources is already in $leaderHiddenDepts below, so this
-        // link itself stays admin-tier-only same as Finance/Technology;
-        // the actual restricted content is still gated inside vault.php.
-        ['key'=>'vault_hr',                  'label'=>'HR Vault',            'href'=>'vault.php',                     'dept'=>'Human Resources'],
+        ['key'=>'vault',                     'label'=>'The Vault',           'href'=>'vault.php?dept=brokerage',      'dept'=>'Broker Files'],
+        // Second nav entry into the SAME vault.php — gives the Human
+        // Resources vault dept (Darren + Michele only, see vault_user_depts;
+        // whole department restricted 2026-10-11 per Darren) a home in the
+        // Human Resources sidebar section instead of only being reachable
+        // via Broker Files > The Vault. Human Resources is already in
+        // $leaderHiddenDepts below, so this link itself stays admin-tier-only
+        // same as Finance/Technology; the actual restricted content is still
+        // gated inside vault.php regardless of nav visibility.
+        ['key'=>'vault_hr',                  'label'=>'HR Vault',            'href'=>'vault.php?dept=hr',             'dept'=>'Human Resources'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
         // ── Agent Communications ─────────────────────────────────────────────────
         // 'mc_events' existed and worked (own API, own_mc_slugs+mc_slugs-scoped
@@ -183,6 +192,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         // mc_events_cal.php) but had no menu entry anywhere -- same orphaned-page
         // gap as listing_intel.php (see agent_assets_items() above). Confirmed
         // 2026-09-03 chasing a real MC Leader's "North Wales calendar" ticket.
+        ['key'=>'vault_comms',               'label'=>'Vault',               'href'=>'vault.php?dept=marketing',      'dept'=>'Agent Communications'],
         ['key'=>'mc_events',                 'label'=>'Market Center Events', 'href'=>'mc_events.php',                'dept'=>'Agent Communications'],
         ['key'=>'bo_announcements',          'label'=>'Announcements',       'href'=>'backoffice_announcements.php',  'dept'=>'Agent Communications'],
         ['key'=>'bo_company_email',          'label'=>'Company Email',       'href'=>'backoffice_email.php',          'dept'=>'Agent Communications'],
@@ -192,16 +202,25 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_sage',                   'label'=>'Sage: Google & Reviews','href'=>'backoffice_sage.php',        'dept'=>'Agent Communications'],
         ['key'=>'bo_zillow_reviews',         'label'=>'Zillow Review Requests','href'=>'backoffice_zillow_reviews.php', 'dept'=>'Agent Communications'],
         // ── Events ──────────────────────────────────────────────────────────────
+        ['key'=>'vault_events',              'label'=>'Vault',               'href'=>'vault.php?dept=events',         'dept'=>'Events'],
         ['key'=>'bo_create_event',           'label'=>'Create Event',        'href'=>'backoffice_create_event.php',   'dept'=>'Events', 'leaderVisible'=>true],
         ['key'=>'bo_industry_events',        'label'=>'Industry Events',     'href'=>'backoffice_industry_events.php','dept'=>'Events'],
         ['key'=>'bo_event_rsvps',            'label'=>'Event RSVPs',         'href'=>'backoffice_event_rsvps.php',    'dept'=>'Events'],
         // ── Agent Development ───────────────────────────────────────────────────
+        ['key'=>'vault_agentdev',            'label'=>'Vault',               'href'=>'vault.php?dept=agent-development', 'dept'=>'Agent Development'],
         ['key'=>'admin_university',          'label'=>'University',          'href'=>'admin_university.php',          'dept'=>'Agent Development'],
         ['key'=>'admin_university_templates','label'=>'On Demand',           'href'=>'admin_university_templates.php','dept'=>'Agent Development', 'superOnly'=>true],
         ['key'=>'launch_curriculum',         'label'=>'LAUNCH Curriculum',   'href'=>'launch_curriculum.php',         'dept'=>'Agent Development'],
         ['key'=>'launch_schedule',           'label'=>'Launch Schedule',     'href'=>'launch_schedule.php',           'dept'=>'Agent Development'],
         ['key'=>'launch_coaching',           'label'=>'Launch Coaching',     'href'=>'launch_coaching.php',           'dept'=>'Agent Development'],
         // ── Finance ─────────────────────────────────────────────────────────────
+        // Untagged (no financeChecklistItem/annualReportsItem/mlsCostsItem/
+        // mlsapItem): shows for a true super_admin (Darren/Michele, who see
+        // the whole Finance dept untagged-and-all) but not for the 'admin'
+        // role or any of the narrower named-allowlist bypass viewers, since
+        // the Vault's own 'finance' dept grants are a separate, narrower
+        // list than any of those four — matches vault.php's own gating.
+        ['key'=>'vault_finance',             'label'=>'Vault',               'href'=>'vault.php?dept=finance',        'dept'=>'Finance'],
         ['key'=>'finance_exchange_readiness','label'=>'Exchange Readiness',  'href'=>'finance_exchange_readiness.php','dept'=>'Finance', 'superOnly'=>true],
         ['key'=>'finance_checklists',        'label'=>'Accounting Checklists','href'=>'finance_checklists.php',        'dept'=>'Finance', 'financeChecklistItem'=>true],
         ['key'=>'bo_annual_reports',         'label'=>'State Annual Reports', 'href'=>'backoffice_annual_reports.php', 'dept'=>'Finance', 'annualReportsItem'=>true],
@@ -214,6 +233,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_atlas',                  'label'=>'Atlas (MLS monitor)',  'href'=>'backoffice_atlas.php',          'dept'=>'Finance', 'mlsCostsItem'=>true],
         ['key'=>'bo_insurance_quotes',       'label'=>'Insurance Quote Requests','href'=>'backoffice_insurance_quotes.php', 'dept'=>'Finance'],
         // ── Technology ──────────────────────────────────────────────────────────
+        ['key'=>'vault_technology',          'label'=>'Vault',               'href'=>'vault.php?dept=technology',     'dept'=>'Technology'],
         ['key'=>'bo_login_report',           'label'=>'Login Report',        'href'=>'backoffice_login_report.php',   'dept'=>'Technology'],
         ['key'=>'bo_sync_health',            'label'=>'Sync Health',         'href'=>'backoffice_sync_health.php',    'dept'=>'Technology'],
         ['key'=>'bo_join_stats',             'label'=>'Join Site Analytics', 'href'=>'backoffice_join_stats.php',     'dept'=>'Technology'],
@@ -233,6 +253,12 @@ function backoffice_nav_items(bool $superAdmin): array {
         // staff_feature_flags in local_db.php. super_admin-only, same as
         // every other Technology settings surface above.
         ['key'=>'staff_feature_access',      'label'=>'Staff Feature Access','href'=>'staff_feature_access.php',      'dept'=>'Technology', 'superOnly'=>true],
+        // ── Legal ───────────────────────────────────────────────────────────────
+        // New tab added 2026-10-11 per Darren, for the restricted "Legal"
+        // Vault department (court docs etc. — darren@/michele@ only, same as
+        // Human Resources). Legal is in $leaderHiddenDepts below, same tier
+        // as Finance/Human Resources/Technology.
+        ['key'=>'vault_legal',               'label'=>'Vault',               'href'=>'vault.php?dept=legal',          'dept'=>'Legal'],
     ];
     foreach (backoffice_items_all() as $r) {
         $item = ['key'=>'bo_'.$r['id'], 'label'=>$r['label'], 'href'=>$r['url'], 'dept'=>($r['department'] ?? 'Operations')];
@@ -431,7 +457,7 @@ function render_sidebar(string $current, array $agent): void {
     // that page/access flag stay as-is since Atlas is also gated on it.
     $mlsapAccess = can_access_mlsap();
     $showBackOffice = $admin || is_mc_leader() || is_bic() || is_launch_coach() || $financeChecklistAccess || $annualReportsAccess || $mlsCostsAccess || $mlsapAccess || is_team_leader();
-    $leaderHiddenDepts = ['Finance', 'Human Resources', 'Technology'];
+    $leaderHiddenDepts = ['Finance', 'Human Resources', 'Technology', 'Legal'];
     $isMcLeaderOrBic = is_mc_leader() || is_bic();
     if ($showBackOffice) {
         static $boStylesEmitted = false;
@@ -450,7 +476,7 @@ function render_sidebar(string $current, array $agent): void {
         $boItems    = backoffice_nav_items($superAdmin);
         $standalone = array_values(array_filter($boItems, fn($it) => !empty($it['standalone'])));
         $deptItems  = array_values(array_filter($boItems, fn($it) => empty($it['standalone'])));
-        $deptOrder  = ['Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources'];
+        $deptOrder  = ['Operations','Finance','Broker Files','Agent Communications','Events','Agent Development','Technology','Human Resources','Legal'];
         $byDept     = array_fill_keys($deptOrder, []);
         foreach ($deptItems as $it) {
             $d = $it['dept'] ?? 'Operations';
