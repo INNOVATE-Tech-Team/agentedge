@@ -28,7 +28,58 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // (it also meant an agent's intake submission and a staff member's page load
 // racing that same lock could leave the just-submitted data slow to
 // appear — see the AgentEdge intake duplicate-agent investigation, Aug 2026).
-const LOCAL_DB_SCHEMA_VERSION = 7;
+const LOCAL_DB_SCHEMA_VERSION = 8;
+
+// Onboarding Stage 1 / Stage 2 split — schema foundation only (no behavior
+// reads these yet except lib/onboarding.php's onboard_queue_state() helper).
+//   onboard_queue.stage1_completed_at / stage1_completed_by — NULL until the
+//     future "Complete Initial Setup" action; onboard_queue.status stays
+//     active/completed/cancelled (status='completed' always wins).
+//   step_defs.stage / onboard_steps.stage — 1 = Initial Setup / Paperwork,
+//     2 = Accounts, Marketing, Coaching & Training. Only meaningful for
+//     process='onboard' (offboard rows just carry the default).
+// The classification and the Coach/LAUNCH seeding run only in the call that
+// actually adds the stage column, in one transaction, so re-running is a no-op
+// and an admin-deleted step is never resurrected. The fast path is three
+// read-only PRAGMAs — no write lock on normal page loads.
+function local_db_ensure_onboard_stages(PDO $pdo): void {
+    $cols = function (string $table) use ($pdo): array {
+        return array_column($pdo->query("PRAGMA table_info($table)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+    };
+    try {
+        $q = $cols('onboard_queue'); $d = $cols('step_defs'); $s = $cols('onboard_steps');
+        if (!$q || !$d || !$s) return;
+        if (in_array('stage1_completed_at', $q, true) && in_array('stage1_completed_by', $q, true)
+            && in_array('stage', $d, true) && in_array('stage', $s, true)) return;
+
+        $pdo->exec("BEGIN IMMEDIATE");
+        try {
+            // Re-read inside the lock: another request may have won the race.
+            $q = $cols('onboard_queue'); $d = $cols('step_defs'); $s = $cols('onboard_steps');
+            if (!in_array('stage1_completed_at', $q, true)) $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage1_completed_at TEXT");
+            if (!in_array('stage1_completed_by', $q, true)) $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage1_completed_by TEXT");
+            if (!in_array('stage', $d, true)) {
+                $pdo->exec("ALTER TABLE step_defs ADD COLUMN stage INTEGER NOT NULL DEFAULT 2");
+                $pdo->exec("UPDATE step_defs SET stage=1 WHERE process='onboard' AND step_key IN ('agentedge','doc_signing','mls')");
+                $pdo->exec(
+                    "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord, stage) VALUES
+                       ('onboard','coach',  'Coach',  'Manual — confirm a coach has been assigned',      0, 110, 2),
+                       ('onboard','launch', 'LAUNCH', 'Manual — confirm LAUNCH enrollment or exemption', 0, 111, 2)"
+                );
+            }
+            if (!in_array('stage', $s, true)) {
+                $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN stage INTEGER NOT NULL DEFAULT 2");
+                $pdo->exec("UPDATE onboard_steps SET stage=1 WHERE tool_key IN ('agentedge','doc_signing','mls')");
+            }
+            $pdo->exec("COMMIT");
+        } catch (\Throwable $e) {
+            try { $pdo->exec("ROLLBACK"); } catch (\Throwable $e2) {}
+            throw $e;
+        }
+    } catch (\Throwable $e) {
+        error_log('local_db_ensure_onboard_stages failed: ' . $e->getMessage());
+    }
+}
 
 function local_db(): PDO {
     static $pdo = null;
@@ -64,6 +115,17 @@ function local_db(): PDO {
     // press_contacts. Until that's untangled, new schema additions that must
     // reliably apply go here instead: cheap, always-run, fully idempotent
     // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
+    local_db_ensure_onboard_stages($pdo);
+    // Free-text coach name typed on the Stage 2 Coach step of the Onboarding Queue.
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN coach_name TEXT"); } catch (\Exception $e) {}
+    // LAUNCH step on the Onboarding Queue: confirmed / not_confirmed + a date.
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_status TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_date TEXT"); } catch (\Exception $e) {}
+    // Set once the "LAUNCH attendance confirmed" notification has been queued (send-once guard).
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_notified_at TEXT"); } catch (\Exception $e) {}
+    // Onboarding Queue MLS step is labeled "MLS Number" (the number itself is read from the intake form).
+    $pdo->exec("UPDATE step_defs SET label='MLS Number' WHERE process='onboard' AND step_key='mls' AND label='MLS Access'");
+    $pdo->exec("UPDATE onboard_steps SET tool_label='MLS Number' WHERE tool_key='mls' AND tool_label='MLS Access'");
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_notify_prefs (
         email            TEXT PRIMARY KEY,
         notify_requested INTEGER NOT NULL DEFAULT 1,
@@ -600,6 +662,11 @@ function local_db(): PDO {
         decided_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mlsap_decisions_account ON mlsap_decisions(account_id)");
+
+    // Per-folder Vault restriction, independent of its department's own
+    // restricted flag — see lib/vault.php's vault_user_passes_folder_restriction().
+    // Comma-separated emails; empty means no per-folder override.
+    try { $pdo->exec("ALTER TABLE vault_folders ADD COLUMN restricted_emails TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     return $pdo;
 }
@@ -2887,6 +2954,9 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     // the application layer across both training_events and events_calendar
     // (see slugify_reg_link() in api/training_event_action.php), not here.
     try { $pdo->exec("ALTER TABLE training_events ADD COLUMN reg_slug TEXT"); } catch (\Exception $e) {}
+    // Zoom meeting attached to this training event from the event form (lib/zoom.php).
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_meeting_id TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_host TEXT"); } catch (\Exception $e) {}
 
     // ── Company Calendar "Events" tab — same RSVP/capacity/waitlist pattern as
     // Training above, but a separate Google Calendar + separate RSVP pool, so
@@ -3764,6 +3834,16 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fbm_response ON uni_feedback_response_meta(response_id)");
     try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN feedback_meta_profile TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    }
+
+    if ($fromVersion < 8) {
+    // ── version 8 — Zoom meeting attached to a training event (lib/zoom.php) ──────
+    // These two ALTERs were first added inside the version-1 baseline block, which
+    // never re-runs on an existing database, so api/training_cal.php selected
+    // columns that did not exist and the Training tab came up empty (2026-10-08).
+    // Idempotent: a database that already has the columns just skips them.
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_meeting_id TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_host TEXT"); } catch (\Exception $e) {}
     }
 }
 

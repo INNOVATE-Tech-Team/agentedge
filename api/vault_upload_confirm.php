@@ -1,34 +1,107 @@
 <?php
+
 // Called by the browser after a successful direct-to-S3 PUT via presigned URL.
+
 // Writes the file record to the local DB so it appears in the vault listing.
+
 require_once dirname(__DIR__) . '/db.php';
+
 require_once dirname(__DIR__) . '/auth.php';
+
 require_once dirname(__DIR__) . '/roles.php';
+
 require_once dirname(__DIR__) . '/local_db.php';
+
 require_once dirname(__DIR__) . '/lib/s3.php';
+
+require_once dirname(__DIR__) . '/lib/vault.php';
+
 header('Content-Type: application/json');
 
+
+
 $agent = require_login();
+
 $perms = current_perms();
-if (empty($perms['isAdmin'])) { echo json_encode(['ok'=>false,'error'=>'admin only']); exit; }
+
+$admin = !empty($perms['isAdmin']);
+
+
 
 $in         = json_decode(file_get_contents('php://input'), true) ?: [];
+
 $id         = $in['file_id']    ?? '';
+
 $folderId   = $in['folder_id']  ?? '';
+
 $origName   = basename($in['name'] ?? '');
+
 $mime       = $in['mime_type']  ?? 'application/octet-stream';
+
 $size       = (int)($in['size'] ?? 0);
+
 $storageKey = $in['storage_key'] ?? '';
 
+
+
 if (!$id || !$folderId || !$origName || !$storageKey) {
+
     echo json_encode(['ok'=>false,'error'=>'missing fields']); exit;
+
 }
+
+
+
+$db = local_db();
+
+
+
+// Admins may upload anywhere, EXCEPT a restricted department (e.g. Legal &
+// Contracts) — that one only accepts an explicit vault_user_depts grant, same
+// rule as reading it. A non-admin may otherwise only upload into their own
+// personal folder (self-serve "My Documents").
+
+$chk = $db->prepare("SELECT visibility, owner_email, dept_slug, restricted_emails FROM vault_folders WHERE id=?");
+
+$chk->execute([$folderId]);
+
+$fld = $chk->fetch(PDO::FETCH_ASSOC);
+
+if ($fld && !vault_user_passes_folder_restriction($fld, $agent['email'] ?? '')) {
+    echo json_encode(['ok' => false, 'error' => 'access denied']); exit;
+}
+
+if ($fld && $fld['visibility'] === 'dept' && vault_dept_restricted($fld['dept_slug'] ?? '')) {
+
+    if (!vault_user_has_dept($agent['email'], $fld['dept_slug'])) {
+
+        echo json_encode(['ok'=>false,'error'=>'access denied']); exit;
+
+    }
+
+} elseif (!$admin) {
+
+    if (!$fld || $fld['visibility'] !== 'personal' || strtolower($fld['owner_email'] ?? '') !== strtolower($agent['email'] ?? '')) {
+
+        echo json_encode(['ok'=>false,'error'=>'access denied']); exit;
+
+    }
+
+}
+
+
 
 if (!$mime) $mime = s3_mime_from_name($origName);
 
-$db = local_db();
+
+
 $db->prepare("INSERT INTO vault_files (id,folder_id,name,mime_type,size_bytes,storage_key,uploaded_by,created_at)
+
               VALUES (?,?,?,?,?,?,?,datetime('now'))")
+
    ->execute([$id, $folderId, $origName, $mime, $size, $storageKey, $agent['email']]);
 
+
+
 echo json_encode(['ok'=>true,'id'=>$id,'name'=>$origName]);
+
