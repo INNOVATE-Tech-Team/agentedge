@@ -503,6 +503,7 @@
         ${stepIconHtml(step.status)}
         <div style="flex:1;min-width:0">
           <span class="ob-step-label">${esc(step.tool_label)}</span>
+          ${step.tool_key === 'mls' ? (step.mls_display ? `<strong style="margin-left:6px">${esc(step.mls_display)}</strong>` : `<span style="margin-left:6px;font-size:11px;color:#aaa">not on intake yet</span>`) : ''}
           ${note ? `<span class="ob-step-note"> · ${esc(note)}</span>` : ''}
           ${errorNote}
           ${doneInfo}

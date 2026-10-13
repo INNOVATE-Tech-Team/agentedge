@@ -146,6 +146,28 @@ if ($action === 'list_queue') {
         unset($row);
     }
 
+    // MLS Number step: show the board + number(s) the agent gave on their intake form —
+    // agent_mls_memberships (every board) first, falling back to the single
+    // agent_intake.mls_id column. Display-only; nothing is stored on the step.
+    $memSt = $pdo->prepare("SELECT mls_association, mls_number FROM agent_mls_memberships WHERE LOWER(agent_email)=LOWER(?) AND TRIM(mls_number)!='' ORDER BY id");
+    $intSt = $pdo->prepare("SELECT mls_board, mls_id FROM agent_intake WHERE LOWER(email)=LOWER(?) AND TRIM(mls_id)!=''");
+    foreach ($rows as &$row) {
+        foreach ($row['steps'] as &$stp) {
+            if ($stp['tool_key'] !== 'mls') continue;
+            $memSt->execute([$row['agent_email']]);
+            $pairs = $memSt->fetchAll(PDO::FETCH_ASSOC);
+            if (!$pairs) { $intSt->execute([$row['agent_email']]); $r2 = $intSt->fetch(PDO::FETCH_ASSOC); if ($r2) $pairs = [['mls_association'=>$r2['mls_board'], 'mls_number'=>$r2['mls_id']]]; }
+            $parts = [];
+            foreach ($pairs as $pr) {
+                $n = trim($pr['mls_number']); $b = trim($pr['mls_association'] ?? '');
+                $parts[] = $b !== '' ? "$b: $n" : $n;
+            }
+            $stp['mls_display'] = implode(', ', $parts);
+        }
+        unset($stp);
+    }
+    unset($row);
+
     // Derived lifecycle state + Stage 1 readiness, from the shared helpers in
     // lib/onboarding.php (don't re-derive either one client-side).
     foreach ($rows as &$row) {

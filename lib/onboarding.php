@@ -71,7 +71,7 @@ function onboard_stage1_readiness(PDO $pdo, array $queueRow): array {
                 'met' => (int)$mc->fetchColumn() > 0];
 
     $stepSt = $pdo->prepare("SELECT status FROM onboard_steps WHERE queue_id=? AND tool_key=?");
-    foreach (['doc_signing' => 'Document Signing', 'mls' => 'MLS Access'] as $key => $label) {
+    foreach (['doc_signing' => 'Document Signing', 'mls' => 'MLS Number'] as $key => $label) {
         $stepSt->execute([$qid, $key]);
         $status = $stepSt->fetchColumn();
         $items[] = ['key' => $key, 'label' => $label, 'type' => 'step',
