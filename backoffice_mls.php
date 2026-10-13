@@ -459,6 +459,12 @@ function feedTypeLabel(r){
 }
 
 let allRows = [];
+const NOTE_PREVIEW_LEN = 80;
+let expandedNoteRows = new Set();
+function toggleRowNote(id){
+  if(expandedNoteRows.has(id)) expandedNoteRows.delete(id); else expandedNoteRows.add(id);
+  renderTable(allRows);
+}
 let viewId = null;
 
 function load(){
@@ -486,6 +492,10 @@ function renderTable(rows){
   rows=[...rows].sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status));
   tbody.innerHTML=rows.map(r=>{
     const prods=(r.products||'').split(',').filter(Boolean).map(p=>esc(PROD_LABELS[p]||p)).join(', ')||'—';
+    const noteText=r.notes||'';
+    const noteIsLong=noteText.length>NOTE_PREVIEW_LEN;
+    const noteExpanded=expandedNoteRows.has(r.id);
+    const noteShown=(noteIsLong&&!noteExpanded)?noteText.slice(0,NOTE_PREVIEW_LEN).trimEnd()+'…':noteText;
     return `<tr onclick="viewRow(${r.id})" style="cursor:pointer">
       <td><strong>${esc(r.mls_name)}</strong>${(r.membership_type||r.office_id||r.broker_of_record)?`<div style="font-size:10px;color:#999;margin-top:2px">${esc([r.membership_type,r.office_id?('#'+r.office_id):'',r.broker_of_record].filter(Boolean).join(' · '))}</div>`:''}</td>
       <td><code style="font-size:11px;background:#f3f4f6;padding:2px 5px;border-radius:3px">${esc(r.mls_code||'—')}</code></td>
@@ -495,7 +505,7 @@ function renderTable(rows){
       <td><span class="badge badge-${esc(r.status)}">${esc(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td class="fee-val">${fmtFee(r.monthly_fee)}</td>
       <td style="font-size:11px;color:#777">${esc(prods)}</td>
-      <td class="notes-cell notes-btn" data-note="${esc(r.notes||'')}" style="cursor:pointer" onclick="event.stopPropagation();openNotesModal(${r.id})">${esc(r.notes||'—')}</td>
+      <td class="notes-cell notes-btn" data-note="${esc(noteText)}" style="cursor:pointer" onclick="event.stopPropagation();openNotesModal(${r.id})">${noteText?esc(noteShown):'—'}${noteIsLong?` <a href="javascript:void(0)" onclick="event.stopPropagation();toggleRowNote(${r.id})" style="font-size:11px;font-weight:700;color:#5b8e0d;white-space:nowrap">${noteExpanded?'Less':'More'}</a>`:''}</td>
       <td onclick="event.stopPropagation()">
         <div class="notes-actions">
           <button class="btn-sm" onclick="openActivityModal(${r.id})">Activity</button>
@@ -808,21 +818,44 @@ function closeActivityModal(){
   activityMlsId = null;
 }
 
-function loadActivityNotes(){
+const ACTIVITY_NOTE_PREVIEW_LEN = 180;
+let currentActivityNotes = [];
+let expandedActivityNotes = new Set();
+
+function toggleActivityNote(i){
+  if(expandedActivityNotes.has(i)) expandedActivityNotes.delete(i); else expandedActivityNotes.add(i);
+  renderActivityNotes();
+}
+
+function renderActivityNotes(){
   const list = document.getElementById('activity-notes-list');
-  list.innerHTML = '<div class="empty-note" style="padding:12px">Loading…</div>';
-  fetch('api/mls_notes.php?mls_id='+activityMlsId, {credentials:'same-origin'})
-    .then(r=>r.json()).then(d=>{
-      if(!d.ok){ list.innerHTML = '<div class="empty-note" style="padding:12px">'+esc(d.error||'Failed to load')+'</div>'; return; }
-      if(!d.notes.length){ list.innerHTML = '<div class="empty-note" style="padding:12px">No notes yet.</div>'; return; }
-      list.innerHTML = d.notes.map(n=>`
+  if(!currentActivityNotes.length){ list.innerHTML = '<div class="empty-note" style="padding:12px">No notes yet.</div>'; return; }
+  list.innerHTML = currentActivityNotes.map((n,i)=>{
+    const full = n.note||'';
+    const isLong = full.length > ACTIVITY_NOTE_PREVIEW_LEN;
+    const expanded = expandedActivityNotes.has(i);
+    const shown = (isLong && !expanded) ? full.slice(0, ACTIVITY_NOTE_PREVIEW_LEN).trimEnd()+'…' : full;
+    return `
         <div style="border:1px solid #f0f0f0;border-radius:8px;padding:10px 12px">
-          <div style="font-size:13px;color:#333;white-space:pre-wrap">${esc(n.note)}</div>
+          <div style="font-size:13px;color:#333;white-space:pre-wrap">${esc(shown)}</div>
+          ${isLong?`<a href="javascript:void(0)" onclick="toggleActivityNote(${i})" style="display:inline-block;margin-top:4px;font-size:11px;font-weight:700;color:#5b8e0d">${expanded?'Less':'More'}</a>`:''}
           <div style="margin-top:6px;font-size:11px;color:#999">
             ${esc(n.created_by||'—')} · ${activityFmtDT(n.created_at)}
             ${n.tagged_email?` · <span style="color:#5b8e0d;font-weight:700">tagged ${esc(n.tagged_email)}</span>`:''}
           </div>
-        </div>`).join('');
+        </div>`;
+  }).join('');
+}
+
+function loadActivityNotes(){
+  const list = document.getElementById('activity-notes-list');
+  list.innerHTML = '<div class="empty-note" style="padding:12px">Loading…</div>';
+  expandedActivityNotes.clear();
+  fetch('api/mls_notes.php?mls_id='+activityMlsId, {credentials:'same-origin'})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ list.innerHTML = '<div class="empty-note" style="padding:12px">'+esc(d.error||'Failed to load')+'</div>'; return; }
+      currentActivityNotes = d.notes;
+      renderActivityNotes();
     }).catch(()=>{ list.innerHTML = '<div class="empty-note" style="padding:12px">Request failed.</div>'; });
 }
 
