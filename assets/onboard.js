@@ -11,6 +11,7 @@
   const TOOLS       = window.ONBOARD_TOOLS || [];
   const STATES      = ['FL','GA','SC','NC','TN','VA','MD','DE','NJ','PA','OH','MA','RI','NH'];
   const MC_OPTS     = window.ONBOARD_MC_OPTS || [];
+  const COACHES     = window.ONBOARD_COACHES || [];
   const IS_ADMIN    = window.IS_ADMIN === true;
   const notesLoaded = new Set();   // queue ids whose notes have already been fetched
   const intakeLoaded = new Set();  // queue ids whose intake form has already been fetched
@@ -478,6 +479,25 @@
       ? `<span style="font-size:11px;color:#aaa"> · ${esc(step.done_by || '')} ${esc(step.done_at)}</span>`
       : '';
 
+    // Coach step: dropdown of Launch Coaches; saves on change.
+    let coachHtml = '';
+    if (step.tool_key === 'coach') {
+      const canEdit = !disabled && IS_ADMIN;
+      const cur = (step.coach_name || '').toLowerCase();
+      const isNA = cur === 'n/a';
+      const known = isNA || COACHES.some(c => c.email.toLowerCase() === cur);
+      const opts = COACHES.map(c => `<option value="${esc(c.email)}"${c.email.toLowerCase() === cur ? ' selected' : ''}>${esc(c.full_name)}</option>`).join('')
+        + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)} (not a Launch Coach)</option>` : '');
+      coachHtml = `<div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+          <select id="coach-input-${queueId}" ${canEdit && !isNA ? '' : 'disabled'} onchange="saveCoach(${queueId},this.nextElementSibling,'select')"
+                  style="max-width:320px;padding:5px 8px;border:1px solid #E6E7E8;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="">— Select Launch Coach —</option>${opts}
+          </select>
+          ${canEdit ? `<button class="ob-btn-sm ob-btn-done" onclick="saveCoach(${queueId},this)">Save</button>` : ''}
+          <label style="font-size:12px"><input type="checkbox" id="coach-na-${queueId}" ${isNA ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="saveCoach(${queueId},document.querySelector('#coach-input-${queueId} + button'),'na')"> N/A</label>
+        </div>`;
+    }
+
     return `
       <div class="ob-step" id="step-${queueId}-${step.tool_key}">
         ${stepIconHtml(step.status)}
@@ -486,6 +506,7 @@
           ${note ? `<span class="ob-step-note"> · ${esc(note)}</span>` : ''}
           ${errorNote}
           ${doneInfo}
+          ${coachHtml}
         </div>
         <div class="ob-step-actions">${actionsHtml}</div>
       </div>`;
@@ -635,6 +656,26 @@
         else { alert(d.error || 'Could not save note.'); }
       })
       .catch(() => { alert('Network error saving note.'); });
+  };
+
+  window.saveCoach = function (queueId, btn, src) {
+    const input = document.getElementById('coach-input-' + queueId);
+    const na    = document.getElementById('coach-na-' + queueId);
+    if (!input) return;
+    // N/A wins and greys out the dropdown; picking a coach unchecks N/A.
+    if (na && src === 'select' && input.value) na.checked = false;
+    input.disabled = !!(na && na.checked);
+    const value = na && na.checked ? 'n/a' : input.value;
+    if (na && na.checked) input.value = '';
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    const done = () => { if (btn) { btn.disabled = false; btn.textContent = origText; } };
+    post('api/onboard_action.php?action=set_coach', { queue_id: queueId, coach_name: value })
+      .then(d => {
+        if (d.ok) { if (btn) { btn.disabled = false; btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = origText; }, 1500); } }
+        else { done(); alert('Error: ' + (d.error || 'Could not save coach.')); loadQueue(); }
+      })
+      .catch(() => { done(); alert('Network error saving coach.'); loadQueue(); });
   };
 
   // ── Mark step done/pending/skipped ─────────────────────────────────────────

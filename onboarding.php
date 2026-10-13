@@ -64,6 +64,7 @@ $mcOptsJson = json_encode($mcOpts);
   <script>
     window.ONBOARD_TOOLS   = <?= $toolsJson ?>;
     window.ONBOARD_MC_OPTS = <?= $mcOptsJson ?>;
+    window.ONBOARD_COACHES = <?= json_encode(list_launch_coaches(local_db()), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     window.ONBOARD_OPEN_ID = <?= (int)($_GET['open'] ?? 0) ?>;
     window.IS_ADMIN         = <?= $isAdmin ? 'true' : 'false' ?>;
   </script>

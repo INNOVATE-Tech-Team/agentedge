@@ -520,6 +520,24 @@ if ($action === 'resend_document') {
     json_out(['ok'=>true] + (isset($result['note']) ? ['note'=>$result['note']] : []));
 }
 
+// ── POST: set_coach ───────────────────────────────────────────────────────────
+// Records which Launch Coach is assigned to the agent (Stage 2 Coach step).
+// coach_name holds the coach's email, validated against list_launch_coaches()
+// (same eligibility as the "Coached By" dropdown); empty clears it. Does not
+// change the step's status — Mark Done stays a separate click.
+if ($action === 'set_coach') {
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $coach   = strtolower(trim((string)($body['coach_name'] ?? '')));
+    if ($coach !== '' && $coach !== 'n/a') {   // 'n/a' = no coach needed
+        $emails = array_map(fn($c) => strtolower($c['email']), list_launch_coaches($pdo));
+        if (!in_array($coach, $emails, true)) json_out(['ok'=>false,'error'=>'Not a Launch Coach']);
+    }
+    $upd = $pdo->prepare("UPDATE onboard_steps SET coach_name=? WHERE queue_id=? AND tool_key='coach'");
+    $upd->execute([$coach === '' ? null : $coach, $queueId]);
+    if ($upd->rowCount() === 0) json_out(['ok'=>false,'error'=>'Coach step not found for this agent']);
+    json_out(['ok'=>true,'coach_name'=>$coach]);
+}
+
 // ── POST: complete_initial_setup (Stage 1) ────────────────────────────────────
 // Everything that used to fire on "Mark Complete" now fires here, once: roster
 // write, welcome email, Market Center-assigned emails, the coach-assignment

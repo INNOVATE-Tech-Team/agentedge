@@ -116,6 +116,9 @@ function local_db(): PDO {
     // reliably apply go here instead: cheap, always-run, fully idempotent
     // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
     local_db_ensure_onboard_stages($pdo);
+    // onboard_steps.coach_name on the Stage 2 Coach step of the Onboarding Queue: the Launch
+    // Coach's email (validated against list_launch_coaches()) or 'n/a'; NULL = unassigned.
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN coach_name TEXT"); } catch (\Exception $e) {}
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_notify_prefs (
         email            TEXT PRIMARY KEY,
         notify_requested INTEGER NOT NULL DEFAULT 1,
