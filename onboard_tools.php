@@ -8,9 +8,9 @@ require_once __DIR__ . '/local_db.php';
 
 function onboard_tools(): array {
     $rows = local_db()->query(
-        "SELECT step_key AS `key`, label, is_auto, note
+        "SELECT step_key AS `key`, label, is_auto, note, stage
          FROM step_defs WHERE process='onboard' ORDER BY sort_ord, id"
     )->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($rows as &$r) { $r['is_auto'] = (bool)$r['is_auto']; }
+    foreach ($rows as &$r) { $r['is_auto'] = (bool)$r['is_auto']; $r['stage'] = (int)$r['stage']; }
     return $rows;
 }

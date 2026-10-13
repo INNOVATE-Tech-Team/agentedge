@@ -6,6 +6,7 @@ require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/lib/crypto.php';
 require_once __DIR__ . '/lib/agent_profile.php';
+require_once __DIR__ . '/lib/headshot_select.php';
 
 $agent = require_login();
 $perms = current_perms();
@@ -59,6 +60,7 @@ $extraLicenses = $targetEmail !== '' ? load_agent_additional_licenses($targetEma
 $headshotCount = $targetEmail !== '' ? load_agent_headshot_count($targetEmail) : 0;
 $headshotKey   = $targetEmail !== '' ? load_agent_latest_headshot($targetEmail) : null;
 $headshots     = $targetEmail !== '' ? load_agent_headshots($targetEmail) : [];
+$chosenHeadshot = $targetEmail !== '' ? headshot_select_get(local_db(), $targetEmail) : null;
 $queueStatus   = $targetEmail !== '' ? load_agent_queue_status($targetEmail) : ['onboarding' => null, 'offboarding' => null];
 $rosterNotesStmt = $targetEmail !== '' ? local_db()->prepare("SELECT COALESCE(retention_notes,'') AS retention_notes FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 LIMIT 1") : null;
 if ($rosterNotesStmt) { $rosterNotesStmt->execute([$targetEmail]); }
@@ -96,7 +98,14 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .ap-tab-pane{display:none}.ap-tab-pane.active{display:block}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px}
 .dg-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
-.dg-section:first-child{margin-top:0;padding-top:0;border-top:none}
+.dg-section:first-child,.dg-toolbar+.dg-section{margin-top:0;padding-top:0;border-top:none}
+.dg-section.dg-collapsible{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.dg-section.dg-collapsible:hover{color:var(--text,#222)}
+.dg-section.dg-collapsible::before{content:'';width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid currentColor;transition:transform .15s}
+.dg-section.dg-collapsible.dg-closed::before{transform:rotate(-90deg)}
+.dg-hidden{display:none!important}
+.dg-toolbar{grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px;font-size:11px;margin-bottom:-2px}
+.dg-toolbar button{background:none;border:0;padding:0;color:var(--faint);font-weight:700;cursor:pointer;text-decoration:underline}
 .dg-field{display:flex;flex-direction:column;gap:2px}
 .dg-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
 .dg-value{font-size:12.5px;color:var(--muted)}
@@ -213,6 +222,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .sponsor-connector{text-align:center;font-size:14px;color:#ccc;line-height:1;margin-bottom:4px;margin-top:-4px}
 .chip{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap}
 .chip-rec{background:#fff4e0;color:#a06000}
+.em-ac-wrap{position:relative}
+/* position:fixed, not absolute -- .modal-body scrolls (overflow-y:auto), which
+   would clip an absolutely-positioned dropdown the moment it renders below
+   the container's own bounds. Position/size set in JS from the input's
+   getBoundingClientRect() instead of anchoring to the wrapper. */
+.em-ac-dropdown{position:fixed;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:2000;max-height:220px;overflow-y:auto}
+.em-ac-item{display:flex;flex-direction:column;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+.em-ac-item:last-child{border-bottom:none}
+.em-ac-item:hover,.em-ac-item.active{background:#f9fdf5}
+.em-ac-name{font-size:13px;font-weight:700;color:#222}
+.em-ac-email{font-size:11px;color:#888}
 </style>
 </head>
 <body>
@@ -221,7 +241,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 <div class="content">
   <div class="content-top">
     <div class="ap-header-row">
-      <?php if ($headshotKey): ?>
+      <?php if ($chosenHeadshot): ?>
+        <img class="ap-avatar-img" src="api/intake.php?action=headshot_crop&email=<?= urlencode($targetEmail) ?>" alt="">
+      <?php elseif ($headshotKey): ?>
         <img class="ap-avatar-img" src="api/intake.php?action=headshot&key=<?= urlencode($headshotKey) ?>" alt="">
       <?php else: ?>
         <div class="ap-avatar-fallback"><?php
@@ -365,24 +387,9 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <?php endif; ?>
           </div>
 
-          <div class="dg-section">Headshots</div>
+          <div class="dg-section">Photos &amp; headshot</div>
           <div class="dg-field" style="grid-column:1/-1">
-            <div class="hs-grid" id="hs-grid">
-              <?php foreach ($headshots as $hsFile): ?>
-                <div class="hs-thumb" data-key="<?= h($hsFile['file_key']) ?>">
-                  <a href="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" target="_blank" title="<?= h($hsFile['orig_name']) ?>">
-                    <img src="api/intake.php?action=headshot&key=<?= urlencode($hsFile['file_key']) ?>" alt="<?= h($hsFile['orig_name']) ?>">
-                  </a>
-                  <button type="button" class="hs-del" onclick="deleteHeadshot('<?= h($hsFile['file_key']) ?>', this.parentElement)">&#10005;</button>
-                </div>
-              <?php endforeach; ?>
-            </div>
-            <label class="hs-upload-label<?= $headshotCount >= 5 ? ' disabled' : '' ?>" id="hs-upload-label" for="hs-file">
-              <span>&#43; Add Headshot</span>
-            </label>
-            <input type="file" id="hs-file" accept="image/*" <?= $headshotCount >= 5 ? 'disabled' : '' ?>>
-            <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
-            <div class="hs-msg" id="hs-msg"></div>
+            <div id="hs-manager"></div>
           </div>
 
           <?php if ($retentionNotes !== ''): ?>
@@ -713,7 +720,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-field"><label>Skype</label><input id="em-skype"></div>
 
             <div class="em-section">Bio &amp; Marketing</div>
-            <div class="em-field"><label>Referring Agent</label><input id="em-referring_agent"></div>
+            <div class="em-field em-ac-wrap"><label>Referring Agent</label><input id="em-referring_agent" autocomplete="off"><div id="em-referring_agent-dropdown" class="em-ac-dropdown" hidden></div></div>
             <div class="em-field em-full"><label>Bio</label><textarea id="em-bio" style="min-height:110px"></textarea></div>
           </div>
 
@@ -732,12 +739,53 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
+<script src="assets/headshot-crop.js"></script>
+<script src="assets/headshot-manager.js"></script>
 <script>
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
 let networkLoaded = false;
 let permissionLoaded = false;
 let documentsLoaded = false;
+
+// Collapsible sections on the Profile tab: each .dg-section heading toggles
+// every sibling after it up to the next heading (or the bottom action row), so
+// the Edit Profile / Onboarding Steps buttons are reachable without scrolling
+// past every section. Pure display toggle via a class -- no data is touched.
+(function () {
+  const grid = document.querySelector('#ap-tab-profile .detail-grid');
+  if (!grid) return;
+  const heads = [...grid.querySelectorAll(':scope > .dg-section')];
+  if (!heads.length) return;
+  const bodyOf = h => {
+    const out = [];
+    for (let n = h.nextElementSibling; n && !n.classList.contains('dg-section') && !n.classList.contains('detail-actions'); n = n.nextElementSibling) out.push(n);
+    return out;
+  };
+  const setClosed = (h, closed) => {
+    h.classList.toggle('dg-closed', closed);
+    h.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    bodyOf(h).forEach(n => n.classList.toggle('dg-hidden', closed));
+  };
+  heads.forEach(h => {
+    h.classList.add('dg-collapsible');
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.setAttribute('aria-expanded', 'true');
+    const toggle = () => setClosed(h, !h.classList.contains('dg-closed'));
+    h.addEventListener('click', toggle);
+    h.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  const bar = document.createElement('div');
+  bar.className = 'dg-toolbar';
+  bar.innerHTML = '<button type="button" data-a="collapse">Collapse all</button><button type="button" data-a="expand">Expand all</button>';
+  bar.addEventListener('click', e => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (a) heads.forEach(h => setClosed(h, a === 'collapse'));
+  });
+  grid.insertBefore(bar, grid.firstChild);
+  heads.forEach(h => setClosed(h, true)); // start with headers only
+})();
 
 window.switchApTab = function (t) {
   document.querySelectorAll('.ap-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
@@ -749,79 +797,9 @@ window.switchApTab = function (t) {
 };
 
 // ── Headshots ────────────────────────────────────────────────────────────────
-function hsCount() { return document.getElementById('hs-grid').querySelectorAll('.hs-thumb').length; }
-
-function hsSyncUploadState(count) {
-  var lbl = document.getElementById('hs-upload-label');
-  var inp = document.getElementById('hs-file');
-  lbl.classList.toggle('disabled', count >= 5);
-  inp.disabled = count >= 5;
+if (document.getElementById('hs-manager')) {
+  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL });
 }
-
-function hsAddThumb(key, origName) {
-  var grid = document.getElementById('hs-grid');
-  var wrap = document.createElement('div');
-  wrap.className = 'hs-thumb';
-  wrap.dataset.key = key;
-  wrap.innerHTML =
-    '<a href="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" target="_blank" title="' + esc(origName || '') + '">' +
-      '<img src="api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '" alt="' + esc(origName || '') + '">' +
-    '</a>' +
-    '<button type="button" class="hs-del">&#10005;</button>';
-  wrap.querySelector('.hs-del').addEventListener('click', function () { deleteHeadshot(key, wrap); });
-  grid.appendChild(wrap);
-}
-
-window.deleteHeadshot = function (key, wrap) {
-  if (!confirm('Delete this headshot?')) return;
-  var msg = document.getElementById('hs-msg');
-  msg.textContent = 'Deleting…';
-  fetch('api/intake.php?action=delete_file', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: key })
-  }).then(function (r) { return r.json(); }).then(function (res) {
-    if (res.ok) {
-      wrap.remove();
-      hsSyncUploadState(hsCount());
-      msg.textContent = 'Deleted.';
-      setTimeout(function () { msg.textContent = ''; }, 2000);
-    } else {
-      msg.textContent = res.error || 'Delete failed.';
-    }
-  }).catch(function () { msg.textContent = 'Network error.'; });
-};
-
-var hsFileInput = document.getElementById('hs-file');
-if (hsFileInput) hsFileInput.addEventListener('change', function () {
-  var file = this.files[0];
-  var msg = document.getElementById('hs-msg');
-  if (!file) return;
-  if (hsCount() >= 5) { msg.textContent = 'Maximum 5 headshots reached.'; return; }
-  if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
-
-  msg.textContent = '';
-  HeadshotCrop.pick(file).then(function (blob) {
-    msg.textContent = 'Uploading…';
-    var fd = new FormData();
-    fd.append('headshot', blob, 'headshot.jpg');
-    fd.append('email', PROFILE_EMAIL);
-    return fetch('api/intake.php?action=upload', {
-      method: 'POST', credentials: 'same-origin', body: fd
-    }).then(function (r) { return r.json(); });
-  }).then(function (res) {
-    if (res.ok && res.file_key) {
-      hsAddThumb(res.file_key, res.orig_name);
-      hsSyncUploadState(hsCount());
-      msg.textContent = 'Uploaded.';
-      setTimeout(function () { msg.textContent = ''; }, 2000);
-    } else {
-      msg.textContent = res.error || 'Upload failed.';
-    }
-  }).catch(function (err) { msg.textContent = HeadshotCrop.errorText(err); });
-
-  this.value = '';
-});
 
 // ── Documents tab ────────────────────────────────────────────────────────────
 function fmtBytes(n) {
@@ -1058,6 +1036,81 @@ function emCollectAdditionalLicenses() {
 
 var emBtnAddLicense = document.getElementById('em-btn-add-license');
 if (emBtnAddLicense) emBtnAddLicense.addEventListener('click', function () { emAddLicenseRow(); });
+
+// Referring Agent typeahead — searches every active roster agent (not just
+// ones already resolvable in the Network Tree, unlike api/agent_search.php),
+// since the whole point here is picking someone who may not be linked yet.
+(function () {
+  var input = document.getElementById('em-referring_agent');
+  var dd = document.getElementById('em-referring_agent-dropdown');
+  if (!input || !dd) return;
+  var timer = null, active = -1;
+  var scrollParent = input.closest('.modal-body');
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  }); }
+  function close() { dd.hidden = true; active = -1; }
+  function position() {
+    var r = input.getBoundingClientRect();
+    dd.style.left = r.left + 'px';
+    dd.style.top = r.bottom + 'px';
+    dd.style.width = r.width + 'px';
+  }
+  function render(agents) {
+    if (!agents.length) { close(); return; }
+    dd.innerHTML = agents.map(function (a) {
+      return '<div class="em-ac-item" data-name="' + esc(a.name) + '">' +
+        '<div class="em-ac-name">' + esc(a.name) + '</div>' +
+        '<div class="em-ac-email">' + esc(a.email) + '</div></div>';
+    }).join('');
+    position();
+    dd.hidden = false;
+    active = -1;
+    dd.querySelectorAll('.em-ac-item').forEach(function (el) {
+      el.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        input.value = el.dataset.name;
+        close();
+      });
+    });
+  }
+  // The dropdown is position:fixed (see CSS comment), so it doesn't move with
+  // the modal's own scroll -- just close it if the user scrolls the form.
+  if (scrollParent) scrollParent.addEventListener('scroll', close, { passive: true });
+  window.addEventListener('resize', function () { if (!dd.hidden) close(); });
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (q.length < 2) { close(); return; }
+    timer = setTimeout(function () {
+      fetch('api/roster_agent_search.php?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { render(d.agents || []); })
+        .catch(close);
+    }, 250);
+  });
+  input.addEventListener('keydown', function (e) {
+    var items = dd.hidden ? [] : [].slice.call(dd.querySelectorAll('.em-ac-item'));
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      active = Math.min(active + 1, items.length - 1);
+      items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = Math.max(active - 1, -1);
+      items.forEach(function (el, i) { el.classList.toggle('active', i === active); });
+    } else if (e.key === 'Enter' && active >= 0 && items[active]) {
+      e.preventDefault();
+      items[active].dispatchEvent(new MouseEvent('mousedown'));
+    } else if (e.key === 'Escape') {
+      close();
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.em-ac-wrap')) close();
+  });
+})();
 
 window.openEditModal = function () {
   emLoaded = false;
@@ -1310,7 +1363,7 @@ function renderTree(tree, totalCount, sponsor, reason) {
 
   if (!tree) {
     wrap.innerHTML = reason === 'not_in_perfex'
-      ? '<div class="empty-prompt">This agent hasn\'t been added to Perfex yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once a Perfex staff record is created for them.</div>'
+      ? '<div class="empty-prompt">This agent is new and doesn\'t have a back-office staff record yet, so there\'s no recruiting hierarchy on file. The Network Tree will populate automatically once one is created for them.</div>'
       : '<div class="empty-prompt">No network data on file yet.</div>';
     return;
   }

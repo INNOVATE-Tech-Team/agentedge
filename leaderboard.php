@@ -6,6 +6,7 @@ require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 
 $agent = require_login();
+if (!can_view_launch_leaderboard()) { header('Location: index.php'); exit; }
 ?>
 <!doctype html>
 <html lang="en">

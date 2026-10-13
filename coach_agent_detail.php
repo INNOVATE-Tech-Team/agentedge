@@ -5,12 +5,17 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/lib/agent_profile.php';
+require_once __DIR__ . '/lib/performance_client.php';
+require_once __DIR__ . '/lib/coach_production.php';
 
-// V1: super-admin-only, same gate as coach_dashboard.php. This is a
+// Super Admin or Launch Coach, same gate as coach_dashboard.php. This is a
 // Coach-Dashboard-specific detail view — it does not replace or modify
-// agent_profile.php, it just reuses the same data-loading helpers.
+// agent_profile.php, it just reuses the same data-loading helpers. A Launch
+// Coach's access to a SPECIFIC agent is checked below, once $targetEmail is
+// known (agent_admin.coached_by must name this coach) -- see coach_can_access_agent().
 $agent = require_login();
-if (!is_super_admin()) { header('Location: index.php'); exit; }
+$isSuperAdmin = is_super_admin();
+if (!$isSuperAdmin && !is_launch_coach()) { header('Location: index.php'); exit; }
 
 function h($s): string { return htmlspecialchars((string)$s, ENT_QUOTES); }
 
@@ -21,7 +26,7 @@ $profile   = null;
 $headshotKey = null;
 if ($targetEmail !== '') {
     $st = local_db()->prepare(
-        "SELECT agent_name, email, phone, market_center, state_code, license_exp
+        "SELECT id, agent_name, email, phone, market_center, state_code, license_exp
          FROM innovate_roster WHERE LOWER(TRIM(email))=? LIMIT 1"
     );
     $st->execute([$targetEmail]);
@@ -33,6 +38,19 @@ if ($targetEmail !== '') {
 
 // Not a valid/known agent — safe empty state, no fatal error either way.
 $found = $rosterRow !== null || $profile !== null;
+
+// Launch Coach: this agent must be assigned to them (agent_admin.coached_by)
+// -- checked before anything profile/production-related below runs. Folded
+// into the same "$found = false" empty state as an unknown email, rather
+// than a distinct denial message, so this page never confirms or denies
+// which emails exist in the roster to a coach probing URLs.
+if ($found && !$isSuperAdmin) {
+    $viewerEmail = strtolower(trim($agent['email'] ?? ''));
+    if (!coach_can_access_agent(local_db(), $viewerEmail, $targetEmail)) {
+        $found = false;
+        $rosterRow = null;
+    }
+}
 
 $name   = $profile['full_name']       ?? ($rosterRow['agent_name']    ?? $targetEmail);
 $phone  = $profile['phone']           ?? ($rosterRow['phone']         ?? '');
@@ -54,6 +72,74 @@ if ($found && $targetEmail !== '') {
     $nst = local_db()->prepare("SELECT id, note, created_by, created_at FROM agent_notes WHERE email=? ORDER BY created_at DESC, id DESC");
     $nst->execute([$targetEmail]);
     $notes = $nst->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Phase 2A activity-only performance pilot. Signs the TARGET agent's
+// email, not the viewing coach's -- this page's own is_super_admin()
+// gate above already decides who may view whom; Advantage only answers
+// "is this person in the pilot, and if so what's their activity data".
+$perf = null;
+if ($found && $targetEmail !== '') {
+    // Check pilot membership with one call first -- the common case is
+    // "not in the pilot" (9 of ~675 agents are), so don't spend three
+    // more round trips finding that out.
+    $summary = performance_api_get('summary', $targetEmail);
+    if ($summary['ok'] && $summary['inPilot']) {
+        $goals     = performance_api_get('goals', $targetEmail);
+        $attention = performance_api_get('needs-attention', $targetEmail);
+        $streaks   = performance_api_get('streaks', $targetEmail);
+        $myStreak = 0;
+        if ($streaks['ok'] && !empty($streaks['data']['agents'])) {
+            foreach ($streaks['data']['agents'] as $a) {
+                if (($a['userId'] ?? null) === ($streaks['data']['requestingUserId'] ?? null)) { $myStreak = (int)$a['currentStreak']; break; }
+            }
+        }
+        $perf = [
+            'week'      => $summary['data']['week']   ?? null,
+            'goals'     => ($goals['ok'] && $goals['data']['goals'])   ? $goals['data']['goals']   : [],
+            'reasons'   => ($attention['ok'])                          ? ($attention['data']['reasons'] ?? []) : [],
+            'streak'    => $myStreak,
+        ];
+    }
+}
+
+// Coach Production (Step 6) -- entirely separate data source from the Phase
+// 2A Activity Performance pilot above; deliberately not intertwined with it.
+// Server-side, direct lib/coach_production.php calls (same pattern as this
+// page already uses for $profile/$perf) rather than an HTTP round-trip to
+// api/coach_production_summary.php, since this page is fully server-rendered
+// already. No production calculations happen here -- just calls + display.
+$production = null;
+$productionMtd = null;
+if ($rosterRow) {
+    $prodDb = local_db();
+    $mirrorHealth = coach_mirror_health($prodDb);
+    $production = coach_selected_agent_production($prodDb, (int)$rosterRow['id'], 'ltm', [], null, $mirrorHealth);
+    $productionMtd = coach_mtd_comparison($prodDb, (int)$rosterRow['id'], null, $mirrorHealth);
+}
+
+function cad_fmt_money(?float $v): string {
+    if ($v === null) return '—';
+    $sign = $v < 0 ? '-' : '';
+    $abs = abs($v);
+    if ($abs >= 1000000) return $sign . '$' . rtrim(rtrim(number_format($abs / 1000000, 1), '0'), '.') . 'M';
+    if ($abs >= 1000) return $sign . '$' . round($abs / 1000) . 'K';
+    return $sign . '$' . number_format($abs);
+}
+function cad_exact_money(?float $v): string { return $v === null ? '' : '$' . number_format($v); }
+function cad_fmt_pct(?float $v): string { return $v === null ? '—' : (($v > 0 ? '+' : '') . number_format($v, 1) . '%'); }
+function cad_trend_style(?float $v): string {
+    if ($v === null) return 'color:var(--faint)';
+    if ($v > 0) return 'color:var(--green-d)';
+    if ($v < 0) return 'color:var(--red)';
+    return 'color:var(--faint)';
+}
+// prior=0 is a real, common case -- never divide into Infinity/NaN.
+function cad_mtd_delta_text(?float $current, ?float $prior): string {
+    if ($current === null || $prior === null) return '—';
+    if ($prior == 0.0) return $current == 0.0 ? 'No activity yet' : 'New vs. no prior-year activity';
+    $pct = (($current - $prior) / $prior) * 100;
+    return ($pct >= 0 ? '↑ ' : '↓ ') . number_format(abs($pct), 0) . '% vs same period last year';
 }
 ?>
 <!doctype html>
@@ -164,8 +250,83 @@ if ($found && $targetEmail !== '') {
         </div>
 
         <div class="card">
+          <h2>Activity Performance <span style="font-size:10px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.05em">(pilot)</span></h2>
+          <?php if ($perf === null): ?>
+            <div class="cad-stub">This agent isn't part of the activity performance pilot yet.<br>Deal-based production (appointments/signed/closed) isn't tracked here yet either way — see the Phase 1 readiness report.</div>
+          <?php else: ?>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;margin-bottom:14px">
+              <div class="dg-field"><span class="dg-label">Dials (this week)</span><span class="dg-value"><?= $perf['week'] ? h($perf['week']['dials']) : '<span class="empty">—</span>' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Connects (this week)</span><span class="dg-value"><?= $perf['week'] ? h($perf['week']['connects']) : '<span class="empty">—</span>' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Current Streak</span><span class="dg-value"><?= h($perf['streak']) ?> day<?= $perf['streak'] === 1 ? '' : 's' ?></span></div>
+            </div>
+            <?php if ($perf['reasons']): ?>
+              <div style="margin-bottom:12px">
+                <?php foreach ($perf['reasons'] as $r): ?>
+                  <div class="cad-stub" style="padding:8px 0;text-align:left;color:#7a5c00"><?= h($r['detail']) ?></div>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+            <?php if ($perf['goals']): ?>
+              <div class="dg-label" style="margin-bottom:6px">Goal Pacing</div>
+              <?php foreach ($perf['goals'] as $g): $pct = $g['target'] > 0 ? min(100, round(100 * $g['actualToDate'] / $g['target'])) : 0; ?>
+                <div style="margin-bottom:8px">
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px">
+                    <span style="text-transform:capitalize"><?= h(str_replace('_', ' ', $g['metric'])) ?> (<?= h($g['period']) ?>ly)</span>
+                    <span style="color:var(--muted)"><?= h($g['actualToDate']) ?> / <?= h($g['target']) ?></span>
+                  </div>
+                  <div class="coach-progress-track"><div class="coach-progress-fill" style="width:<?= $pct ?>%<?= $g['behindPace'] ? ';background:#e0a030' : '' ?>"></div></div>
+                </div>
+              <?php endforeach; ?>
+            <?php else: ?>
+              <div class="cad-stub">No activity goals set for this agent yet.</div>
+            <?php endif; ?>
+          <?php endif; ?>
+        </div>
+
+        <div class="card">
           <h2>Production</h2>
-          <div class="cad-stub">Production data isn't connected to Coach Dashboard yet.<br>See build report for candidate sources.</div>
+          <?php if (!$rosterRow): ?>
+            <div class="cad-stub">No roster record for this agent — production can't be looked up.</div>
+          <?php elseif ($production['production_status'] === 'unmatched'): ?>
+            <div class="cad-stub">Production unavailable — agent identity not matched.</div>
+          <?php elseif ($production['production_status'] === 'mirror_unavailable'): ?>
+            <div class="cad-stub">Production mirror is currently unavailable.</div>
+          <?php else:
+            $closed = $production['closed'];
+            $extra  = $production['ltm_extra'] ?? [];
+            $active = $production['active_listings'];
+            $mtd    = $productionMtd;
+          ?>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;margin-bottom:8px">
+              <div class="dg-field"><span class="dg-label">LTM Volume</span><span class="dg-value" title="<?= h(cad_exact_money($closed['volume'])) ?>"><?= h(cad_fmt_money($closed['volume'])) ?></span></div>
+              <div class="dg-field"><span class="dg-label">LTM Transactions</span><span class="dg-value"><?= $closed['transactions'] !== null ? h($closed['transactions']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">LTM Sides</span><span class="dg-value"><?= $closed['sides'] !== null ? h($closed['sides']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Avg Sale Price</span><span class="dg-value" title="<?= h(cad_exact_money($closed['average_sale_price'])) ?>"><?= h(cad_fmt_money($closed['average_sale_price'])) ?></span></div>
+              <div class="dg-field"><span class="dg-label">Trend</span><span class="dg-value" style="<?= h(cad_trend_style($extra['trend_pct_12mo'] ?? null)) ?>"><?= h(cad_fmt_pct($extra['trend_pct_12mo'] ?? null)) ?></span></div>
+              <div class="dg-field"><span class="dg-label">List / Buy Sides</span><span class="dg-value"><?= isset($extra['list_side_12mo']) ? h($extra['list_side_12mo']) : '—' ?> / <?= isset($extra['buy_side_12mo']) ? h($extra['buy_side_12mo']) : '—' ?></span></div>
+            </div>
+            <div class="dg-section">Current Active Listings</div>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;margin-bottom:8px">
+              <div class="dg-field"><span class="dg-label">Count</span><span class="dg-value"><?= $active !== null && $active['count'] !== null ? h($active['count']) : '—' ?></span></div>
+              <div class="dg-field"><span class="dg-label">Volume</span><span class="dg-value" title="<?= h(cad_exact_money($active['volume'] ?? null)) ?>"><?= h(cad_fmt_money($active !== null ? $active['volume'] : null)) ?></span></div>
+            </div>
+            <?php
+            $mtdCurrentVol = $mtd['current']['volume'] ?? null;
+            $mtdPriorVol   = $mtd['prior_year']['volume'] ?? null;
+            $mtdPct = null;
+            if ($mtdCurrentVol !== null && $mtdPriorVol !== null && $mtdPriorVol > 0) {
+                $mtdPct = ($mtdCurrentVol - $mtdPriorVol) / $mtdPriorVol * 100;
+            }
+            ?>
+            <div class="dg-section">MTD (Closed Volume)</div>
+            <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px">
+              <div class="dg-field"><span class="dg-label">This Month</span><span class="dg-value"><?= h(cad_fmt_money($mtdCurrentVol)) ?></span></div>
+              <div class="dg-field"><span class="dg-label">vs Same Period Last Year</span><span class="dg-value" style="<?= h(cad_trend_style($mtdPct)) ?>"><?= h(cad_mtd_delta_text($mtdCurrentVol, $mtdPriorVol)) ?></span></div>
+            </div>
+            <?php if (!empty($extra['last_close_date'])): ?>
+              <div class="cad-meta-row" style="margin-top:10px"><span>Last close: <?= h($extra['last_close_date']) ?></span></div>
+            <?php endif; ?>
+          <?php endif; ?>
         </div>
 
         <div class="card">

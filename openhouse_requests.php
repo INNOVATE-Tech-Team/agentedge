@@ -102,6 +102,13 @@ $statusLabels = [
                         style="padding:4px 10px;border:1px solid #fcc;background:white;border-radius:4px;font-size:12px;cursor:pointer;color:#c00">
                   Cancel
                 </button>
+              <?php elseif (!empty($req['feedback_submitted_at'])): ?>
+                <span style="font-size:11px;color:#3a6b1a;font-style:italic">Feedback sent</span>
+              <?php elseif (!empty($req['feedback_requested_at'])): ?>
+                <a href="openhouse_feedback.php?id=<?= $req['id'] ?>"
+                   style="padding:4px 10px;border:1px solid #82C112;background:white;border-radius:4px;font-size:12px;text-decoration:none;color:#3a6b1a;font-weight:700">
+                  Leave Feedback
+                </a>
               <?php endif; ?>
             </td>
           </tr>

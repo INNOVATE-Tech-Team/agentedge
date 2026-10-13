@@ -113,13 +113,10 @@ if (!$isAdmin) {
     }
 }
 
-$launchCoaches = $pdo->query(
-    "SELECT ar.email, COALESCE(i.full_name, ar.email) AS full_name
-     FROM agent_roles ar
-     LEFT JOIN agent_intake i ON i.email = ar.email
-     WHERE ar.role = 'launch_coach'
-     ORDER BY full_name"
-)->fetchAll(PDO::FETCH_ASSOC);
+// Eligible-coach list for the "Coached By" dropdown below — includes both
+// primary-role and additional-role Launch Coaches/Directors of Coaching; see
+// list_launch_coaches() in roles.php for the shared "effective role" rule.
+$launchCoaches = list_launch_coaches($pdo);
 
 $licStmt = $pdo->prepare("SELECT license_number, license_state, license_exp FROM agent_intake_licenses WHERE LOWER(agent_email) = ? ORDER BY id");
 $licStmt->execute([$email]);

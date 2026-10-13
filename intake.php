@@ -237,14 +237,8 @@ $intakeMarketCenters = local_db()
               <div class="field full"><label>Agent Bio</label><textarea id="f-bio" rows="8" placeholder="Your real estate agent bio will appear on our website. Tip: go to ChatGPT, share some facts about yourself, and have it write a bio for you." required></textarea></div>
 
               <div class="field full">
-                <label>Headshots</label>
-                <div class="hs-grid" id="hs-grid"></div>
-                <label class="hs-upload-label" id="hs-upload-label" for="hs-file">
-                  <span>&#43; Upload Headshot</span>
-                </label>
-                <input type="file" id="hs-file" accept="image/*">
-                <div class="hs-note">Upload up to 5 photos. Max 10 MB per file. Images only.</div>
-                <div class="hs-msg" id="hs-msg"></div>
+                <label>Photos &amp; headshot</label>
+                <div id="hs-manager"></div>
               </div>
 
               <div class="field"><label>Which agent was the reason you decided to join INNOVATE?</label><input id="f-referring_agent" type="text" required placeholder="Enter N/A if it was not a specific agent"></div>
@@ -262,6 +256,8 @@ $intakeMarketCenters = local_db()
     </div>
   </div>
 
+  <script src="assets/headshot-crop.js"></script>
+  <script src="assets/headshot-manager.js"></script>
   <script>
   (function () {
     const REQUIRED_IDS = ['full_name','phone','license_number','nar_number','mls_board','birthday','address_line1','city','state','zip','emergency_name','emergency_phone','bio','referring_agent'];
@@ -371,93 +367,8 @@ $intakeMarketCenters = local_db()
       });
     });
 
-    function renderHeadshots(list) {
-      const grid = el('hs-grid');
-      grid.innerHTML = '';
-      (list || []).forEach(function(key) { addThumb(key); });
-      syncUploadState(list ? list.length : 0);
-    }
-
-    function addThumb(key) {
-      const grid = el('hs-grid');
-      const wrap = document.createElement('div');
-      wrap.className = 'hs-thumb';
-      wrap.dataset.key = key;
-      const img = document.createElement('img');
-      img.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(key);
-      img.alt = 'Headshot';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hs-del';
-      btn.textContent = '✕';
-      btn.addEventListener('click', function() { deleteHeadshot(key, wrap); });
-      wrap.appendChild(img);
-      wrap.appendChild(btn);
-      grid.appendChild(wrap);
-    }
-
-    function syncUploadState(count) {
-      const lbl = el('hs-upload-label');
-      const inp = el('hs-file');
-      if (count >= 5) {
-        lbl.classList.add('disabled');
-        inp.disabled = true;
-      } else {
-        lbl.classList.remove('disabled');
-        inp.disabled = false;
-      }
-    }
-
-    function hsCount() { return el('hs-grid').querySelectorAll('.hs-thumb').length; }
-
-    function deleteHeadshot(key, wrap) {
-      el('hs-msg').textContent = 'Deleting…';
-      fetch('api/intake.php?action=delete_file', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: key })
-      }).then(function(r) { return r.json(); }).then(function(res) {
-        if (res.ok) {
-          wrap.remove();
-          syncUploadState(hsCount());
-          el('hs-msg').textContent = 'Deleted.';
-          setTimeout(function() { el('hs-msg').textContent = ''; }, 2000);
-        } else {
-          el('hs-msg').textContent = res.error || 'Delete failed.';
-        }
-      }).catch(function() { el('hs-msg').textContent = 'Network error.'; });
-    }
-
-    el('hs-file').addEventListener('change', function() {
-      const file = this.files[0];
-      if (!file) return;
-      if (hsCount() >= 5) { el('hs-msg').textContent = 'Maximum 5 headshots reached.'; return; }
-      if (file.size > 10 * 1024 * 1024) { el('hs-msg').textContent = 'File exceeds 10 MB limit.'; return; }
-
-      el('hs-msg').textContent = '';
-      HeadshotCrop.pick(file).then(function(blob) {
-        el('hs-msg').textContent = 'Uploading…';
-        const fd = new FormData();
-        fd.append('headshot', blob, 'headshot.jpg');
-        return fetch('api/intake.php?action=upload', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: fd
-        }).then(function(r) { return r.json(); });
-      }).then(function(res) {
-        if (res.ok && res.file_key) {
-          addThumb(res.file_key);
-          syncUploadState(hsCount());
-          el('hs-msg').textContent = 'Uploaded.';
-          setTimeout(function() { el('hs-msg').textContent = ''; }, 2000);
-        } else {
-          el('hs-msg').textContent = res.error || 'Upload failed.';
-        }
-      }).catch(function(err) { el('hs-msg').textContent = HeadshotCrop.errorText(err); });
-
-      this.value = '';
-    });
+    // Photos + headshot choice (assets/headshot-manager.js).
+    HeadshotManager.mount(el('hs-manager'));
 
     document.querySelectorAll('#intake-form input, #intake-form textarea, #intake-form select').forEach(function(node) {
       node.addEventListener('input', updateProgress);
@@ -572,7 +483,6 @@ $intakeMarketCenters = local_db()
       .then(function(r) { return r.json(); })
       .then(function(data) {
         setFields(data.intake);
-        renderHeadshots(data.headshots);
         renderAdditionalLicenses(data.additional_licenses);
         if (data.intake && data.intake.submitted_at) {
           showSubmittedBadge(data.intake.submitted_at);
@@ -583,6 +493,5 @@ $intakeMarketCenters = local_db()
       .catch(function() { updateProgress(); });
   })();
   </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>

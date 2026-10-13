@@ -16,9 +16,14 @@
 //   usable as a clean filter without real normalization work, so left out.
 //
 // GET /api/agent_profile_export.php?action=headshot&email=...&token=...
-//   Streams the agent's most recently uploaded headshot image.
+//   Streams the agent's headshot: the square crop of the photo they chose
+//   (lib/headshot_select.php), or their most recent upload if they haven't
+//   chosen one. headshot_uploaded_at above is the later of their newest
+//   upload and their last headshot change, so choosing or re-cropping
+//   triggers a re-download on the next sync just like a new upload does.
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/headshot_select.php';
 
 $c     = cfg();
 $token = $c['crm_token'] ?? '';
@@ -39,6 +44,7 @@ if (!hash_equals($token, $given)) {
 
 $pdo    = local_db();
 $action = $_GET['action'] ?? '';
+headshot_select_ensure_table($pdo);
 
 // ── Serve one agent's latest headshot ──────────────────────────────────
 if ($action === 'headshot') {
@@ -47,6 +53,16 @@ if ($action === 'headshot') {
         header('Content-Type: application/json');
         http_response_code(400);
         echo json_encode(['error' => 'email required']);
+        exit;
+    }
+    $chosen = headshot_select_get($pdo, $email);
+    $cropPath = $chosen ? headshot_crop_dir() . '/' . basename($chosen['crop_key']) : '';
+    if ($chosen && is_file($cropPath)) {
+        header('Content-Type: image/jpeg');
+        header('Cache-Control: private, max-age=3600');
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Length: ' . filesize($cropPath));
+        readfile($cropPath);
         exit;
     }
     $st = $pdo->prepare(
@@ -86,7 +102,10 @@ if ($action === 'headshot') {
 header('Content-Type: application/json');
 $rows = $pdo->query(
     "SELECT i.email, i.bio, i.phone, i.license_number, i.license_state, i.specialty, i.languages,
-            (SELECT MAX(f.uploaded_at) FROM agent_intake_files f WHERE f.agent_email = i.email) AS headshot_uploaded_at
+            NULLIF(MAX(
+                COALESCE((SELECT MAX(f.uploaded_at) FROM agent_intake_files f WHERE f.agent_email = i.email), ''),
+                COALESCE((SELECT hs.updated_at FROM agent_headshot hs WHERE hs.agent_email = i.email), '')
+            ), '') AS headshot_uploaded_at
      FROM agent_intake i
      WHERE i.bio IS NOT NULL AND i.bio != ''
         OR i.phone IS NOT NULL AND i.phone != ''

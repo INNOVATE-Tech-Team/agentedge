@@ -87,7 +87,7 @@ $agent = require_login();
                   <input type="checkbox" id="f-reviewRequestsOptIn" style="width:16px;height:16px;accent-color:#82C112;cursor:pointer">
                   Send automatic Google review requests to my clients when a transaction closes
                 </label>
-                <div class="hs-note">When a dotloop transaction of yours closes, a draft review-request email is prepared for staff to review and send — nothing goes out automatically without this checked, and every send is still approved by staff before it reaches your client.</div>
+                <div class="hs-note">When a dotloop transaction of yours closes, your client gets a short thank-you email asking for a Google review, 3 days after closing. It links to your Google page, or your Market Center's page if you don't have one. Nothing goes out unless this is checked.</div>
               </div>
 
               <div class="section-h">Zillow</div>
@@ -101,7 +101,7 @@ $agent = require_login();
                   <input type="checkbox" id="f-zillowReviewRequestsOptIn" style="width:16px;height:16px;accent-color:#82C112;cursor:pointer">
                   Send automatic Zillow review requests to my clients when a transaction closes
                 </label>
-                <div class="hs-note">Same approval flow as Google above — nothing goes out automatically without this checked and a link on file, and every send is still approved by staff before it reaches your client.</div>
+                <div class="hs-note">Nothing goes out without this checked and a link on file. Unlike Google, each Zillow request is still approved by staff before it reaches your client.</div>
               </div>
             </div>
             <div class="form-actions">
@@ -112,16 +112,9 @@ $agent = require_login();
         </section>
 
         <section class="card" style="margin-top:20px">
-          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Profile Photo</h2>
-          <p class="form-sub" style="margin:0 0 18px">Shown on the agent roster and your profile across INNOVATE.</p>
-          <div id="hs-lowres" class="banner" hidden style="margin-bottom:12px"></div>
-          <div class="hs-grid" id="hs-grid"></div>
-          <label class="hs-upload-label" id="hs-upload-label" for="hs-file">
-            <span>&#43; Upload Photo</span>
-          </label>
-          <input type="file" id="hs-file" accept="image/*">
-          <div class="hs-note">Upload up to 5 photos. At least 400×400 pixels, max 10 MB. You'll frame it as a square before it uploads.</div>
-          <div class="hs-msg" id="hs-msg"></div>
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:800">Headshot &amp; Photos</h2>
+          <p class="form-sub" style="margin:0 0 18px">Your square headshot for the website and app, plus full photos the marketing team can use.</p>
+          <div id="hs-manager"></div>
         </section>
 
         <section class="card" style="margin-top:20px">
@@ -208,6 +201,7 @@ $agent = require_login();
   </div>
   <script src="assets/profile.js"></script>
   <script src="assets/headshot-crop.js"></script>
+  <script src="assets/headshot-manager.js"></script>
   <script>
   // ── Notification preferences ────────────────────────────────────────────────
   (function(){
@@ -220,101 +214,7 @@ $agent = require_login();
   })();
 
   // ── Profile photo ────────────────────────────────────────────────────────────
-  (function(){
-    const grid = document.getElementById('hs-grid');
-    const msg  = document.getElementById('hs-msg');
-    const lbl  = document.getElementById('hs-upload-label');
-    const inp  = document.getElementById('hs-file');
-
-    function hsCount(){ return grid.querySelectorAll('.hs-thumb').length; }
-    function syncUploadState(){
-      const full = hsCount() >= 5;
-      lbl.classList.toggle('disabled', full);
-      inp.disabled = full;
-    }
-    function addThumb(fileKey){
-      const wrap = document.createElement('div');
-      wrap.className = 'hs-thumb';
-      wrap.dataset.key = fileKey;
-      const img = document.createElement('img');
-      img.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(fileKey);
-      img.alt = 'Profile photo';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hs-del';
-      btn.textContent = '✕';
-      btn.addEventListener('click', function(){ deletePhoto(fileKey, wrap); });
-      wrap.appendChild(img);
-      wrap.appendChild(btn);
-      grid.appendChild(wrap);
-    }
-    function deletePhoto(fileKey, wrap){
-      msg.textContent = 'Deleting…';
-      fetch('api/intake.php?action=delete_file', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: fileKey }),
-      }).then(r => r.json()).then(res => {
-        if (res.ok) {
-          wrap.remove();
-          syncUploadState();
-          msg.textContent = 'Deleted.';
-          setTimeout(() => msg.textContent = '', 2000);
-        } else {
-          msg.textContent = res.error || 'Delete failed.';
-        }
-      }).catch(() => { msg.textContent = 'Network error.'; });
-    }
-
-    inp.addEventListener('change', function(){
-      const file = this.files[0];
-      this.value = '';
-      if (!file) return;
-      if (hsCount() >= 5) { msg.textContent = 'Maximum 5 photos reached.'; return; }
-      if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
-
-      msg.textContent = '';
-      HeadshotCrop.pick(file).then(blob => {
-        msg.textContent = 'Uploading…';
-        const fd = new FormData();
-        fd.append('headshot', blob, 'headshot.jpg');
-        return fetch('api/intake.php?action=upload', {
-          method: 'POST', credentials: 'same-origin', body: fd,
-        }).then(r => r.json());
-      }).then(res => {
-        if (res.ok && res.file_key) {
-          addThumb(res.file_key);
-          syncUploadState();
-          document.getElementById('hs-lowres').hidden = true;
-          msg.textContent = 'Uploaded.';
-          setTimeout(() => msg.textContent = '', 2000);
-        } else {
-          msg.textContent = res.error || 'Upload failed.';
-        }
-      }).catch(err => { msg.textContent = HeadshotCrop.errorText(err); });
-    });
-
-    fetch('api/intake.php', { credentials: 'same-origin' }).then(r => r.json()).then(data => {
-      const shots = data.headshots || [];
-      shots.forEach(h => addThumb(h.file_key));
-      syncUploadState();
-      // The website uses the most recent upload. Older uploads predate the
-      // 400px minimum, so nudge the agent if theirs is below it.
-      const latest = shots[shots.length - 1];
-      if (latest) {
-        const probe = new Image();
-        probe.onload = function(){
-          const w = probe.naturalWidth, h = probe.naturalHeight;
-          if (Math.min(w, h) >= HeadshotCrop.MIN_SIDE) return;
-          const note = document.getElementById('hs-lowres');
-          note.textContent = 'Your current photo is only ' + w + '×' + h + ' pixels, so it looks blurry on the website. '
-            + 'Please upload a higher-quality photo (at least 400×400).';
-          note.hidden = false;
-        };
-        probe.src = 'api/intake.php?action=headshot&key=' + encodeURIComponent(latest.file_key);
-      }
-    }).catch(() => {});
-  })();
+  HeadshotManager.mount(document.getElementById('hs-manager'));
 
   // ── Password change ─────────────────────────────────────────────────────────
   function savePassword(){

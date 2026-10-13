@@ -620,15 +620,15 @@ function notify_onboard_completed(string $agentName, string $agentEmail, string 
     $senderEmail = 'whitney@innovateonline.com';
     $senderName  = 'Whitney Beadling';
     $firstName = htmlspecialchars(explode(' ', trim($agentName))[0], ENT_QUOTES);
-    $subject   = 'Welcome to Innovate Real Estate, ' . $agentName . '!';
+    $subject   = 'You\'re officially set up with Innovate Real Estate, ' . $agentName . '!';
     $sig       = sender_signature_html($senderEmail, $senderName);
     $p         = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 16px"';
     $li        = 'style="color:#444;font-size:15px;line-height:1.75;margin:0 0 8px"';
     $body      = notification_email_html(
         '<p ' . $p . '>Hi ' . $firstName . ',</p>'
         . '<p ' . $p . '>Congratulations, and welcome to Innovate Real Estate!</p>'
-        . '<p ' . $p . '>You\'ve officially completed your onboarding, and we\'re excited to have you as part of the Innovate family.</p>'
-        . '<p ' . $p . '>While onboarding may be complete, your journey is just getting started. Over the coming weeks you\'ll begin building relationships, developing your business, and taking advantage of the coaching, training, technology, and support designed to help you succeed.</p>'
+        . '<p ' . $p . '>Your initial setup is complete, which means you\'re officially set up with Innovate Real Estate. We\'re excited to have you with us!</p>'
+        . '<p ' . $p . '>Initial setup is just the first step, and your onboarding is continuing. The next phase includes L.A.U.N.C.H., training, your systems and accounts, marketing, and coaching, all designed to help you build relationships, develop your business, and succeed. We\'ll be with you through each part of it.</p>'
         . '<p style="color:#1a1a1a;font-size:15px;font-weight:700;margin:0 0 10px">Here\'s what\'s next:</p>'
         . '<ul style="margin:0 0 20px;padding-left:20px">'
         . '<li ' . $li . '>Watch your inbox for upcoming training opportunities and company updates.</li>'
@@ -801,7 +801,8 @@ function notify_mc_assigned(string $agentName, string $agentEmail, string $marke
 }
 
 // Queue an email to the agent's Market Center Leader + lisa@innovateonline.com
-// (always cc'd per Darren's request, not conditional on market center lookup)
+// + michele@innovateonline.com (always included, not conditional on market
+// center lookup; Lisa per Darren's request, Michele added 2026-10-02)
 // when an agent caps — called from lib/darwin.php's cap-progress sync when it
 // detects a transition from not-capped to capped for that agent. Unlike
 // notify_bic_ml_onboard_complete this does NOT include the BIC, only the MC
@@ -816,7 +817,7 @@ function notify_agent_capped(string $agentName, string $agentEmail, string $mark
         $mcLeaderEmail = trim($st->fetchColumn() ?: '');
     }
 
-    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com'])));
+    $emails = array_values(array_unique(array_filter([$mcLeaderEmail, 'lisa@innovateonline.com', 'michele@innovateonline.com'])));
     if (!$emails) return;
 
     $eName    = htmlspecialchars($agentName, ENT_QUOTES);
@@ -931,17 +932,42 @@ function notify_step_actionable(string $process, string $stepKey, string $stepLa
 // owners find out as soon as it's their turn. Safe to call unconditionally —
 // no-ops if nothing changed. $fromEmail/$fromName identify whoever completed
 // the prior step (the action that made this one actionable).
+//
+// Onboarding only:
+//  - While an active entry's Stage 1 isn't complete, only Stage 1 steps are
+//    eligible — Stage 2 notifications don't start until Stage 1 is done
+//    (complete_initial_setup calls this once to resume the chain).
+//  - A step nobody is assigned to is skipped over (and left un-notified)
+//    instead of consuming the turn, so unassigned steps like Coach/LAUNCH
+//    can't stall the chain for the steps after them.
+// Offboarding keeps the original first-pending-step behavior.
 function maybe_notify_next_actionable_step(PDO $pdo, string $process, int $queueId, string $fromEmail = '', string $fromName = ''): void {
     $stepTable  = $process === 'onboard' ? 'onboard_steps' : 'offboard_steps';
     $queueTable = $process === 'onboard' ? 'onboard_queue' : 'offboard_queue';
 
-    $st = $pdo->prepare(
-        "SELECT id, tool_key, tool_label FROM {$stepTable}
-         WHERE queue_id=? AND status='pending' AND notified_at IS NULL
-         ORDER BY id LIMIT 1"
-    );
+    $sql = "SELECT id, tool_key, tool_label FROM {$stepTable}
+            WHERE queue_id=? AND status='pending' AND notified_at IS NULL";
+    if ($process === 'onboard') {
+        $qs = $pdo->prepare("SELECT status, stage1_completed_at FROM onboard_queue WHERE id=?");
+        $qs->execute([$queueId]);
+        $qrow = $qs->fetch(PDO::FETCH_ASSOC);
+        if ($qrow && ($qrow['status'] ?? '') === 'active' && trim((string)($qrow['stage1_completed_at'] ?? '')) === '') {
+            $sql .= " AND stage=1";
+        }
+    }
+    $st = $pdo->prepare($sql . " ORDER BY id");
     $st->execute([$queueId]);
-    $step = $st->fetch(PDO::FETCH_ASSOC);
+    $candidates = $st->fetchAll(PDO::FETCH_ASSOC);
+    if (!$candidates) return;
+
+    $step = null;
+    if ($process === 'onboard') {
+        foreach ($candidates as $c) {
+            if (step_assignees($process, $c['tool_key'])) { $step = $c; break; }
+        }
+    } else {
+        $step = $candidates[0];
+    }
     if (!$step) return;
 
     $q = $pdo->prepare("SELECT agent_name, agent_email FROM {$queueTable} WHERE id=?");
@@ -1256,22 +1282,48 @@ function support_ticket_cc_emails(int $ticketId): array {
     return $s->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Queue a plain-text email to a list of recipients (deduped, empty entries dropped).
+// Queue an email to a list of recipients (deduped, empty entries dropped).
 // $fromEmail/$fromName identify the AgentEdge user whose action triggered this
 // send — blank means no specific actor, falls back to the system default sender.
 // $replyTo, when set, becomes the Reply-To header — used by ticket notifications
 // so a reply typed in the recipient's mail client routes back into the thread.
-function queue_email_to(array $emails, string $subject, string $body, string $fromEmail = '', string $fromName = '', string $replyTo = ''): int {
+// $isHtml: false (default) means $body is plain text; true means it's already
+// HTML and must be rendered as such (send_email_sendgrid() otherwise
+// htmlspecialchars()'s the whole body, showing raw tags in the recipient's inbox).
+function queue_email_to(array $emails, string $subject, string $body, string $fromEmail = '', string $fromName = '', string $replyTo = '', bool $isHtml = false): int {
     $ins = local_db()->prepare(
-        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name, reply_to) VALUES (?, 'email', ?, ?, '', ?, ?, ?)"
+        "INSERT INTO notification_queue (recipient, channel, subject, body, phone, from_email, from_name, reply_to, is_html) VALUES (?, 'email', ?, ?, '', ?, ?, ?, ?)"
     );
     $sent = 0;
     foreach (array_unique(array_filter(array_map('trim', $emails))) as $email) {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
-        $ins->execute([$email, $subject, $body, $fromEmail, $fromName, $replyTo]);
+        $ins->execute([$email, $subject, $body, $fromEmail, $fromName, $replyTo, $isHtml ? 1 : 0]);
         $sent++;
     }
     return $sent;
+}
+
+// Mints a 24h/single-use password-setup token and emails it, returning the
+// link — shared by admin_agent_login.php's "send a link" action, its
+// optional "also send a login link" step after a Change Login Email, and
+// api/password_reset.php's self-service flow for agents who exist on the
+// roster but never set a password.
+function mint_and_send_setup_link(PDO $db, string $email, string $fromEmail, string $fromName): string {
+    $token = bin2hex(random_bytes(32));
+    $db->prepare(
+        "INSERT INTO password_reset_tokens (token, email, expires_at) VALUES (?, ?, datetime('now', '+24 hours'))"
+    )->execute([$token, $email]);
+
+    $base = rtrim((string)(cfg()['app_base_url'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 'agentedge.innovateonline.com'))), '/');
+    $link = $base . '/reset_password.php?token=' . urlencode($token);
+
+    $body = '<p>An INNOVATE admin has set up (or reset) your AgentEdge login.</p>'
+          . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES) . '">Set your AgentEdge password</a></p>'
+          . '<p>This link expires in 24 hours and can only be used once.</p>';
+    queue_email_to([$email], 'Set your AgentEdge password', $body, $fromEmail, $fromName, '', true);
+    process_notification_queue();
+
+    return $link;
 }
 
 // ── Ticket reply-by-email ─────────────────────────────────────────────────────
@@ -1536,6 +1588,127 @@ function send_email_sendgrid(string $to, string $subject, string $body, array $c
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     return $code >= 200 && $code < 300;
+}
+
+// ── Open House Portal notifications ───────────────────────────────────────────
+// Per-agent toggles for the three Open House lifecycle emails (a new request
+// came in on their listing, their request was approved, or a requester
+// cancelled). No row means opted in — mirrors the opt-out model used by
+// notification_prefs, so a brand-new agent is notified by default instead of
+// silently missing requests until they visit the settings page.
+
+function oh_notify_prefs_get(string $email): array {
+    $email = strtolower(trim($email));
+    $st = local_db()->prepare("SELECT notify_requested, notify_approved, notify_cancelled, auto_feedback_request FROM oh_notify_prefs WHERE email=?");
+    $st->execute([$email]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    return [
+        'notify_requested'      => $row ? (int)$row['notify_requested']      : 1,
+        'notify_approved'       => $row ? (int)$row['notify_approved']       : 1,
+        'notify_cancelled'      => $row ? (int)$row['notify_cancelled']      : 1,
+        // Opt-in, unlike the three above — no row still means off.
+        'auto_feedback_request' => $row ? (int)$row['auto_feedback_request'] : 0,
+    ];
+}
+
+function oh_notify_prefs_save(string $email, bool $notifyRequested, bool $notifyApproved, bool $notifyCancelled, bool $autoFeedbackRequest): void {
+    $email = strtolower(trim($email));
+    local_db()->prepare(
+        "INSERT INTO oh_notify_prefs (email, notify_requested, notify_approved, notify_cancelled, auto_feedback_request, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(email) DO UPDATE SET
+            notify_requested=excluded.notify_requested,
+            notify_approved=excluded.notify_approved,
+            notify_cancelled=excluded.notify_cancelled,
+            auto_feedback_request=excluded.auto_feedback_request,
+            updated_at=excluded.updated_at"
+    )->execute([$email, $notifyRequested ? 1 : 0, $notifyApproved ? 1 : 0, $notifyCancelled ? 1 : 0, $autoFeedbackRequest ? 1 : 0]);
+}
+
+function oh_notify_enabled(string $email, string $prefKey): bool {
+    return (bool)(oh_notify_prefs_get($email)[$prefKey] ?? 1);
+}
+
+// A listing agent's own listing got a new request — approve/decline it from
+// "My Listings" (openhouse_mine.php).
+function notify_oh_request_submitted(string $listingAgentEmail, string $requesterName, string $requesterEmail, string $address, string $whenLabel): void {
+    if (!oh_notify_enabled($listingAgentEmail, 'notify_requested')) return;
+    $subject = "Open House Request: {$address}";
+    $eName   = htmlspecialchars($requesterName ?: $requesterEmail, ENT_QUOTES);
+    $eAddr   = htmlspecialchars($address, ENT_QUOTES);
+    $eWhen   = htmlspecialchars($whenLabel, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">New Open House Request</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> has requested to hold an open house at <strong>' . $eAddr . '</strong>.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 20px">Requested time: <strong>' . $eWhen . '</strong></p>'
+        . '<a href="https://agentedge.innovateonline.com/openhouse_mine.php" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">Review Request &rarr;</a>'
+        . '<p style="color:#888;font-size:12px;margin-top:24px">Turn these emails off in Open House &rarr; Preferences.</p>'
+    );
+    queue_email_to([$listingAgentEmail], $subject, $body, $requesterEmail, $requesterName, '', true);
+}
+
+// The requesting agent's request was approved by the listing agent.
+function notify_oh_request_approved(string $requesterEmail, string $requesterName, string $listingAgentEmail, string $listingAgentName, string $address, string $whenLabel): void {
+    if (!oh_notify_enabled($requesterEmail, 'notify_approved')) return;
+    $subject = "Open House Request Approved: {$address}";
+    $eAddr   = htmlspecialchars($address, ENT_QUOTES);
+    $eWhen   = htmlspecialchars($whenLabel, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Your Open House Request Was Approved</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px">You\'re confirmed to hold the open house at <strong>' . $eAddr . '</strong>.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 20px">Time: <strong>' . $eWhen . '</strong></p>'
+        . '<a href="https://agentedge.innovateonline.com/openhouse_requests.php" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">View My Requests &rarr;</a>'
+        . '<p style="color:#888;font-size:12px;margin-top:24px">Turn these emails off in Open House &rarr; Preferences.</p>'
+    );
+    queue_email_to([$requesterEmail], $subject, $body, $listingAgentEmail, $listingAgentName, '', true);
+}
+
+// A requester cancelled their (pending) request on the listing agent's listing.
+function notify_oh_request_cancelled(string $listingAgentEmail, string $requesterName, string $requesterEmail, string $address, string $whenLabel): void {
+    if (!oh_notify_enabled($listingAgentEmail, 'notify_cancelled')) return;
+    $subject = "Open House Request Cancelled: {$address}";
+    $eName   = htmlspecialchars($requesterName ?: $requesterEmail, ENT_QUOTES);
+    $eAddr   = htmlspecialchars($address, ENT_QUOTES);
+    $eWhen   = htmlspecialchars($whenLabel, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Open House Request Cancelled</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> cancelled their request to hold the open house at <strong>' . $eAddr . '</strong>.</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 20px">Requested time was: <strong>' . $eWhen . '</strong></p>'
+        . '<a href="https://agentedge.innovateonline.com/openhouse_mine.php" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">View My Listings &rarr;</a>'
+        . '<p style="color:#888;font-size:12px;margin-top:24px">Turn these emails off in Open House &rarr; Preferences.</p>'
+    );
+    queue_email_to([$listingAgentEmail], $subject, $body, $requesterEmail, $requesterName, '', true);
+}
+
+// The listing agent explicitly asked the hosting agent for feedback on an
+// approved (presumably already-held) open house — a direct one-off action,
+// not gated by the toggles above.
+function notify_oh_feedback_requested(int $requestId, string $requesterEmail, string $requesterName, string $listingAgentEmail, string $listingAgentName, string $address, string $whenLabel): void {
+    $subject = "How did the open house go? {$address}";
+    $eName   = htmlspecialchars($listingAgentName ?: $listingAgentEmail, ENT_QUOTES);
+    $eAddr   = htmlspecialchars($address, ENT_QUOTES);
+    $eWhen   = htmlspecialchars($whenLabel, ENT_QUOTES);
+    $link    = 'https://agentedge.innovateonline.com/openhouse_feedback.php?id=' . $requestId;
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Feedback Requested</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> would like your feedback on the open house you held at <strong>' . $eAddr . '</strong> (' . $eWhen . ').</p>'
+        . '<a href="' . htmlspecialchars($link, ENT_QUOTES) . '" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">Leave Feedback &rarr;</a>'
+    );
+    queue_email_to([$requesterEmail], $subject, $body, $listingAgentEmail, $listingAgentName, '', true);
+}
+
+// The hosting agent submitted their feedback — let the listing agent know.
+function notify_oh_feedback_submitted(string $listingAgentEmail, string $requesterName, string $requesterEmail, string $address, string $feedbackText): void {
+    $subject = "Open House Feedback: {$address}";
+    $eName   = htmlspecialchars($requesterName ?: $requesterEmail, ENT_QUOTES);
+    $eAddr   = htmlspecialchars($address, ENT_QUOTES);
+    $body    = notification_email_html(
+        '<h2 style="margin:0 0 14px;color:#1a1a1a;font-size:20px;font-weight:800">Open House Feedback Received</h2>'
+        . '<p style="color:#444;font-size:15px;line-height:1.65;margin:0 0 14px"><strong>' . $eName . '</strong> left feedback on the open house at <strong>' . $eAddr . '</strong>:</p>'
+        . '<p style="color:#444;font-size:15px;line-height:1.7;margin:0 0 20px;padding:14px 18px;background:#f9f9f9;border-radius:8px;border:1px solid #eee">' . nl2br(htmlspecialchars($feedbackText, ENT_QUOTES)) . '</p>'
+        . '<a href="https://agentedge.innovateonline.com/openhouse_mine.php" style="display:inline-block;padding:12px 26px;background:#82C112;color:#1a1a1a;text-decoration:none;font-weight:700;border-radius:7px;font-size:14px">View My Listings &rarr;</a>'
+    );
+    queue_email_to([$listingAgentEmail], $subject, $body, $requesterEmail, $requesterName, '', true);
 }
 
 // ── Twilio SMS ────────────────────────────────────────────────────────────────

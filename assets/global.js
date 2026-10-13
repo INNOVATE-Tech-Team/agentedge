@@ -507,17 +507,30 @@ function submitSupportTicket() {
     return `<span class="hw-diff hw-diff-${escHtml(key)}">${escHtml(label)}</span>`;
   }
 
-  function renderAgents(agents) {
+  // Formats a US 10-digit number as (XXX) XXX-XXXX. Anything else (extensions,
+  // international numbers, partial/malformed data) is left exactly as stored
+  // rather than risk mangling it — the underlying data itself is inconsistent.
+  function formatPhone(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    if (digits.length === 11 && digits[0] === '1') return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+    return raw;
+  }
+
+  function renderAgents(agents, canViewProfile) {
     if (!agents.length) return '';
     const rows = agents.map(a => {
       const loc = [a.market_center, a.state_code].filter(Boolean).join(', ');
       const phone = a.phone
-        ? `<a class="hw-agent-phone" href="tel:${escHtml(a.phone.replace(/[^\d+]/g, ''))}">${escHtml(a.phone)}</a>`
+        ? `<a class="hw-agent-phone" href="tel:${escHtml(a.phone.replace(/[^\d+]/g, ''))}">${escHtml(formatPhone(a.phone))}</a>`
         : '<span class="hw-agent-phone hw-agent-phone-none">No phone on file</span>';
+      const name = (canViewProfile && a.email)
+        ? `<a class="hw-agent-name" href="agent_profile.php?email=${encodeURIComponent(a.email)}">${escHtml(a.name)}</a>`
+        : `<span class="hw-agent-name">${escHtml(a.name)}</span>`;
       return `
         <div class="hw-agent-row">
           <div class="hw-agent-main">
-            <span class="hw-agent-name">${escHtml(a.name)}</span>
+            ${name}
             ${loc ? `<span class="hw-agent-loc">${escHtml(loc)}</span>` : ''}
           </div>
           ${phone}
@@ -526,12 +539,30 @@ function submitSupportTicket() {
     return `<div class="hw-agents"><div class="hw-agents-head">Agent Roster</div>${rows}</div>`;
   }
 
-  function renderResults(results, agents) {
-    const agentsHtml = renderAgents(agents || []);
-    if (!results.length) {
-      return agentsHtml + '<div class="hw-empty">No lessons matched — try a different word, or check a shortcut below.</div>';
-    }
-    const lessonsHtml = results.map(r => {
+  // "Who can help" — Who Does What directory people. This section is empty
+  // (renders nothing) whenever wdw_is_available_to_current_user() says the
+  // current viewer can't see the directory yet, so it appears automatically
+  // once that shared rule opens up without any change here.
+  function renderPeople(people) {
+    if (!people.length) return '';
+    const rows = people.map(p => {
+      const meta = [p.title, (p.groups || []).join(' · ')].filter(Boolean).join(' · ');
+      return `
+        <a class="hw-person-row" href="who_does_what.php">
+          <div class="hw-person-name">${escHtml(p.name)}</div>
+          ${meta ? `<div class="hw-person-meta">${escHtml(meta)}</div>` : ''}
+          ${p.handles ? `<div class="hw-person-handles">${escHtml(p.handles)}</div>` : ''}
+        </a>`;
+    }).join('');
+    return `<div class="hw-people"><div class="hw-people-head">Who can help</div>${rows}</div>`;
+  }
+
+  // University video/lesson results — existing search untouched, just given
+  // a heading now that it sits alongside "Who can help" instead of being the
+  // panel's only kind of result.
+  function renderLessons(results) {
+    if (!results.length) return '';
+    const rows = results.map(r => {
       const related = (r.related || []).slice(0, 3).map(rel =>
         `<a class="hw-related-chip" href="${escHtml(rel.link)}">${escHtml(rel.title)}</a>`
       ).join('');
@@ -545,7 +576,17 @@ function submitSupportTicket() {
           ${related ? `<div class="hw-related-list">${related}</div>` : ''}
         </a>`;
     }).join('');
-    return agentsHtml + lessonsHtml;
+    return `<div class="hw-videos"><div class="hw-videos-head">University videos</div>${rows}</div>`;
+  }
+
+  function renderResults(results, agents, people, canViewProfile) {
+    const agentsHtml = renderAgents(agents || [], canViewProfile);
+    const peopleHtml = renderPeople(people || []);
+    const lessonsHtml = renderLessons(results);
+    if (!results.length && !(people && people.length)) {
+      return agentsHtml + peopleHtml + '<div class="hw-empty">No matches — try a different word, or check a shortcut below.</div>';
+    }
+    return agentsHtml + peopleHtml + lessonsHtml;
   }
 
   function onHelpSearch(e) {
@@ -558,7 +599,7 @@ function submitSupportTicket() {
         panel.querySelector('.hw-shortcuts').style.display = 'none';
         panel.querySelector('.hw-quickadd').style.display = 'none';
         resultsEl.style.display = '';
-        resultsEl.innerHTML = renderResults((d.ok && d.results) || [], d.ok && d.agents);
+        resultsEl.innerHTML = renderResults((d.ok && d.results) || [], d.ok && d.agents, d.ok && d.people, d.ok && d.can_view_profile);
       });
     }, 300);
   }

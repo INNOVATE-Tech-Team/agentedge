@@ -20,6 +20,36 @@
   const TOOL_MAP = {};
   TOOLS.forEach(t => { TOOL_MAP[t.key] = t; });
 
+  // Two-stage layout. Which stage a step belongs to comes from the server
+  // (onboard_steps.stage); these lists only fix the display order inside each
+  // stage (Coach/LAUNCH lead Stage 2). Unknown/legacy keys sort after these.
+  const STAGE_ORDER = {
+    1: ['agentedge', 'doc_signing', 'mls'],
+    2: ['coach', 'launch', 'fub', 'realscout', 'constellation1', 'dotloop', 'listingstoleads', 'maxa', 'training'],
+  };
+  // Badge colours per derived state (the state itself and its label come from
+  // the server's onboard_queue_state() — never recomputed here).
+  const STATE_BADGE = {
+    initial_setup_pending:  ['#FFF4DC', '#8a5a00'],
+    initial_setup_complete: ['#E6F0FB', '#1f4f8a'],
+    onboarding_complete:    ['#eef5e8', '#3a6b1a'],
+    cancelled:              ['#f0f0f0', '#888'],
+  };
+
+  function stageSteps(steps, stage) {
+    const order = STAGE_ORDER[stage];
+    const rank = k => { const i = order.indexOf(k); return i < 0 ? 999 : i; };
+    return steps
+      .filter(st => (parseInt(st.stage, 10) || 2) === stage)
+      .sort((a, b) => (rank(a.tool_key) - rank(b.tool_key)) || (a.id - b.id));
+  }
+
+  function stageHeaderHtml(n, title) {
+    return `<div style="margin:16px 0 4px;padding-bottom:6px;border-bottom:2px solid #E6E7E8;display:flex;align-items:baseline;gap:8px">
+      <span style="font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#82C112">Stage ${n}</span>
+      <span style="font-size:14px;font-weight:800">${esc(title)}</span></div>`;
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
   function esc(s) {
     return String(s ?? '')
@@ -244,6 +274,9 @@
     const pct     = total > 0 ? Math.round((done / total) * 100) : 0;
     const steps   = entry.steps || [];
     const isOpen  = expandedIds.has(entry.id);
+    const editable   = IS_ADMIN && entry.status === 'active';
+    const stage1Done = !!entry.stage1_completed_at;
+    const rd         = entry.stage1 || null;   // Stage 1 readiness (active entries only), from the server
 
     const dots = steps.map(s => stepDotHtml(s)).join('');
 
@@ -256,41 +289,41 @@
     if (entry.role && entry.role !== 'agent') metaParts.push(esc(entry.role.replace(/_/g,' ')));
     const meta = metaParts.join(' · ');
 
-    const statusBadge = entry.status !== 'active'
-      ? `<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:10px;background:${entry.status==='completed'?'#eef5e8':'#f0f0f0'};color:${entry.status==='completed'?'#3a6b1a':'#888'}">${esc(entry.status)}</span>`
-      : '';
+    const badgeCol = STATE_BADGE[entry.state] || ['#f0f0f0', '#888'];
+    const statusBadge = `<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:10px;background:${badgeCol[0]};color:${badgeCol[1]}">${esc(entry.state_label || entry.status)}</span>`;
 
-    const stepsHtml = steps.map(s => renderStep(entry.id, s, entry.status)).join('');
+    const stepNote = (s) => (entry.status === 'active' && !stage1Done && (s.tool_key === 'doc_signing' || s.tool_key === 'mls'))
+      ? 'Required for initial setup (done or skipped)' : '';
+    const stepsHtml1 = stageSteps(steps, 1).map(s => renderStep(entry.id, s, entry.status, stepNote(s))).join('');
+    const stepsHtml2 = stageSteps(steps, 2).map(s => renderStep(entry.id, s, entry.status)).join('');
 
     const stateOptions = STATES.map(s =>
       `<option value="${s}"${entry.state_code === s ? ' selected' : ''}>${s}</option>`
     ).join('');
-    const stateSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
-      <select class="ob-state-select" onchange="setQueueState(${entry.id}, this)" title="License state (required to complete onboarding)">
+    const stateSelectHtml = editable ? `
+      <select class="ob-state-select" onchange="setQueueState(${entry.id}, this)" title="License state (required to complete initial setup)">
         <option value="">State…</option>
         ${stateOptions}
-      </select>` : (entry.state_code ? esc(entry.state_code) : '—');
+      </select>` : '';
 
     // Multi-MC: a chip per assigned Market Center (with a remove "×" when
     // editable) plus an "add another" select filtered to exclude MCs already
     // assigned. Falls back to the old scalar market_center for any row not
-    // yet backed by onboard_queue_mcs (shouldn't happen post-migration, but
-    // cheap to guard).
+    // yet backed by onboard_queue_mcs.
     const assignedNames = mcList.length ? mcList.map(m => m.market_center) : (entry.market_center ? [entry.market_center] : []);
     const mcChips = assignedNames.map(name => `
       <span class="ob-mc-chip" style="display:inline-flex;align-items:center;gap:4px;background:#eef5e8;color:#3a6b1a;border-radius:10px;padding:2px 8px;font-size:12px;margin:2px 4px 2px 0">
         ${esc(name)}
-        ${(IS_ADMIN && entry.status === 'active') ? `<button type="button" onclick="removeQueueMarketCenter(${entry.id}, '${esc(name).replace(/'/g, "\\'")}', this)" title="Remove" style="border:none;background:none;color:#3a6b1a;cursor:pointer;font-weight:700;padding:0;line-height:1">&times;</button>` : ''}
+        ${editable ? `<button type="button" onclick="removeQueueMarketCenter(${entry.id}, '${esc(name).replace(/'/g, "\\'")}', this)" title="Remove" style="border:none;background:none;color:#3a6b1a;cursor:pointer;font-weight:700;padding:0;line-height:1">&times;</button>` : ''}
       </span>`).join('');
     const addMcOptions = MC_OPTS.filter(m => !assignedNames.includes(m.name)).map(m =>
       `<option value="${esc(m.name)}" data-state="${esc(m.state_code || '')}">${esc((m.state_code ? m.state_code + ' - ' : '') + m.name)}</option>`
     ).join('');
-    const addMcSelectHtml = (IS_ADMIN && entry.status === 'active') ? `
+    const addMcSelectHtml = editable ? `
       <select class="ob-state-select" onchange="addQueueMarketCenter(${entry.id}, this)" title="Add a Market Center">
         <option value="">+ Add Market Center…</option>
         ${addMcOptions}
       </select>` : '';
-    const mcSelectHtml = `${mcChips}${assignedNames.length ? '' : (IS_ADMIN && entry.status === 'active' ? '' : '—')}${addMcSelectHtml}`;
 
     // The "skip" override below reuses mark_intake_submitted (api/onboard_action.php)
     // regardless of whether an intake was ever sent -- previously it only appeared
@@ -303,11 +336,58 @@
         ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this)">Mark Submitted</button>`
         : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this, true)">Skip — Entered Manually</button>`;
 
-    const footerHtml = (IS_ADMIN && entry.status === 'active') ? `
+    // Derived Stage 1 requirements: met/missing comes from the server's
+    // readiness payload (same function the completion action enforces).
+    const reqMet = key => !!((rd && rd.items || []).find(i => i.key === key) || {}).met;
+    function readinessRow(key, label, detail, controls) {
+      const met = reqMet(key);
+      const icon = met
+        ? '<span class="ob-step-icon" style="background:#82C112;color:#fff">✓</span>'
+        : '<span class="ob-step-icon" style="background:#E8A93A;color:#fff">!</span>';
+      return `
+      <div class="ob-step" id="ready-${entry.id}-${key}">
+        ${icon}
+        <div style="flex:1;min-width:0">
+          <span class="ob-step-label">${esc(label)}</span>
+          <span class="ob-step-note"> · ${met ? '' : '<strong style="color:#8a5a00">Missing</strong> — '}${detail}</span>
+        </div>
+        <div class="ob-step-actions" style="flex-wrap:wrap;justify-content:flex-end;align-items:center">${controls}</div>
+      </div>`;
+    }
+    const readinessHtml = rd ? `
+          ${readinessRow('intake', 'Contact / Intake', entry.intake_submitted ? 'Intake form submitted' : 'Intake form not submitted', editable ? intakeStatusHtml : '')}
+          ${readinessRow('license_state', 'License State', entry.state_code ? esc(entry.state_code) : 'No license state set', stateSelectHtml)}
+          ${readinessRow('market_centers', 'Market Center(s)', assignedNames.length ? esc(assignedNames.length + ' assigned') : 'None assigned', editable ? (mcChips + addMcSelectHtml) : '')}` : '';
+
+    let stage1Action = '';
+    if (stage1Done) {
+      stage1Action = `<span style="font-size:12px;color:#3a6b1a;font-weight:700">✓ Initial setup completed ${esc(entry.stage1_completed_at)}${entry.stage1_completed_by ? ' by ' + esc(entry.stage1_completed_by) : ''}</span>`;
+    } else if (editable) {
+      stage1Action = `<button class="ob-btn-sm ob-btn-done" data-ready="${rd && rd.ready ? '1' : '0'}" data-missing="${esc(rd ? rd.missing.join(', ') : '')}"
+                onclick="completeInitialSetup(${entry.id}, this)">Complete Initial Setup</button>`
+        + (rd && !rd.ready ? `<span style="font-size:11px;color:#8a5a00;margin-left:8px">Outstanding: ${esc(rd.missing.join(', '))}</span>` : '');
+    }
+    const stage1ActionRow = stage1Action ? `<div style="padding:10px 0 4px">${stage1Action}</div>` : '';
+
+    // Complete Onboarding needs Stage 1 done AND every Stage 2 item Done/Skipped.
+    // The server (onboard_stage2_readiness) enforces this; the button state is
+    // just a convenience.
+    const rd2 = entry.stage2 || null;
+    let stage2Action = '';
+    if (editable) {
+      const dis = 'disabled style="opacity:.5;cursor:not-allowed"';
+      if (!stage1Done) {
+        stage2Action = `<button class="ob-btn-sm ob-btn-done" ${dis} title="Complete Initial Setup first">Complete Onboarding</button><span style="font-size:11px;color:#888;margin-left:8px">Available after Initial Setup is complete</span>`;
+      } else if (rd2 && !rd2.ready) {
+        stage2Action = `<button class="ob-btn-sm ob-btn-done" ${dis} title="Resolve every Stage 2 item first">Complete Onboarding</button><span style="font-size:11px;color:#8a5a00;margin-left:8px">Outstanding (Done or Skip each): ${esc(rd2.missing.join(', '))}</span>`;
+      } else {
+        stage2Action = `<button class="ob-btn-sm ob-btn-done" onclick="completeOnboarding(${entry.id}, this)">Complete Onboarding</button>`;
+      }
+    }
+    const stage2ActionRow = stage2Action ? `<div style="padding:10px 0 4px">${stage2Action}</div>` : '';
+
+    const footerHtml = editable ? `
       <div class="ob-footer">
-        <button class="ob-btn-sm ob-btn-done" data-has-state="${entry.state_code ? '1' : '0'}" data-has-mc="${assignedNames.length ? '1' : '0'}" data-has-intake="${entry.intake_submitted ? '1' : '0'}"
-                onclick="completeOnboarding(${entry.id}, this)">Mark Complete</button>
-        ${intakeStatusHtml}
         <a class="ob-btn-sm ob-btn-done" style="text-decoration:none;display:inline-block" href="agent_profile.php?email=${encodeURIComponent(entry.agent_email)}" target="_blank">Edit Profile →</a>
         <button class="ob-btn-sm ob-btn-undo" onclick="cancelOnboarding(${entry.id}, this)">Cancel / Remove</button>
       </div>` : '';
@@ -332,11 +412,13 @@
           </div>
         </div>
         <div class="ob-checklist${isOpen ? ' open' : ''}" data-qid="${entry.id}">
-          ${entry.status === 'active' ? `<div class="ob-state-row" style="padding:4px 0 12px;font-size:12px;color:#888;display:flex;gap:16px;flex-wrap:wrap">
-            <span>License state (required to complete): ${stateSelectHtml}</span>
-            <span>Market Center(s) (at least one required to complete): ${mcSelectHtml}</span>
-          </div>` : ''}
-          ${stepsHtml || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          ${stageHeaderHtml(1, 'Initial Setup / Paperwork')}
+          ${readinessHtml}
+          ${stepsHtml1 || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          ${stage1ActionRow}
+          ${stageHeaderHtml(2, 'Accounts, Marketing, Coaching & Training')}
+          ${stepsHtml2 || '<div style="padding:12px 0;color:#aaa;font-size:13px">No steps found.</div>'}
+          ${stage2ActionRow}
           ${entry.intake_submitted ? `
           <div class="ob-intake" id="ob-intake-${entry.id}" data-email="${esc(entry.agent_email)}" style="display:${intakeOpenIds.has(entry.id) ? 'block' : 'none'};margin:10px 0;padding:12px;border:1px solid #E6E7E8;border-radius:8px;background:#fafbfa">
             <div id="ob-intake-body-${entry.id}" style="font-size:12px;color:#aaa">Loading intake form…</div>
@@ -355,9 +437,9 @@
       </div>`;
   }
 
-  function renderStep(queueId, step, queueStatus) {
+  function renderStep(queueId, step, queueStatus, extraNote) {
     const toolDef  = TOOL_MAP[step.tool_key] || {};
-    const note     = toolDef.note || '';
+    const note     = [toolDef.note || '', extraNote || ''].filter(Boolean).join(' · ');
     const isAuto   = parseInt(step.is_auto, 10) === 1;
     const disabled = queueStatus !== 'active';
 
@@ -640,14 +722,26 @@
   };
 
   // ── Complete / Cancel queue entry ──────────────────────────────────────────
+  // Stage 1: server enforces the same readiness gates (onboard_stage1_readiness);
+  // the data-ready/data-missing attributes just save a round trip.
+  window.completeInitialSetup = function (queueId, btn) {
+    if (btn.dataset.ready !== '1') {
+      alert('Initial setup can\'t be completed yet. Still outstanding: ' + (btn.dataset.missing || 'see the checklist') + '.');
+      return;
+    }
+    if (!confirm('Complete initial setup for this agent?\n\nThis makes sure they\'re on the roster, sends their welcome email, notifies their Market Center leaders, and schedules the 10-day check-in text. It can only be done once.')) return;
+    btn.disabled = true;
+    post('api/onboard_action.php?action=complete_initial_setup', { queue_id: queueId })
+      .then(d => {
+        if (d.ok) { loadQueue(); }
+        else { btn.disabled = false; alert(d.error || 'Error'); }
+      })
+      .catch(() => { btn.disabled = false; });
+  };
+
+  // Stage 2 close-out: only flips the entry to Completed — no emails or tasks.
   window.completeOnboarding = function (queueId, btn) {
-    const hasState  = btn.dataset.hasState === '1';
-    const hasMc     = btn.dataset.hasMc === '1';
-    const hasIntake = btn.dataset.hasIntake === '1';
-    if (!hasState) { alert('Set a license state for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
-    if (!hasMc) { alert('Set a Market Center for this agent first — it\'s required to add them to the Backoffice Roster.'); return; }
-    if (!hasIntake) { alert('This agent has not completed their intake form yet — onboarding cannot be marked complete until they do.'); return; }
-    if (!confirm('Mark this agent\'s onboarding as complete?')) return;
+    if (!confirm('Mark this agent\'s onboarding as complete? This closes out the whole onboarding process; no further emails are sent.')) return;
     btn.disabled = true;
     post('api/onboard_action.php?action=complete_onboarding', { queue_id: queueId })
       .then(d => {
