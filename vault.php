@@ -942,6 +942,14 @@ function mimeLabel(mime) {
 
 }
 
+// Deep link from the Finance → Insurance nav item: vault.php?open=<folder id>
+(function () {
+    const id = new URLSearchParams(location.search).get('open');
+    if (!id) return;
+    const el = document.querySelector('.vault-folder-item[data-id="' + CSS.escape(id) + '"]');
+    if (el) el.click();
+})();
+
 </script>
 
 </body>

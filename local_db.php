@@ -1395,6 +1395,7 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     $vaultDepts = [
         ['brokerage',  'Brokerage & Company', 0],
         ['hr-payroll', 'HR & Payroll',        1],
+        ['finance',    'Finance',             2],
     ];
     $vdi = $pdo->prepare("INSERT OR IGNORE INTO vault_depts (slug,name,sort_ord) VALUES (?,?,?)");
     foreach ($vaultDepts as $d) { $vdi->execute($d); }
@@ -1407,6 +1408,7 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
         ['vf-hr-employment',            'Employment Agreements',            'dept',   'hr-payroll'],
         ['vf-hr-commission',            'Commission Plans',                 'dept',   'hr-payroll'],
         ['vf-hr-payroll-records',       'Payroll Records (W-2/1099)',       'dept',   'hr-payroll'],
+        ['vf-finance-insurance',        'Insurance',                        'dept',   'finance'],
     ];
     $vfi = $pdo->prepare(
         "INSERT OR IGNORE INTO vault_folders (id,parent_id,name,visibility,dept_slug,created_by,created_at)
