@@ -143,6 +143,12 @@ return [
     // gcal_calendar_id: the calendar's email address or ID.
     'gcal_key_file'    => __DIR__ . '/agentedge-calendar-key.json',
     'gcal_calendar_id' => 'training@innovateonline.com',
+    // gcal_impersonate: REQUIRED for registrations to send native Google invites.
+    // A plain service account gets 403 forbiddenForServiceAccounts when adding
+    // attendees. Authorize the key's client_id for the calendar.events scope under
+    // Workspace admin > Security > API controls > Domain-wide delegation, then set
+    // this to a user with edit access to the calendar(s) above. Leave blank to disable.
+    'gcal_impersonate' => 'training@innovateonline.com',
 
     // Anthropic Claude API — used by the Finance Statement Scanner to categorize
     // spending and generate savings recommendations, and by

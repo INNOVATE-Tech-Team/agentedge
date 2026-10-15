@@ -265,6 +265,9 @@ function renderList(evs) {
               data-event-id="${calEsc(ev.gcal_id || '')}"
               data-event-title="${calEsc(ev.title)}"
               data-event-date="${calEsc(ev.date)}"
+              data-start="${calEsc(ev.start_dt || '')}"
+              data-end="${calEsc(ev.end_dt || '')}"
+              data-location="${calEsc(ev.location || '')}"
               data-rsvped="${ev.rsvped ? '1' : '0'}"
               data-waitlisted="${ev.waitlisted ? '1' : '0'}">${calRsvpLabel(ev)}</button>
             ${(typeof CAL_IS_ADMIN !== 'undefined' && CAL_IS_ADMIN)
@@ -842,6 +845,9 @@ document.getElementById('cal-event-list-body').addEventListener('click', e => {
       event_id:    btn.dataset.eventId,
       event_title: btn.dataset.eventTitle,
       event_date:  btn.dataset.eventDate,
+      start:       btn.dataset.start || '',
+      end:         btn.dataset.end || '',
+      location:    btn.dataset.location || '',
     }),
   })
   .then(r => r.json())
