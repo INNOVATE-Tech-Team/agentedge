@@ -13,13 +13,20 @@ function gcal_access_token(string $key_file): ?string {
 
     $now     = time();
     $header  = _gcal_b64u(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
-    $payload = _gcal_b64u(json_encode([
+    $claims = [
         'iss'   => $key['client_email'],
         'scope' => 'https://www.googleapis.com/auth/calendar.events',
         'aud'   => 'https://oauth2.googleapis.com/token',
         'iat'   => $now,
         'exp'   => $now + 3600,
-    ]));
+    ];
+    // Opt-in domain-wide delegation: config 'gcal_impersonate' => 'training@innovateonline.com'.
+    // Required for the API to let us add attendees / send invites (a plain service
+    // account gets 403 forbiddenForServiceAccounts). Needs the Workspace admin to
+    // authorize this key's client_id for the calendar.events scope first.
+    $sub = function_exists('cfg') ? (cfg()['gcal_impersonate'] ?? '') : '';
+    if ($sub) $claims['sub'] = $sub;
+    $payload = _gcal_b64u(json_encode($claims));
 
     $sig_input = "$header.$payload";
     $pkey = openssl_pkey_get_private($key['private_key']);
