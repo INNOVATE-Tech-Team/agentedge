@@ -1,5 +1,5 @@
 <?php
-// Sends a branded Happy Birthday email (logo + birthday graphic) to every
+// Sends a branded Happy Birthday email (birthday graphic) to every
 // active agent whose birthday is today. Meant to run once a day via crontab:
 //   0 8 * * * /usr/bin/php /path/to/agentedge/cron/send_birthday_emails.php
 // (or `docker exec agentedge php /var/www/html/cron/send_birthday_emails.php`
@@ -53,7 +53,7 @@ function birthday_mc_signers(string $marketCenter): array {
 }
 
 // Standalone shell (no green header bar, no "Sent via AgentEdge" footer) —
-// the card and logo carry the branding.
+// the card itself carries the INNOVATE branding.
 function birthday_email_html(string $firstName, string $marketCenter = ''): string {
     $base = birthday_base_url();
     $name = htmlspecialchars($firstName !== '' ? $firstName : 'there', ENT_QUOTES);
