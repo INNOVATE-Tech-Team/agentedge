@@ -7,9 +7,9 @@ function gcal_access_token(string $key_file): ?string {
         return $cache['token'];
     }
 
-    if (!file_exists($key_file)) return null;
+    if (!file_exists($key_file)) { _gcal_log("key file not found: $key_file"); return null; }
     $key = json_decode(file_get_contents($key_file), true);
-    if (!isset($key['private_key'], $key['client_email'])) return null;
+    if (!isset($key['private_key'], $key['client_email'])) { _gcal_log('key file missing private_key/client_email'); return null; }
 
     $now     = time();
     $header  = _gcal_b64u(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
@@ -23,7 +23,7 @@ function gcal_access_token(string $key_file): ?string {
 
     $sig_input = "$header.$payload";
     $pkey = openssl_pkey_get_private($key['private_key']);
-    if (!$pkey) return null;
+    if (!$pkey) { _gcal_log('openssl could not load private key'); return null; }
     openssl_sign($sig_input, $sig, $pkey, 'SHA256');
     $jwt = $sig_input . '.' . _gcal_b64u($sig);
 
@@ -38,9 +38,9 @@ function gcal_access_token(string $key_file): ?string {
             'ignore_errors' => true,
         ]])
     );
-    if (!$resp) return null;
+    if (!$resp) { _gcal_log('token request got no response'); return null; }
     $d = json_decode($resp, true);
-    if (empty($d['access_token'])) return null;
+    if (empty($d['access_token'])) { _gcal_log('token request rejected: ' . $resp); return null; }
 
     $cache = ['token' => $d['access_token'], 'expires' => $now + (int)($d['expires_in'] ?? 3600)];
     return $cache['token'];
@@ -100,9 +100,9 @@ function gcal_get_event(string $calendar_id, string $token, string $event_id): ?
         'header'        => "Authorization: Bearer $token\r\nAccept: application/json\r\n",
         'ignore_errors' => true,
     ]]));
-    if (!$resp) return null;
-    $d = json_decode($resp, true);
-    return isset($d['id']) ? $d : null;
+    $d = $resp ? json_decode($resp, true) : null;
+    if (!isset($d['id'])) { _gcal_log("get event $event_id failed: " . ($resp ?: 'no response')); return null; }
+    return $d;
 }
 
 // Adds $email as a real attendee on the Calendar event (merges into the existing
@@ -140,9 +140,9 @@ function gcal_update_event_sendupdates(string $calendar_id, string $token, strin
         'content'       => json_encode($patch),
         'ignore_errors' => true,
     ]]));
-    if (!$resp) return null;
-    $d = json_decode($resp, true);
-    return isset($d['id']) ? $d : null;
+    $d = $resp ? json_decode($resp, true) : null;
+    if (!isset($d['id'])) { _gcal_log("patch event $event_id (sendUpdates=$send_updates) failed: " . ($resp ?: 'no response')); return null; }
+    return $d;
 }
 
 function gcal_delete_event(string $calendar_id, string $token, string $event_id): bool {
@@ -160,4 +160,10 @@ function gcal_delete_event(string $calendar_id, string $token, string $event_id)
 
 function _gcal_b64u(string $data): string {
     return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+}
+
+// Calendar sync is best-effort, so failures never reach the user — log them
+// (php error log / docker logs) so a silent "no invite" can be diagnosed.
+function _gcal_log(string $msg): void {
+    error_log('[gcal] ' . $msg);
 }
