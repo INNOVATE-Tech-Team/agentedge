@@ -23,7 +23,6 @@ require_once __DIR__ . '/../lib/company_email.php';
 // The hero image is read from the web root by recipients' mail clients, so it
 // must be reachable without logging in.
 const BIRTHDAY_CARD_PATH = '/assets/birthday-card.png';
-const BIRTHDAY_LOGO_PATH = '/assets/logo.png';
 
 function birthday_base_url(): string {
     return rtrim((string)(cfg()['app_base_url'] ?? 'https://agentedge.innovateonline.com'), '/');
@@ -68,7 +67,6 @@ function birthday_email_html(string $firstName, string $marketCenter = ''): stri
          . '<body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif">'
          . '<div style="max-width:600px;margin:0 auto;padding:24px 16px">'
          . '<div style="background:#ffffff;padding:28px;border-radius:8px;border:1px solid #e0e0e0">'
-         . '<div style="text-align:center;margin:0 0 20px"><img src="' . $base . BIRTHDAY_LOGO_PATH . '" alt="INNOVATE Real Estate" width="220" style="max-width:220px;height:auto;border:0"></div>'
          . '<div style="text-align:center"><img src="' . $base . BIRTHDAY_CARD_PATH . '" alt="Happy Birthday!" width="520" style="max-width:100%;height:auto;border:0;border-radius:6px"></div>'
          . '<p style="color:#444;font-size:16px;line-height:1.7;margin:22px 0 0;text-align:center">Happy Birthday, <strong>' . $name . '</strong>! '
          . 'Everyone at INNOVATE Real Estate is grateful to have you on the team. Wishing you a wonderful day and a great year ahead.</p>'
