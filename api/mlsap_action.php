@@ -133,6 +133,29 @@ try {
             echo json_encode(['ok' => true]);
             break;
         }
+        case 'delete_account': {
+            // Hard delete, including the account's bills and decision history.
+            // Done explicitly in one transaction: local_db() doesn't enable
+            // PRAGMA foreign_keys, so the schema's ON DELETE CASCADE never fires.
+            // Receipt files already in S3 are left in place.
+            $id = (int) ($body['id'] ?? 0);
+            if (!$id) throw new InvalidArgumentException('id required');
+            if (!mlsap_account($db, $id)) throw new InvalidArgumentException('Account not found.');
+            $db->beginTransaction();
+            try {
+                $bills = $db->prepare("DELETE FROM mlsap_bills WHERE account_id=?");
+                $bills->execute([$id]);
+                $decs = $db->prepare("DELETE FROM mlsap_decisions WHERE account_id=?");
+                $decs->execute([$id]);
+                $db->prepare("DELETE FROM mlsap_accounts WHERE id=?")->execute([$id]);
+                $db->commit();
+            } catch (\Throwable $e) {
+                $db->rollBack();
+                throw $e;
+            }
+            echo json_encode(['ok' => true, 'bills_deleted' => $bills->rowCount(), 'decisions_deleted' => $decs->rowCount()]);
+            break;
+        }
         case 'save_bill': {
             $id = !empty($body['id']) ? (int) $body['id'] : null;
             $newId = mlsap_save_bill($db, $body, $id, $by);

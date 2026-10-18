@@ -56,6 +56,10 @@ $marketCenters = $db->query("SELECT slug, name, state_code FROM market_centers W
 .ap th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 .ap td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
 .ap tr.row{cursor:pointer} .ap tr.row:hover td{background:var(--bg)}
+.ap th.sortable{cursor:pointer;user-select:none} .ap th.sortable:hover{color:var(--ink)}
+.ap th.sortable.sorted{color:var(--accent)}
+.ap th.sortable.sorted::after{content:' \25B2';font-size:9px} .ap th.sortable.sorted.desc::after{content:' \25BC'}
+.ap .btn.sm{padding:3px 8px;font-size:12px}
 .ap .num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .ap .muted{color:var(--muted);font-size:12px}
 .ap .ent{font-weight:600}
@@ -128,9 +132,13 @@ $marketCenters = $db->query("SELECT slug, name, state_code FROM market_centers W
         </div>
       </div>
       <table>
-        <thead><tr>
-          <th>Name</th><th>State</th><th>Type</th><th>Annualized</th><th>Agents</th><th>$/Agent</th>
-          <th>Suggested</th><th>Saved</th><th>Last Paid</th><th>Next Due</th><th>Owner</th>
+        <thead><tr id="accounts-head">
+          <th class="sortable" data-sort="name">Name</th><th class="sortable" data-sort="state">State</th>
+          <th class="sortable" data-sort="account_type">Type</th><th class="sortable" data-sort="annualized_cost">Annualized</th>
+          <th class="sortable" data-sort="agent_count">Agents</th><th class="sortable" data-sort="cost_per_agent">$/Agent</th>
+          <th class="sortable" data-sort="suggested_decision">Suggested</th><th class="sortable" data-sort="saved_decision">Saved</th>
+          <th class="sortable" data-sort="last_paid">Last Paid</th><th class="sortable" data-sort="next_due">Next Due</th>
+          <th class="sortable" data-sort="owner_email">Owner</th><th></th>
         </tr></thead>
         <tbody id="accounts-list"></tbody>
       </table>
@@ -268,6 +276,55 @@ function loadAccounts(){
     renderAccounts(d.rows);
   });
 }
+// Click a column header to sort; click again to reverse. Blanks always sort last.
+let ACCOUNT_SORT = { key: null, dir: 1 };
+try { const s = JSON.parse(localStorage.getItem('mlsapAccountSort') || 'null'); if (s && s.key) ACCOUNT_SORT = s; } catch (e) {}
+const NUMERIC_SORT = ['annualized_cost', 'agent_count', 'cost_per_agent'];
+function sortAccounts(rows){
+  const k = ACCOUNT_SORT.key;
+  if (!k) return rows;
+  const blank = v => v === null || v === undefined || v === '';
+  return rows.slice().sort((a, b) => {
+    const va = a[k], vb = b[k];
+    if (blank(va) && blank(vb)) return 0;
+    if (blank(va)) return 1;
+    if (blank(vb)) return -1;
+    const c = NUMERIC_SORT.includes(k) ? Number(va) - Number(vb)
+      : String(va).localeCompare(String(vb), undefined, {sensitivity: 'base', numeric: true});
+    return c * ACCOUNT_SORT.dir;
+  });
+}
+document.querySelectorAll('#accounts-head th.sortable').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.sort;
+  ACCOUNT_SORT = ACCOUNT_SORT.key === k ? { key: k, dir: -ACCOUNT_SORT.dir } : { key: k, dir: NUMERIC_SORT.includes(k) ? -1 : 1 };
+  try { localStorage.setItem('mlsapAccountSort', JSON.stringify(ACCOUNT_SORT)); } catch (e) {}
+  renderAccounts(ACCOUNTS_CACHE);
+}));
+function deleteAccount(id){
+  const a = ACCOUNTS_CACHE.find(x => x.id == id) || {};
+  const n = a.bill_count || 0;
+  const msg = `Permanently delete "${a.name || 'this account'}"?` +
+    (n ? `\n\nThis also deletes its ${n} bill${n === 1 ? '' : 's'} and decision history.` : '') +
+    `\n\nThis cannot be undone. To hide it but keep its history, open the account and use Deactivate instead.`;
+  if (!confirm(msg)) return;
+  api({action: 'delete_account', id}).then(d => {
+    if (!d.ok) { flash(d.error, 'err'); return; }
+    flash(`Deleted "${a.name || 'account'}"` + (d.bills_deleted ? ` and ${d.bills_deleted} bill(s).` : '.'), 'ok');
+    document.getElementById('account-detail-card').classList.add('hide');
+    loadAccounts();
+    loadDashboard();
+  });
+}
+function deactivateAccount(id){
+  const a = ACCOUNTS_CACHE.find(x => x.id == id) || {};
+  if (!confirm(`Deactivate "${a.name || 'this account'}"? It's hidden from the list (tick "Include inactive" to see it) but its bills and history are kept.`)) return;
+  api({action: 'deactivate_account', id}).then(d => {
+    if (!d.ok) { flash(d.error, 'err'); return; }
+    flash('Account deactivated.', 'ok');
+    document.getElementById('account-detail-card').classList.add('hide');
+    loadAccounts();
+  });
+}
 function decisionPill(dec){
   if (!dec) return '<span class="muted">—</span>';
   const cls = dec === 'Keep' ? 'p-green' : dec === 'Keep lean' ? 'p-gray' : dec === 'Review' ? 'p-yellow' : 'p-red';
@@ -275,7 +332,12 @@ function decisionPill(dec){
 }
 function renderAccounts(rows){
   const tbody = document.getElementById('accounts-list');
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty">No accounts match.</td></tr>'; return; }
+  document.querySelectorAll('#accounts-head th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === ACCOUNT_SORT.key);
+    th.classList.toggle('desc', th.dataset.sort === ACCOUNT_SORT.key && ACCOUNT_SORT.dir < 0);
+  });
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="12" class="empty">No accounts match.</td></tr>'; return; }
+  rows = sortAccounts(rows);
   tbody.innerHTML = rows.map(a => `
     <tr class="row" data-id="${a.id}">
       <td><div class="ent">${h(a.name)}</div><div class="muted">${h(a.market_center || 'Not mapped')}</div></td>
@@ -289,9 +351,13 @@ function renderAccounts(rows){
       <td>${h(a.last_paid || '—')}</td>
       <td>${h(a.next_due || '—')}</td>
       <td class="muted">${h(a.owner_email || '—')}</td>
+      <td><button class="btn danger sm js-del" type="button" title="Delete account">Delete</button></td>
     </tr>
   `).join('');
-  tbody.querySelectorAll('tr.row').forEach(tr => tr.addEventListener('click', () => openAccountDetail(parseInt(tr.dataset.id))));
+  tbody.querySelectorAll('tr.row').forEach(tr => tr.addEventListener('click', (e) => {
+    if (e.target.closest('.js-del')) { e.stopPropagation(); deleteAccount(parseInt(tr.dataset.id)); return; }
+    openAccountDetail(parseInt(tr.dataset.id));
+  }));
 }
 ['f-state','f-type','f-decision','f-code','f-all'].forEach(id => document.getElementById(id).addEventListener('change', loadAccounts));
 
@@ -374,7 +440,10 @@ function openAccountDetail(id){
     const decRows = d.decisions.map(x => `<tr><td>${h(x.decision)}</td><td>${h(x.reason)}</td><td>${h(x.decided_by)}</td><td>${h(x.decided_at)}</td></tr>`).join('')
       || '<tr><td colspan="4" class="empty">No decisions recorded.</td></tr>';
     card.innerHTML = `
-      <div class="card-h"><h2>${h(a.name)}</h2><button class="btn" id="btn-close-detail" type="button">Close</button></div>
+      <div class="card-h"><h2>${h(a.name)}</h2><div class="tools">
+        ${a.active == 1 ? '<button class="btn" id="btn-deactivate-account" type="button">Deactivate</button>' : '<span class="pill p-gray">Inactive</span>'}
+        <button class="btn danger" id="btn-delete-account" type="button">Delete</button>
+        <button class="btn" id="btn-close-detail" type="button">Close</button></div></div>
       <div class="detail">
         ${accountFormHtml(a)}
         <div style="margin-top:20px;border-top:1px solid var(--line);padding-top:16px">
@@ -394,6 +463,9 @@ function openAccountDetail(id){
     `;
     bindAccountForm(() => openAccountDetail(id));
     document.getElementById('btn-close-detail').addEventListener('click', () => card.classList.add('hide'));
+    document.getElementById('btn-delete-account').addEventListener('click', () => deleteAccount(id));
+    const deact = document.getElementById('btn-deactivate-account');
+    if (deact) deact.addEventListener('click', () => deactivateAccount(id));
     document.getElementById('btn-save-decision').addEventListener('click', () => {
       api({action:'save_decision', account_id: id, decision: document.getElementById('dec-value').value, reason: document.getElementById('dec-reason').value})
         .then(r => { if (r.ok) { flash('Decision saved.', 'ok'); openAccountDetail(id); loadAccounts(); } else flash(r.error, 'err'); });
