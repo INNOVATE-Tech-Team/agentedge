@@ -62,6 +62,22 @@ $stateCode         = trim($body['state_code']           ?? '');
 $licenseExp        = trim($body['license_exp']          ?? '');
 $canonicalAgentId  = isset($body['canonical_agent_id']) ? (string)$body['canonical_agent_id'] : null;
 
+// Already an active roster member? Then there is nothing to onboard. Without
+// this guard, adding an existing agent to the Advantage team (or a roster
+// sync that does so in bulk) opens a fresh onboarding queue entry and fires
+// the "added" notice, step-assignee emails and an intake request to the
+// agent, because queue_onboarding_agent() only dedupes against *active*
+// queue rows, not completed onboardings. Inactive (removed) roster rows still
+// go through normal onboarding, so rehires are unaffected.
+$onRoster = $pdo->prepare(
+    "SELECT id FROM innovate_roster WHERE active = 1 AND lower(email) = lower(?) LIMIT 1"
+);
+$onRoster->execute([$email]);
+$rosterId = $onRoster->fetchColumn();
+if ($rosterId !== false) {
+    json_out(['ok'=>true,'id'=>null,'queue_url'=>null,'already_on_roster'=>true,'roster_id'=>(int)$rosterId]);
+}
+
 $result   = queue_onboarding_agent($pdo, $email, $name, [['market_center' => $mc, 'state_code' => $stateCode]], $canonicalAgentId, $addedBy, $start, $sponsor, $role, $notes, '', $phone);
 $queueId  = $result['id'];
 $queueUrl = $base . '/onboarding.php?open=' . $queueId;
