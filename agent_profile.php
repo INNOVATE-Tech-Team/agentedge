@@ -798,7 +798,8 @@ window.switchApTab = function (t) {
 
 // ── Headshots ────────────────────────────────────────────────────────────────
 if (document.getElementById('hs-manager')) {
-  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL });
+  // allowSmall: admins can override the 400×400 photo minimum.
+  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL, allowSmall: <?= $isAdmin ? 'true' : 'false' ?> });
 }
 
 // ── Documents tab ────────────────────────────────────────────────────────────

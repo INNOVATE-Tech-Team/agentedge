@@ -12,9 +12,11 @@
 // headshot's source photo included, so its uncropped version is always
 // available); the headshot crop is a separate file (lib/headshot_select.php).
 //
-//   HeadshotManager.mount(containerEl, { email: 'agent@x.com' })
+//   HeadshotManager.mount(containerEl, { email: 'agent@x.com', allowSmall: true })
 //
-// `email` is only needed when staff manage another agent's photos. Needs
+// `email` is only needed when staff manage another agent's photos.
+// `allowSmall` (admins only; api/intake.php enforces that) offers "Use this
+// photo anyway" when a headshot photo is under the 400×400 minimum. Needs
 // assets/headshot-crop.js loaded first. Talks to api/intake.php
 // (upload / set_headshot / delete_file / headshot / headshot_crop).
 (function () {
@@ -242,32 +244,44 @@
         });
     }
 
-    function uploadOne(file) {
-      return HeadshotCrop.checkFile(file)
+    function uploadOne(file, allowSmall) {
+      return HeadshotCrop.checkFile(file, { allowSmall: allowSmall })
         .then(function () { return prepareUpload(file); })
         .then(function (prepared) {
           var fd = new FormData();
           fd.append('headshot', prepared, prepared.name || file.name);
+          if (allowSmall) fd.append('allow_small', '1');
           return post('upload', fd);
         });
     }
 
+    // A headshot error in headMsg, plus "Use this photo anyway" for an
+    // admin when the photo is just under the size minimum.
+    function headError(err, retrySmall) {
+      sayTo(headMsg, HeadshotCrop.errorText(err), true);
+      var bypass = opts.allowSmall && retrySmall && HeadshotCrop.bypassButton(err, retrySmall);
+      if (bypass) headMsg.appendChild(bypass);
+    }
+
     // Frame one stored photo as the headshot (reopening the saved framing
     // when it's already the headshot's source).
-    function chooseHeadshot(key) {
+    function chooseHeadshot(key, allowSmall) {
       var hs = state.headshot;
       var rect = hs && hs.source_key === key ? hs.crop_rect : null;
       sayTo(headMsg, '');
-      return HeadshotCrop.crop(fullUrl(key), rect).then(function (result) {
+      return HeadshotCrop.crop(fullUrl(key), rect, { allowSmall: allowSmall }).then(function (result) {
         sayTo(headMsg, 'Saving headshot…');
         var fd = new FormData();
         fd.append('key', key);
         fd.append('crop', result.blob, 'headshot.jpg');
         fd.append('rect', JSON.stringify(result.rect));
+        if (allowSmall) fd.append('allow_small', '1');
         return post('set_headshot', fd);
       }).then(function () {
         return load().then(function () { flashTo(headMsg, 'Headshot saved. The website picks it up overnight.'); });
-      }).catch(function (err) { sayTo(headMsg, HeadshotCrop.errorText(err), true); });
+      }).catch(function (err) {
+        headError(err, allowSmall ? null : function () { chooseHeadshot(key, true); });
+      });
     }
 
     function deletePhoto(key, isHs) {
@@ -288,10 +302,12 @@
       var file = (headUpload.input.files || [])[0];
       headUpload.input.value = '';
       if (!file) return;
-      sayTo(headMsg, 'Uploading…');
-      uploadOne(file)
-        .then(function (res) { return load().then(function () { sayTo(headMsg, ''); return chooseHeadshot(res.file_key); }); })
-        .catch(function (err) { sayTo(headMsg, HeadshotCrop.errorText(err), true); });
+      (function attempt(allowSmall) {
+        sayTo(headMsg, 'Uploading…');
+        uploadOne(file, allowSmall)
+          .then(function (res) { return load().then(function () { sayTo(headMsg, ''); return chooseHeadshot(res.file_key, allowSmall); }); })
+          .catch(function (err) { headError(err, allowSmall ? null : function () { attempt(true); }); });
+      })(false);
     });
 
     // Marketing photos: uploaded one at a time, never cropped. A too-small

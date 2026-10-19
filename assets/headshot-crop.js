@@ -22,8 +22,15 @@
 // Never upscales: output is the framed area's real pixel size, capped at
 // OUTPUT_MAX, and zoom is limited so the frame never drops below MIN_SIDE
 // source pixels (api/intake.php enforces the same minimum server-side).
+//
+// Admin bypass: pick/crop/checkFile take { allowSmall: true } to accept a
+// photo under MIN_SIDE (down to BYPASS_FLOOR), framed at its full short
+// side with a warning. A too-small error carries .hscTooSmall so callers
+// can offer that retry (see bypassButton). api/intake.php only honours
+// the matching allow_small flag from admins.
 (function () {
   var MIN_SIDE = 400;
+  var BYPASS_FLOOR = 100;
   var OUTPUT_MAX = 800;
 
   function userError(message) {
@@ -66,25 +73,34 @@
   }
 
   function tooSmall(W, H) {
-    return userError('This photo is only ' + W + '×' + H + ' pixels. Please choose a photo at least ' +
+    var e = userError('This photo is only ' + W + '×' + H + ' pixels. Please choose a photo at least ' +
       MIN_SIDE + '×' + MIN_SIDE + ' (any recent phone photo works).');
+    // Above the floor, an admin may still choose to use it (bypassButton).
+    if (Math.min(W, H) >= BYPASS_FLOOR) e.hscTooSmall = { width: W, height: H };
+    return e;
   }
 
-  function checkFile(file) {
+  // Usable at MIN_SIDE and up, and down to BYPASS_FLOOR with { allowSmall: true }.
+  function bigEnough(W, H, opts) {
+    var side = Math.min(W, H);
+    return side >= MIN_SIDE || (!!(opts && opts.allowSmall) && side >= BYPASS_FLOOR);
+  }
+
+  function checkFile(file, opts) {
     if (!file || !/^image\//.test(file.type)) return Promise.reject(userError('Please choose an image file.'));
     if (file.size > 10 * 1024 * 1024) return Promise.reject(userError('"' + file.name + '" is over the 10 MB limit.'));
     var url = URL.createObjectURL(file);
     return loadImage(url).then(function (img) {
       URL.revokeObjectURL(url);
-      if (Math.min(img.naturalWidth, img.naturalHeight) < MIN_SIDE) throw tooSmall(img.naturalWidth, img.naturalHeight);
+      if (!bigEnough(img.naturalWidth, img.naturalHeight, opts)) throw tooSmall(img.naturalWidth, img.naturalHeight);
     }, function (e) { URL.revokeObjectURL(url); throw e; });
   }
 
-  function crop(src, initialRect) {
+  function crop(src, initialRect, opts) {
     injectStyles();
     return loadImage(src).then(function (img) {
       var W = img.naturalWidth, H = img.naturalHeight;
-      if (Math.min(W, H) < MIN_SIDE) throw tooSmall(W, H);
+      if (!bigEnough(W, H, opts)) throw tooSmall(W, H);
       return openModal(img, W, H, initialRect || null);
     });
   }
@@ -92,12 +108,12 @@
   // Single-shot pick-and-crop from a local File, with no framing to persist
   // (backoffice_agents.php's admin bulk upload crops immediately rather
   // than going through the photo manager). Resolves with just the Blob.
-  function pick(file) {
+  function pick(file, opts) {
     if (!file || !/^image\//.test(file.type)) {
       return Promise.reject(userError('Please choose an image file.'));
     }
     var url = URL.createObjectURL(file);
-    return crop(url, null)
+    return crop(url, null, opts)
       .then(function (result) { return result.blob; })
       .finally(function () { URL.revokeObjectURL(url); });
   }
@@ -128,7 +144,9 @@
       // image's top-left corner relative to the square view.
       var V = view.clientWidth;
       var minS = V / Math.min(W, H);          // image just covers the square
-      var maxS = V / MIN_SIDE;                // frame never smaller than MIN_SIDE source px
+      // Frame never smaller than MIN_SIDE source px -- or, for a photo
+      // under MIN_SIDE (admin bypass), than the photo's own short side.
+      var maxS = V / Math.min(MIN_SIDE, Math.min(W, H));
       var s, x, y;
       if (initialRect && initialRect.size > 0) {
         // Reopen with the framing saved last time.
@@ -144,7 +162,8 @@
       }
 
       if (maxS <= minS * 1.001) slider.disabled = true;
-      if (Math.min(W, H) < 600) warn.textContent = 'This photo is on the small side. A higher-resolution photo will look sharper.';
+      if (Math.min(W, H) < MIN_SIDE) warn.textContent = 'This photo is only ' + W + '×' + H + ' pixels, so it will look soft on the website. Replace it with a larger one when you can.';
+      else if (Math.min(W, H) < 600) warn.textContent = 'This photo is on the small side. A higher-resolution photo will look sharper.';
 
       function sliderFor(scale) {
         return String(maxS > minS ? Math.round(1000 * Math.log(scale / minS) / Math.log(maxS / minS)) : 0);
@@ -258,5 +277,22 @@
     return err && err.hscUser ? err.message : 'Network error.';
   }
 
-  window.HeadshotCrop = { pick: pick, crop: crop, checkFile: checkFile, errorText: errorText, userError: userError, MIN_SIDE: MIN_SIDE };
+  // For an admin: a "Use this photo anyway" button to show next to a
+  // too-small error, or null when the bypass can't fix the error. onUse
+  // retries the same action with { allowSmall: true }.
+  function bypassButton(err, onUse) {
+    if (!err || !err.hscTooSmall) return null;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Use this photo anyway';
+    b.title = 'Admins only: accept a photo under ' + MIN_SIDE + '×' + MIN_SIDE + '. It will look soft on the website.';
+    b.style.cssText = 'margin-left:8px;border:1px solid #b26a00;background:#fff;color:#b26a00;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer';
+    b.addEventListener('click', function () { b.disabled = true; onUse(); });
+    return b;
+  }
+
+  window.HeadshotCrop = {
+    pick: pick, crop: crop, checkFile: checkFile, errorText: errorText, userError: userError,
+    bypassButton: bypassButton, MIN_SIDE: MIN_SIDE, BYPASS_FLOOR: BYPASS_FLOOR,
+  };
 })();

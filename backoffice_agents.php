@@ -887,27 +887,39 @@ $missingCount = count($missingAgents);
       .catch(function () { msg.textContent = 'Network error.'; });
   };
 
+  // Admins get a "Use this photo anyway" button when a photo is under the
+  // 400×400 minimum (api/intake.php only accepts allow_small from admins).
+  var CAN_BYPASS_PHOTO_MIN = <?= $isAdmin ? 'true' : 'false' ?>;
+
   window.uploadHeadshot = function (email, idx, inputEl) {
     var file = inputEl.files[0];
     if (!file) return;
     var msg = document.getElementById('hs-msg-' + idx);
     if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
     msg.textContent = '';
-    HeadshotCrop.pick(file)
-      .then(function (blob) {
-        msg.textContent = 'Uploading…';
-        var fd = new FormData();
-        fd.append('headshot', blob, 'headshot.jpg');
-        fd.append('email', email);
-        return fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
-          .then(function (r) { return r.json(); });
-      })
-      .then(function (res) {
-        if (res.ok) { location.reload(); }
-        else { msg.textContent = res.error || 'Upload failed.'; }
-      })
-      .catch(function (err) { msg.textContent = HeadshotCrop.errorText(err); });
     inputEl.value = '';
+    (function attempt(allowSmall) {
+      HeadshotCrop.pick(file, { allowSmall: allowSmall })
+        .then(function (blob) {
+          msg.textContent = 'Uploading…';
+          var fd = new FormData();
+          fd.append('headshot', blob, 'headshot.jpg');
+          fd.append('email', email);
+          if (allowSmall) fd.append('allow_small', '1');
+          return fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
+            .then(function (r) { return r.json(); });
+        })
+        .then(function (res) {
+          if (res.ok) { location.reload(); }
+          else { msg.textContent = res.error || 'Upload failed.'; }
+        })
+        .catch(function (err) {
+          msg.textContent = HeadshotCrop.errorText(err);
+          var bypass = CAN_BYPASS_PHOTO_MIN && !allowSmall
+            && HeadshotCrop.bypassButton(err, function () { attempt(true); });
+          if (bypass) msg.appendChild(bypass);
+        });
+    })(false);
   };
 
   window.deleteHeadshot = function (key) {

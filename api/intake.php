@@ -187,6 +187,15 @@ $postAction = $_GET['action'] ?? ($_POST['action'] ?? '');
 // headshots up to ~480px wide, so anything smaller looks blurry; the photo
 // manager (assets/headshot-manager.js) checks the same floor before upload.
 const HEADSHOT_MIN_SIDE  = 400;
+// Admins can override HEADSHOT_MIN_SIDE ("Use this photo anyway", which
+// sends allow_small=1) for an agent whose only photo is small, down to this
+// floor. Agents uploading their own photos can't.
+const HEADSHOT_BYPASS_FLOOR = 100;
+
+// The smallest shortest side this request may upload.
+function headshot_min_side(bool $isAdmin): int {
+    return ($isAdmin && !empty($_POST['allow_small'])) ? HEADSHOT_BYPASS_FLOOR : HEADSHOT_MIN_SIDE;
+}
 // Uploaded originals are kept for marketing use, capped at this size. The
 // photo manager already scales and re-encodes in the browser (which also
 // applies phone rotation correctly); this only catches raw uploads.
@@ -293,9 +302,10 @@ if ($postAction === 'upload') {
     if (!$dims) {
         intake_json_out(['ok' => false, 'error' => 'Could not read that image. Please choose a JPEG or PNG photo.'], 400);
     }
-    if (min($dims[0], $dims[1]) < HEADSHOT_MIN_SIDE) {
+    $minSide = headshot_min_side($isAdmin);
+    if (min($dims[0], $dims[1]) < $minSide) {
         intake_json_out(['ok' => false, 'error' => 'This photo is only ' . $dims[0] . '×' . $dims[1]
-            . ' pixels. Please choose a photo at least ' . HEADSHOT_MIN_SIDE . '×' . HEADSHOT_MIN_SIDE . '.'], 400);
+            . ' pixels. Please choose a photo at least ' . $minSide . '×' . $minSide . '.'], 400);
     }
     $cnt = $pdo->prepare("SELECT COUNT(*) FROM agent_intake_files WHERE agent_email=?");
     $cnt->execute([$targetEmail]);
@@ -345,9 +355,10 @@ if ($postAction === 'set_headshot') {
     if (!in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true) || !$dims) {
         intake_json_out(['ok' => false, 'error' => 'Could not read the cropped image'], 400);
     }
-    // The cropper never frames less than HEADSHOT_MIN_SIDE source pixels;
-    // allow a little rounding slack.
-    if (min($dims[0], $dims[1]) < HEADSHOT_MIN_SIDE - 10) {
+    // The cropper never frames less than HEADSHOT_MIN_SIDE source pixels
+    // (or the whole photo, under an admin override); allow a little
+    // rounding slack.
+    if (min($dims[0], $dims[1]) < headshot_min_side($isAdmin) - 10) {
         intake_json_out(['ok' => false, 'error' => 'The cropped headshot is too small. Please zoom out a little.'], 400);
     }
 
