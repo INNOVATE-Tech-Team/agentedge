@@ -116,6 +116,9 @@ function local_db(): PDO {
     // reliably apply go here instead: cheap, always-run, fully idempotent
     // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
     local_db_ensure_onboard_stages($pdo);
+    // Polls tables + the idempotent first-poll seed (lib/polls_schema.php).
+    require_once __DIR__ . '/lib/polls_schema.php';
+    polls_ensure_schema($pdo);
     $pdo->exec("CREATE TABLE IF NOT EXISTS oh_notify_prefs (
         email            TEXT PRIMARY KEY,
         notify_requested INTEGER NOT NULL DEFAULT 1,

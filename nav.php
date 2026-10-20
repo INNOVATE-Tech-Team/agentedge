@@ -205,6 +205,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_tickets',                'label'=>'Tickets',             'href'=>'backoffice_tickets.php',        'dept'=>'Technology'],
         ['key'=>'admin_support_depts',       'label'=>'Ticket Departments',  'href'=>'admin_support_depts.php',       'dept'=>'Technology'],
         ['key'=>'admin_who_does_what',       'label'=>'Who Does What',       'href'=>'admin_who_does_what.php',       'dept'=>'Technology'],
+        ['key'=>'admin_polls',               'label'=>'Polls',               'href'=>'admin_polls.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'bo_referral',               'label'=>'Referral',            'href'=>'backoffice_referral.php',       'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'admin_roles',               'label'=>'Role Assignments',    'href'=>'admin_roles.php',               'dept'=>'Technology', 'superOnly'=>true],
         ['key'=>'teams',                     'label'=>'Teams',               'href'=>'teams.php',                     'dept'=>'Technology', 'superOnly'=>true],
