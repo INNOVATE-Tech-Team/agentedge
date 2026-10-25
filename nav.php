@@ -136,6 +136,12 @@ function agent_assets_items(): array {
         // own FUB book -- coastline-server /public/agentedge/ai/*. Same
         // own-book gate as buyback (can_use_buyback). Added 2026-09-30.
         ['key' => 'ai_agents',          'label' => 'My AI Agents',            'href' => 'ai_agents.php'],
+        // Scheduling: every agent gets a personal booking page at
+        // meet.innovateonline.com/{handle}. No gate — available to all agents.
+        ['key' => 'scheduling',         'label' => 'My Scheduling',           'href' => 'scheduling.php'],
+        // Recruiting Swag Box: agent requests a branded kit shipped to them
+        // for handing out to recruiting prospects.
+        ['key' => 'swag_box',           'label' => 'Recruiting Swag Box',     'href' => 'swag_box.php'],
     ];
 }
 

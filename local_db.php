@@ -4409,4 +4409,18 @@ function _innovate_roster_seed(): array {
         ['Darren S Woodard',             'SC','Murrells Inlet','2026-06-30'],
         ['Kris Fuller',                  'SC','Murrells Inlet',''],
     ];
+
+    // ── Recruiting Swag Box orders ─────────────────────────────────────────────
+    $pdo->exec("CREATE TABLE IF NOT EXISTS swag_box_orders (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        email         TEXT    NOT NULL,
+        agent_name    TEXT    NOT NULL DEFAULT '',
+        address_line1 TEXT    NOT NULL DEFAULT '',
+        address_line2 TEXT    NOT NULL DEFAULT '',
+        city          TEXT    NOT NULL DEFAULT '',
+        state         TEXT    NOT NULL DEFAULT '',
+        zip           TEXT    NOT NULL DEFAULT '',
+        ordered_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_swag_box_orders_email ON swag_box_orders(email)");
 }
