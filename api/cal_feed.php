@@ -95,11 +95,15 @@ function ics_escape(string $s): string {
 function ics_date(string $ymd): string {
     return str_replace('-', '', substr($ymd, 0, 10));
 }
+// Google sends local wall-clock time plus an offset (e.g. 09:30:00-05:00).
+// Convert to the real UTC instant; a value with no offset is Eastern (DST-aware).
 function ics_datetime(string $dt): string {
-    if (preg_match('/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/', $dt, $m)) {
-        return sprintf('%04d%02d%02dT%02d%02d%02dZ', $m[1],$m[2],$m[3],$m[4],$m[5],$m[6]);
+    try {
+        $d = new DateTime($dt, new DateTimeZone('America/New_York'));
+    } catch (\Exception $e) {
+        return str_replace(['-', ':'], '', $dt);
     }
-    return str_replace(['-', ':'], '', $dt);
+    return $d->setTimezone(new DateTimeZone('UTC'))->format('Ymd\THis\Z');
 }
 
 // --- Output ICS ---
@@ -116,6 +120,8 @@ echo "CALSCALE:GREGORIAN\r\n";
 echo "METHOD:PUBLISH\r\n";
 echo "X-WR-CALNAME:INNOVATE Company Calendar\r\n";
 echo "X-WR-CALDESC:Company and training events from AgentEdge\r\n";
+echo "X-WR-TIMEZONE:America/New_York\r\n";
+$dtStamp = gmdate('Ymd\THis\Z');
 
 foreach ($allEvents as $idx => $ev) {
     $title    = $ev['title']    ?? '';
@@ -128,6 +134,7 @@ foreach ($allEvents as $idx => $ev) {
 
     echo "BEGIN:VEVENT\r\n";
     echo "UID:" . ics_escape($uid) . "\r\n";
+    echo "DTSTAMP:$dtStamp\r\n";
 
     if ($isAllDay) {
         $dtStart = ics_date($startDt);
