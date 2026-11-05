@@ -458,9 +458,7 @@ $intakeMarketCenters = local_db()
         if (res.ok) {
           msg.textContent = 'Saved ✓';
           updateProgress();
-          if (res.submitted_at) {
-            showSubmittedBadge(res.submitted_at);
-          }
+          showProfileStatus(res.profile_status, res.submitted_at);
           setTimeout(function() { msg.textContent = ''; }, 3000);
         } else {
           msg.textContent = res.error || 'Save failed.';
@@ -470,6 +468,25 @@ $intakeMarketCenters = local_db()
         msg.textContent = 'Network error.';
       });
     });
+
+    // Existing agents: Complete / Incomplete (computed by the server).
+    // Agents actively onboarding: the unchanged "Submitted on <date>" badge.
+    function showProfileStatus(ps, submittedAt) {
+      if (ps && ps.track === 'existing') {
+        if (ps.status === 'complete') {
+          const badge = el('submitted-badge');
+          badge.innerHTML = '<span class="intake-submitted-badge">&#10003; Profile complete</span>';
+          badge.hidden = false;
+          el('progress-wrap').hidden = true;
+        } else {
+          el('submitted-badge').hidden = true;
+          el('progress-wrap').hidden = false;
+          updateProgress();
+        }
+        return;
+      }
+      if (submittedAt) showSubmittedBadge(submittedAt); else updateProgress();
+    }
 
     function showSubmittedBadge(dateStr) {
       const badge = el('submitted-badge');
@@ -484,11 +501,7 @@ $intakeMarketCenters = local_db()
       .then(function(data) {
         setFields(data.intake);
         renderAdditionalLicenses(data.additional_licenses);
-        if (data.intake && data.intake.submitted_at) {
-          showSubmittedBadge(data.intake.submitted_at);
-        } else {
-          updateProgress();
-        }
+        showProfileStatus(data.profile_status, data.intake && data.intake.submitted_at);
       })
       .catch(function() { updateProgress(); });
   })();

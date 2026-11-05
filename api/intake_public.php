@@ -4,6 +4,7 @@ require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/notifications.php';
 require_once __DIR__ . '/../lib/crypto.php';
 require_once __DIR__ . '/../lib/onboarding.php';
+require_once __DIR__ . '/../lib/agent_profile.php'; // ONBOARDING_REQUIRED_FIELDS (already present in production's copy)
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -68,11 +69,9 @@ try {
     }
 
     // ── Required fields check ─────────────────────────────────────────────────
-    $required = [
-        'full_name', 'phone', 'license_number', 'nar_number',
-        'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
-        'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
-    ];
+    // Unchanged 14-field new-agent rule, now from the shared definition in
+    // lib/agent_profile.php (same list, same order).
+    $required = array_keys(ONBOARDING_REQUIRED_FIELDS);
     foreach ($required as $field) {
         if ($fv($field) === '') {
             http_response_code(400);

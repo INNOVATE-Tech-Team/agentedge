@@ -104,13 +104,21 @@ function db_safe(): ?mysqli {
     if ($failed) return null;
     if ($m === null) {
         $c = cfg();
-        $m = @new mysqli($c['db_host'], $c['db_user'], $c['db_pass'], $c['db_name']);
-        if ($m->connect_errno) {
+        // PHP 8.1+ makes mysqli throw mysqli_sql_exception on a failed
+        // connect (the @ does not suppress exceptions), so the "return null
+        // when Perfex is down" contract this function exists for was never
+        // actually honoured — a CRM outage became a fatal error mid-request
+        // (e.g. after an intake form had already been saved). Catch it.
+        try {
+            $m = @new mysqli($c['db_host'], $c['db_user'], $c['db_pass'], $c['db_name']);
+            if ($m->connect_errno) { $failed = true; $m = null; return null; }
+            $m->set_charset('utf8mb4');
+        } catch (\mysqli_sql_exception $e) {
+            error_log('db_safe: Perfex unavailable: ' . $e->getMessage());
             $failed = true;
             $m = null;
             return null;
         }
-        $m->set_charset('utf8mb4');
     }
     return $m;
 }
@@ -118,16 +126,24 @@ function db_safe(): ?mysqli {
 function db_query_safe(string $sql, array $params = []): array {
     $conn = db_safe();
     if (!$conn) return [];
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) return [];
-    if ($params) {
-        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+    // Same reason as db_safe(): a query failure (connection dropped mid-
+    // request, timeout, missing table) throws under PHP 8.1+ — degrade to
+    // "no rows" as callers of the *_safe helpers expect.
+    try {
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return [];
+        if ($params) {
+            $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+        $stmt->close();
+        return $rows;
+    } catch (\mysqli_sql_exception $e) {
+        error_log('db_query_safe: Perfex query failed: ' . $e->getMessage());
+        return [];
     }
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $rows = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
-    $stmt->close();
-    return $rows;
 }
 
 function db_one_safe(string $sql, array $params = []): ?array {

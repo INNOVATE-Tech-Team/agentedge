@@ -457,11 +457,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <?php endif; ?>
 
           <div class="detail-actions">
-            <?php if (!empty($a['submitted'])): ?>
-              <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? fmt_dt_et($a['submitted_at'], 'M j, Y') : '—') ?></span>
-            <?php else: ?>
-              <span style="font-size:11px;color:var(--faint)">Last updated <?= h($a['updated_at'] ? fmt_dt_et($a['updated_at'], 'M j, Y') : '—') ?></span>
-            <?php endif; ?>
+            <?php $ps = profile_status($a['email']); $updated = $a['updated_at'] ? fmt_dt_et($a['updated_at'], 'M j, Y') : '—'; $isSubmitted = !empty($a['submitted']); ?>
+            <?= profile_status_line_html($ps, $updated) ?>
             <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
             <?php if ($isAdmin): ?>
             <button type="button" class="btn-detail-link" onclick="openEditModal()">Edit Profile →</button>

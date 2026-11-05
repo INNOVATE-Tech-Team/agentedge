@@ -6,6 +6,7 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/local_db.php';
+require_once __DIR__ . '/lib/agent_profile.php';
 require_login();
 require_admin_page();
 
@@ -29,7 +30,7 @@ foreach ($rosterRows as $r) {
 
 // Profile (agent_intake) + start date / birthday (agent_extra), keyed both ways.
 $intakeRows = local_db()->query(
-    "SELECT i.email, i.full_name, i.birthday AS intake_birthday, i.submitted,
+    "SELECT i.*, i.birthday AS intake_birthday,
             e.hire_date, e.birthday AS extra_birthday
      FROM agent_intake i
      LEFT JOIN agent_extra e ON e.email = i.email"
@@ -57,11 +58,22 @@ foreach ($byRosterName as $key => $r) {
            : ($intakeByName[$key] ?? null);
 
     if ($match) {
-        $profileStatus = !empty($match['submitted']) ? 'Submitted' : 'Draft';
+        // Shared rules (lib/agent_profile.php): onboarding Draft/Submitted,
+        // existing agents Complete/Incomplete.
+        $ps = profile_status_from_row($match);
+        $profileStatus = $ps['label'];
+        $missingFields = implode('; ', array_column($ps['missing'], 'label'));
+        $birthYearUnknown = birthday_year_unknown($match['intake_birthday'] ?? '');
+        $needsReview = $ps['needs_review'];
+        $intakeHist = $ps['intake_submitted'] ? 'Yes' : 'No';
         $hireDate = trim($match['hire_date'] ?? '');
         $hasBirthday = trim($match['extra_birthday'] ?? '') !== '' || trim($match['intake_birthday'] ?? '') !== '';
     } else {
         $profileStatus = 'Missing';
+        $missingFields = '';
+        $birthYearUnknown = false;
+        $needsReview = false;
+        $intakeHist = '';
         $extra = $extraByEmail[$email] ?? null;
         $hireDate = trim($extra['hire_date'] ?? '');
         $hasBirthday = trim($extra['birthday'] ?? '') !== '';
@@ -69,7 +81,7 @@ foreach ($byRosterName as $key => $r) {
 
     $missingStart    = $hireDate === '';
     $missingBirthday = !$hasBirthday;
-    $missingProfile  = $profileStatus !== 'Submitted';
+    $missingProfile  = !in_array($profileStatus, ['Submitted', 'Complete'], true) || $needsReview;
 
     if (!$missingStart && !$missingBirthday && !$missingProfile) continue; // nothing to flag
 
@@ -81,6 +93,10 @@ foreach ($byRosterName as $key => $r) {
         'missing_start'    => $missingStart ? 'Yes' : '',
         'missing_birthday' => $missingBirthday ? 'Yes' : '',
         'profile_status'   => $profileStatus,
+        'missing_fields'   => $missingFields,
+        'birth_year_unknown' => $birthYearUnknown ? 'Yes' : '',
+        'needs_review'     => $needsReview ? 'Yes' : '',
+        'intake_hist'      => $intakeHist,
     ];
 }
 usort($out_rows, fn($a, $b) => strcasecmp($a['name'], $b['name']));
@@ -88,11 +104,12 @@ usort($out_rows, fn($a, $b) => strcasecmp($a['name'], $b['name']));
 header('Content-Type: text/csv');
 header('Content-Disposition: attachment; filename="agent-audit-' . date('Y-m-d') . '.csv"');
 $fh = fopen('php://output', 'w');
-fputcsv($fh, ['Name', 'Email', 'Market Center', 'State', 'Missing Start Date', 'Missing Birthdate', 'Profile Status']);
+fputcsv($fh, ['Name', 'Email', 'Market Center', 'State', 'Missing Start Date', 'Missing Birthdate', 'Profile Status', 'Missing Profile Fields', 'Birth Year Unknown', 'Needs Review', 'Intake Submitted (historical)']);
 foreach ($out_rows as $row) {
     fputcsv($fh, [
         $row['name'], $row['email'], $row['market_center'], $row['state'],
         $row['missing_start'], $row['missing_birthday'], $row['profile_status'],
+        $row['missing_fields'], $row['birth_year_unknown'], $row['needs_review'], $row['intake_hist'],
     ]);
 }
 exit;

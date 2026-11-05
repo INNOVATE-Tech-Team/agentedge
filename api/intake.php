@@ -17,6 +17,7 @@ require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/crypto.php';
 require_once __DIR__ . '/../lib/notifications.php';
 require_once __DIR__ . '/../lib/headshot_select.php';
+require_once __DIR__ . '/../lib/agent_profile.php';
 
 function intake_json_out(array $d, int $code = 200, bool $dispatch = false): void {
     http_response_code($code);
@@ -172,7 +173,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $selected = headshot_select_get($pdo, $email);
 
-    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots, 'headshot' => $selected, 'additional_licenses' => $additionalLicenses, 'mls_memberships' => $mlsMemberships]);
+    $profileStatus = profile_status_from_row($row + ['email' => $email]);
+
+    intake_json_out(['ok' => true, 'intake' => $row, 'headshots' => $headshots, 'headshot' => $selected, 'additional_licenses' => $additionalLicenses, 'mls_memberships' => $mlsMemberships, 'profile_status' => $profileStatus]);
 }
 
 // ── All remaining actions require POST ────────────────────────────────────────
@@ -473,16 +476,22 @@ $resolveField = function (string $f) use ($fv, $body, $pr): string {
     }
 };
 
-$required = [
-    'full_name', 'phone', 'license_number', 'nar_number',
-    'office_location', 'birthday', 'address_line1', 'city', 'state', 'zip',
-    'emergency_name', 'emergency_phone', 'bio', 'referring_agent',
-];
+// Intake submission (agent_intake.submitted) is an ONBOARDING concept: it can
+// only flip 0→1 while this agent has an active Onboarding Queue row, using the
+// unchanged 14-field onboarding rule (lib/agent_profile.php). Existing agents
+// never flip it — their Complete/Incomplete status is computed live instead —
+// so an existing agent saving their profile can't trigger the new-agent
+// emails below. Completeness is judged on the values this save will actually
+// store (request value, or the stored value for a field this caller didn't
+// send), not on the request alone.
+$isOnboarding = is_actively_onboarding($email);
 $complete = true;
-foreach ($required as $r) if ($fv($r) === '') { $complete = false; break; }
+foreach (array_keys(ONBOARDING_REQUIRED_FIELDS) as $r) {
+    if (trim($resolveField($r)) === '') { $complete = false; break; }
+}
 
 $wasSubmitted = !empty($pr['submitted']);
-$isSubmitted  = $complete || $wasSubmitted;
+$isSubmitted  = $wasSubmitted || ($complete && $isOnboarding);
 
 $now  = date('Y-m-d H:i:s');
 $cols = implode(',', $fields);
@@ -595,4 +604,8 @@ if ($email === $myEmail) {
 // that flips it to submitted, null while still a draft.
 $submittedAt = $isSubmitted ? ($wasSubmitted ? ($pr['submitted_at'] ?? null) : $now) : null;
 
-intake_json_out(['ok' => true, 'submitted' => $isSubmitted, 'submitted_at' => $submittedAt], 200, true);
+$savedRow = $pdo->prepare("SELECT * FROM agent_intake WHERE email=?");
+$savedRow->execute([$email]);
+$profileStatus = profile_status_from_row(($savedRow->fetch(PDO::FETCH_ASSOC) ?: []) + ['email' => $email]);
+
+intake_json_out(['ok' => true, 'submitted' => $isSubmitted, 'submitted_at' => $submittedAt, 'profile_status' => $profileStatus], 200, true);

@@ -26,6 +26,7 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../roles.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/crypto.php';
+require_once __DIR__ . '/../lib/agent_profile.php';
 
 header('Content-Type: application/json');
 
@@ -134,6 +135,18 @@ $hsLatestKey = null; $maxId = -1;
 foreach ($hsAll as $hsRow) { if ((int)$hsRow['id'] > $maxId) { $maxId = (int)$hsRow['id']; $hsLatestKey = $hsRow['file_key']; } }
 
 $isSubmitted = !empty($a['submitted']);
+$ps = profile_status($email); // shared rules: onboarding Draft/Submitted, existing Complete/Incomplete, Needs Review holds
+// Live review signals for this agent (need the whole profile set to spot duplicates).
+$reviewSignalsForAgent = [];
+if ($isAdmin) {
+    $sigRows = $pdo->query("SELECT i.email, i.full_name, i.phone, i.emergency_name, i.emergency_phone, i.birthday FROM agent_intake i LEFT JOIN agent_admin aa ON aa.email = i.email WHERE COALESCE(aa.terminated_date,'') = ''")->fetchAll(PDO::FETCH_ASSOC);
+    $sigRE = []; $sigRN = [];
+    foreach ($pdo->query("SELECT agent_name, email FROM innovate_roster WHERE active=1")->fetchAll(PDO::FETCH_ASSOC) as $rr) {
+        $re = strtolower(trim((string)$rr['email'])); $rn = strtolower(preg_replace('/\s+/', ' ', trim((string)$rr['agent_name'])));
+        if ($re !== '') { $sigRE[$re] = true; if ($rn !== '') $sigRN[$rn][] = $re; }
+    }
+    $reviewSignalsForAgent = review_signals_for_rows($sigRows, $sigRE, $sigRN)[strtolower(trim($email))] ?? [];
+}
 $updatedRaw = $a['submitted_at'] ?? $a['updated_at'] ?? '';
 $updated = $updatedRaw ? fmt_dt_et($updatedRaw, 'M j, Y') : '—';
 $emailLower = strtolower($a['email']);
@@ -380,12 +393,36 @@ ob_start();
     <span class="dg-value" style="white-space:pre-line"><?= dv($a['retention_notes']) ?></span>
   </div>
   <?php endif; ?>
-  <div class="detail-actions">
-    <?php if ($isSubmitted): ?>
-      <span style="font-size:11px;color:var(--faint)">Submitted <?= h($a['submitted_at'] ? fmt_dt_et($a['submitted_at'], 'M j, Y') : '—') ?></span>
-    <?php else: ?>
-      <span style="font-size:11px;color:var(--faint)">Last updated <?= h($updated) ?></span>
+<?php if ($isAdmin): ?>
+  <div class="dg-section" style="color:#8a5a00">Review</div>
+  <div class="dg-field" style="grid-column:1/-1" id="review-panel-<?= $idx ?>">
+    <?php if ($ps['review_holds']): foreach ($ps['review_holds'] as $hold): ?>
+      <div style="font-size:12px;margin-bottom:6px">
+        <strong>Needs Review</strong> — <?= h(REVIEW_HOLD_REASONS[$hold['reason_code']] ?? $hold['reason_code']) ?><?= $hold['reason_note'] !== '' ? ': ' . h($hold['reason_note']) : '' ?>
+        <span style="color:var(--faint)">· placed by <?= h($hold['placed_by']) ?> <?= h(fmt_dt_et($hold['placed_at'], 'M j, Y')) ?><?= str_starts_with($hold['source'], 'seed:') ? ' (initial review list)' : '' ?></span>
+        <button type="button" class="btn-detail-link" onclick="resolveReviewHold(<?= (int)$hold['id'] ?>)">Resolve hold…</button>
+      </div>
+    <?php endforeach; else: ?>
+      <?php if ($reviewSignalsForAgent): ?>
+        <div style="font-size:12px;color:#8a5a00;margin-bottom:6px">Suggested for review: <?= h(implode('; ', array_column($reviewSignalsForAgent, 'label'))) ?></div>
+      <?php endif; ?>
+      <?php if (review_holds_schema_ready($pdo)): ?>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <select id="hold-reason-<?= $idx ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+          <option value="">Place a review hold…</option>
+          <?php foreach (REVIEW_HOLD_REASONS as $rk => $rl): ?><option value="<?= h($rk) ?>"><?= h($rl) ?></option><?php endforeach; ?>
+        </select>
+        <input type="text" id="hold-note-<?= $idx ?>" placeholder="Note (what needs checking)" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;min-width:220px">
+        <button type="button" class="btn-detail-link" onclick="placeReviewHold('<?= h($a['email']) ?>', <?= $idx ?>)">Place hold</button>
+      </div>
+      <?php else: ?>
+        <span style="font-size:11px;color:var(--faint)">Review holds become available once migration 20261105_profile_status is applied.</span>
+      <?php endif; ?>
     <?php endif; ?>
+  </div>
+  <?php endif; ?>
+  <div class="detail-actions">
+    <?= profile_status_line_html($ps, $updated) ?>
     <?php if ($isAdmin): ?>
     <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
     <?php endif; ?>
@@ -393,7 +430,9 @@ ob_start();
     <?php if ($isAdmin): ?>
     <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Edit Profile →</button>
     <a href="agent_profile.php?email=<?= h($a['email']) ?>" class="btn-detail-link">View Full Profile →</a>
+    <?php if ($ps['track'] !== 'onboarding' && $ps['missing']): /* links are for existing agents with something missing; onboarding agents use their intake link */ ?>
     <button type="button" class="btn-detail-link" id="send-link-<?= $idx ?>" onclick="sendCompletionLink('<?= h($a['email']) ?>', 'send-link-<?= $idx ?>')">Send Completion Link →</button>
+    <?php endif; ?>
     <button type="button" class="btn-detail-link" onclick="openMergeModal('<?= h($a['email']) ?>', '<?= h($a['full_name'] ?: $a['email']) ?>')">Merge Duplicate →</button>
     <?php endif; ?>
   </div>

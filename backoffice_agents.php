@@ -5,6 +5,7 @@ require_once __DIR__ . '/roles.php';
 require_once __DIR__ . '/nav.php';
 require_once __DIR__ . '/local_db.php';
 require_once __DIR__ . '/lib/crypto.php';
+require_once __DIR__ . '/lib/agent_profile.php';
 $agent = require_login();
 $perms = current_perms();
 $isAdmin  = !empty($perms['isAdmin']);
@@ -234,8 +235,32 @@ function bo_avatar_html(string $name, ?string $headshotKey, string $sizeClass): 
     return '<span class="' . $sizeClass . '-fallback">' . htmlspecialchars(mb_substr($initials ?: '?', 0, 2)) . '</span>';
 }
 
-$submittedCount = count(array_filter($intakeAgents, fn($a) => !empty($a['submitted'])));
-$draftCount = count($intakeAgents) - $submittedCount;
+// Status per agent from the shared rules (lib/agent_profile.php):
+// agents actively onboarding → Draft / Submitted (the stored intake flag);
+// existing agents → Complete / Incomplete (computed live).
+// Needs Review (an active, staff-placed hold) takes precedence in the display
+// and gets its own tab; the underlying completeness / onboarding status is
+// still computed and shown underneath it.
+$statusTabKey = ['draft' => 'onb-draft', 'submitted' => 'onb-submitted', 'complete' => 'complete', 'incomplete' => 'incomplete', 'needs_review' => 'needs-review'];
+$statusCounts = ['onb-draft' => 0, 'onb-submitted' => 0, 'complete' => 0, 'incomplete' => 0, 'needs-review' => 0];
+$birthYearUnknownCount = 0;
+// Live review signals only SUGGEST a hold — they never change the status.
+$sigRosterEmails = []; $sigRosterNames = [];
+foreach ($rosterRows as $rr) {
+    $re = strtolower(trim((string)$rr['email'])); $rn = strtolower(preg_replace('/\s+/', ' ', trim((string)$rr['agent_name'])));
+    if ($re !== '') $sigRosterEmails[$re] = true;
+    if ($rn !== '' && $re !== '') $sigRosterNames[$rn][] = $re;
+}
+$reviewSignals = review_signals_for_rows($intakeAgents, $sigRosterEmails, $sigRosterNames);
+foreach ($intakeAgents as &$ia) {
+    $ia['_ps'] = profile_status_from_row($ia);
+    $statusCounts[$statusTabKey[$ia['_ps']['display_status']]]++;
+    if (in_array('birth_year_unknown', array_column($ia['_ps']['flags'], 'key'), true)) $birthYearUnknownCount++;
+}
+unset($ia);
+$suggestedReviewCount = count(array_filter($intakeAgents, fn($a) => !$a['_ps']['needs_review'] && isset($reviewSignals[strtolower(trim($a['email']))])));
+$submittedCount = $statusCounts['onb-submitted'];
+$draftCount     = $statusCounts['onb-draft'];
 $totalWithForms = count($intakeAgents);
 $pendingCount = count($pendingAgents);
 $missingCount = count($missingAgents);
@@ -271,6 +296,21 @@ $missingCount = count($missingAgents);
 .st-badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:4px;letter-spacing:.03em;white-space:nowrap}
 .st-submitted{background:#e8f5e9;color:#2e7d32}
 .st-draft{background:#fff3e0;color:#c87800}
+.st-complete{background:#e8f5e9;color:#2e7d32}
+.st-incomplete{background:#fdecea;color:#b3261e}
+.st-needs_review{background:#fff4d6;color:#8a5a00;border:1px solid #f0c35a}
+.st-sub{display:block;font-size:10px;color:var(--faint);margin-top:3px;line-height:1.35}
+.st-signal{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;background:#fff8e6;color:#8a5a00;margin-left:6px;white-space:nowrap}
+.st-track{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-left:6px}
+.st-flag{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;background:#f3f0ff;color:#5a3fc0;margin-left:6px;white-space:nowrap}
+.ag-flag-filter{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:8px;cursor:pointer}
+.lp-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.lp-box{background:#fff;border-radius:10px;max-width:640px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.lp-head{padding:16px 18px;border-bottom:1px solid var(--border);font-weight:800}
+.lp-body{padding:12px 18px;overflow:auto;font-size:12px}
+.lp-body table{width:100%;border-collapse:collapse}
+.lp-body td,.lp-body th{padding:5px 6px;border-bottom:1px solid #f0f0f0;text-align:left;vertical-align:top}
+.lp-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
 .st-pending{background:#f0f0f0;color:#888}
 .row-avatar-img{width:24px;height:24px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:1px solid var(--border)}
 .row-avatar-fallback{width:24px;height:24px;border-radius:50%;background:#e8f5d0;color:#5b8e0d;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;margin-right:8px}
@@ -354,13 +394,25 @@ $missingCount = count($missingAgents);
         <div class="rs-num"><?= $totalWithForms ?></div>
         <div class="rs-lbl">With Forms</div>
       </div>
-      <div class="rs-tile green">
-        <div class="rs-num"><?= $submittedCount ?></div>
-        <div class="rs-lbl">Submitted</div>
-      </div>
-      <div class="rs-tile amber">
+      <div class="rs-tile amber" title="Agents in the Onboarding Queue who haven't submitted their intake form">
         <div class="rs-num"><?= $draftCount ?></div>
-        <div class="rs-lbl">Draft</div>
+        <div class="rs-lbl">Onboarding · Draft</div>
+      </div>
+      <div class="rs-tile green" title="Agents in the Onboarding Queue who have submitted their intake form">
+        <div class="rs-num"><?= $submittedCount ?></div>
+        <div class="rs-lbl">Onboarding · Submitted</div>
+      </div>
+      <div class="rs-tile green" title="Existing agents with every required profile field filled in">
+        <div class="rs-num"><?= $statusCounts['complete'] ?></div>
+        <div class="rs-lbl">Complete</div>
+      </div>
+      <div class="rs-tile amber" title="Existing agents still missing a required profile field">
+        <div class="rs-num"><?= $statusCounts['incomplete'] ?></div>
+        <div class="rs-lbl">Incomplete</div>
+      </div>
+      <div class="rs-tile amber" title="Agents with an active review hold (possible duplicate, questionable information or identity issue). Placed and cleared only by staff.">
+        <div class="rs-num"><?= $statusCounts['needs-review'] ?></div>
+        <div class="rs-lbl">Needs Review</div>
       </div>
       <div class="rs-tile">
         <div class="rs-num"><?= $pendingCount ?></div>
@@ -381,10 +433,27 @@ $missingCount = count($missingAgents);
 
     <div class="ag-tabs">
       <button class="ag-tab active" data-tab="all">All</button>
-      <button class="ag-tab" data-tab="submitted">Submitted</button>
-      <button class="ag-tab" data-tab="draft">Draft</button>
+      <button class="ag-tab" data-tab="onb-draft">Onboarding · Draft</button>
+      <button class="ag-tab" data-tab="onb-submitted">Onboarding · Submitted</button>
+      <button class="ag-tab" data-tab="complete">Complete</button>
+      <button class="ag-tab" data-tab="incomplete">Incomplete</button>
+      <button class="ag-tab" data-tab="needs-review">Needs Review</button>
       <button class="ag-tab" data-tab="pending">Pending</button>
       <button class="ag-tab" data-tab="missing">No Profile</button>
+      <label class="ag-flag-filter" title="Birthday stored with the 1900 placeholder year (month/day known, year unknown) — flagged for cleanup">
+        <input type="checkbox" id="agFlagBirthYear"> Birth year unknown (<?= $birthYearUnknownCount ?>)
+      </label>
+      <label class="ag-flag-filter" title="Not on hold, but the live checks suggest a review (shared phone, duplicate name, roster email mismatch, emergency contact is the agent, implausible birthday)">
+        <input type="checkbox" id="agFlagSuggested"> Suggested for review (<?= $suggestedReviewCount ?>)
+      </label>
+      <label class="ag-flag-filter" title="Historical onboarding intake submission — separate from current profile completeness">
+        Intake history
+        <select id="agIntakeFilter" style="font-size:12px;padding:2px 4px;border:1px solid var(--border);border-radius:5px">
+          <option value="">Any</option>
+          <option value="1">Intake submitted</option>
+          <option value="0">Never submitted</option>
+        </select>
+      </label>
     </div>
 
     <div class="table-wrap">
@@ -403,24 +472,40 @@ $missingCount = count($missingAgents);
         <tbody id="agBody">
 
 <?php foreach ($intakeAgents as $idx => $a):
+  $ps = $a['_ps'];
   $isSubmitted = !empty($a['submitted']);
-  $statusClass = $isSubmitted ? 'st-submitted' : 'st-draft';
-  $statusLabel = $isSubmitted ? 'Submitted' : 'Draft';
-  $tabAttr = $isSubmitted ? 'submitted' : 'draft';
+  $statusClass = 'st-' . $ps['display_status'];
+  $statusLabel = $ps['display_label'];
+  $tabAttr = $statusTabKey[$ps['display_status']];
+  $flagKeys = array_column($ps['flags'], 'key');
+  $signals = $reviewSignals[$emailLowerForSignals = strtolower(trim($a['email']))] ?? [];
+  if ($signals && !$ps['needs_review']) $flagKeys[] = 'suggested_review';
+  // Second line: what sits under a hold, and historical intake for existing agents.
+  $subBits = [];
+  if ($ps['needs_review']) {
+      $subBits[] = ($ps['track'] === 'onboarding' ? 'Onboarding · ' : 'Profile ') . strtolower($ps['label']);
+      $subBits[] = implode('; ', array_map(fn($h) => REVIEW_HOLD_REASONS[$h['reason_code']] ?? $h['reason_code'], $ps['review_holds']));
+  }
+  if ($ps['track'] === 'existing' && $ps['intake_submitted']) {
+      $subBits[] = 'Intake submitted' . ($ps['intake_submitted_at'] ? ' ' . fmt_dt_et($ps['intake_submitted_at'], 'M j, Y') : '');
+  }
+  $statusTitle = $ps['missing']
+      ? 'Missing: ' . implode(', ', array_column($ps['missing'], 'label'))
+      : ($ps['recommended_missing'] ? 'Recommended (optional): ' . implode(', ', array_column($ps['recommended_missing'], 'label')) : '');
   $updatedRaw = $a['submitted_at'] ?? $a['updated_at'] ?? '';
   $updated = $updatedRaw ? fmt_dt_et($updatedRaw, 'M j, Y') : '—';
   $rowId = 'row-' . $idx;
   $detailId = 'detail-' . $idx;
   $emailLower = strtolower($a['email']);
 ?>
-          <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>"
+          <tr class="data-row" id="<?= $rowId ?>" data-tab="<?= $tabAttr ?>" data-flags="<?= h(implode(' ', $flagKeys)) ?>" data-intake="<?= $isSubmitted ? '1' : '0' ?>"
               data-search="<?= h(strtolower($a['full_name'] . ' ' . $a['email'] . ' ' . $a['office_location'])) ?>">
             <td><button class="expand-btn" aria-label="Expand" onclick="toggleDetail('<?= $detailId ?>',this,'<?= h($a['email']) ?>')">&#9658;</button></td>
             <td><?= bo_avatar_html($a['full_name'], $hsLatest[$emailLower] ?? null, 'row-avatar') ?><strong><?= h($a['full_name'] ? lastNameFirst($a['full_name']) : '—') ?></strong></td>
             <td><?= h($a['email']) ?></td>
             <td><?= h($a['office_location'] ?: '—') ?></td>
             <td><?= h($a['phone'] ?: '—') ?></td>
-            <td><?php if (!$isSubmitted): ?><span class="st-badge <?= $statusClass ?>"><?= $statusLabel ?></span><?php endif; ?></td>
+            <td><span class="st-badge <?= $statusClass ?>" title="<?= h($statusTitle) ?>"><?= h($statusLabel) ?></span><span class="st-track"><?= h($ps['track_label']) ?></span><?php foreach ($ps['flags'] as $fl): ?><span class="st-flag"><?= h($fl['label']) ?></span><?php endforeach; ?><?php if ($signals && !$ps['needs_review']): ?><span class="st-signal" title="<?= h(implode('; ', array_column($signals, 'label'))) ?>">Suggested review</span><?php endif; ?><?php if ($subBits): ?><span class="st-sub"><?= h(implode(' · ', $subBits)) ?></span><?php endif; ?></td>
             <td><?= h($updated) ?></td>
           </tr>
           <?php /* Detail panel content is fetched on demand by toggleDetail() from
@@ -727,6 +812,9 @@ $missingCount = count($missingAgents);
   var searchEl = document.getElementById('agSearch');
   var tabs = document.querySelectorAll('.ag-tab');
   var activeTab = 'all';
+  var flagBirthYearEl = document.getElementById('agFlagBirthYear');
+  var flagSuggestedEl = document.getElementById('agFlagSuggested');
+  var intakeFilterEl  = document.getElementById('agIntakeFilter');
 
   function applyFilters() {
     var q = searchEl.value.toLowerCase().trim();
@@ -747,7 +835,11 @@ $missingCount = count($missingAgents);
 
       var tabMatch = (activeTab === 'all') || (tab === activeTab);
       var searchMatch = (q === '') || (search.indexOf(q) !== -1);
-      var show = tabMatch && searchMatch;
+      var flags = ' ' + (row.dataset.flags || '') + ' ';
+      var flagMatch = (!flagBirthYearEl.checked || flags.indexOf(' birth_year_unknown ') !== -1)
+                   && (!flagSuggestedEl.checked || flags.indexOf(' suggested_review ') !== -1)
+                   && (intakeFilterEl.value === '' || row.dataset.intake === intakeFilterEl.value);
+      var show = tabMatch && searchMatch && flagMatch;
 
       row.style.display = show ? '' : 'none';
       if (detailRow) {
@@ -766,6 +858,9 @@ $missingCount = count($missingAgents);
   }
 
   searchEl.addEventListener('input', applyFilters);
+  flagBirthYearEl.addEventListener('change', applyFilters);
+  flagSuggestedEl.addEventListener('change', applyFilters);
+  intakeFilterEl.addEventListener('change', applyFilters);
 
   tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
@@ -822,40 +917,95 @@ $missingCount = count($missingAgents);
     })
     .catch(function () {});
 
-  window.sendCompletionLink = function (email, btnId) {
+  window.sendCompletionLink = function (email, btnId, overrideCooldown) {
     var btn = document.getElementById(btnId);
     var orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Sending…';
     fetch('api/send_profile_completion.php', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'single', email: email })
+      body: JSON.stringify({ action: 'single', email: email, override_cooldown: !!overrideCooldown })
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         btn.disabled = false;
         btn.textContent = d.ok ? 'Sent ✓' : orig;
-        if (!d.ok) alert(d.error || 'Could not send.');
-        if (d.ok) setTimeout(function () { btn.textContent = orig; }, 3000);
+        if (d.ok) { setTimeout(function () { btn.textContent = orig; }, 3000); return; }
+        if (d.cooldown && d.can_override && !overrideCooldown) {
+          if (confirm((d.error || 'A link was sent recently.') + '\n\nLast sent: ' + (d.last_sent || '—') + ' (UTC)\n\nOverride the 7-day cooldown and send a new link now? The earlier link will stop working.')) {
+            window.sendCompletionLink(email, btnId, true);
+          }
+          return;
+        }
+        alert(d.error || 'Could not send.');
       })
       .catch(function () { btn.disabled = false; btn.textContent = orig; alert('Network error.'); });
   };
 
-  window.sendBulkCompletionLinks = function () {
-    if (!confirm('Email every active agent who is currently missing required profile info? Each gets their own personal link.')) return;
-    var btn = document.getElementById('bulk-send-btn');
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Sending…';
-    fetch('api/send_profile_completion.php', {
+  // Needs Review holds — admin actions from the detail panel. Placing or
+  // resolving a hold never edits the agent's profile or merges records.
+  function postHold(payload) {
+    return fetch('api/agent_review_hold.php', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'bulk_incomplete' })
-    })
-      .then(function (r) { return r.json(); })
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); });
+  }
+  window.placeReviewHold = function (email, idx) {
+    var reason = document.getElementById('hold-reason-' + idx).value;
+    var note = document.getElementById('hold-note-' + idx).value.trim();
+    if (!reason) { alert('Pick a reason.'); return; }
+    postHold({ action: 'place', email: email, reason_code: reason, note: note }).then(function (d) {
+      if (!d.ok) { alert(d.error || 'Could not place hold.'); return; }
+      alert('Review hold placed. The agent will show as Needs Review.'); location.reload();
+    }).catch(function () { alert('Network error.'); });
+  };
+  window.resolveReviewHold = function (holdId) {
+    var note = prompt('How was this resolved? (required — e.g. "Confirmed separate people", "Duplicate merged by staff")');
+    if (note === null) return;
+    if (!note.trim()) { alert('A resolution note is required.'); return; }
+    postHold({ action: 'resolve', hold_id: holdId, note: note.trim() }).then(function (d) {
+      if (!d.ok) { alert(d.error || 'Could not resolve hold.'); return; }
+      location.reload();
+    }).catch(function () { alert('Network error.'); });
+  };
+
+  window.sendBulkCompletionLinks = function () {
+    var btn = document.getElementById('bulk-send-btn');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Loading preview…';
+    postLinks({ action: 'bulk_preview' })
       .then(function (d) {
         btn.disabled = false; btn.textContent = orig;
-        if (!d.ok) { alert(d.error || 'Could not send.'); return; }
-        alert('Sent to ' + d.sent + ' agent' + (d.sent === 1 ? '' : 's') + '.');
+        if (!d.ok) { alert(d.error || 'Could not load preview.'); return; }
+        var n = d.recipients.length;
+        var rows = d.recipients.map(function (r) {
+          return '<tr><td><strong>' + escHtml(r.name || r.email) + '</strong><br><span style="color:#888">' + escHtml(r.email) + '</span></td><td>' + escHtml(r.missing.join(', ')) + '</td></tr>';
+        }).join('');
+        var skipped = d.skipped_cooldown.length
+          ? '<p style="margin:12px 0 4px;color:#888">Skipped — sent a link in the last 7 days (' + d.skipped_cooldown.length + '): ' + d.skipped_cooldown.map(function (s) { return escHtml(s.name || s.email); }).join(', ') + '</p>' : '';
+        var onb = d.skipped_onboarding ? '<p style="margin:4px 0;color:#888">Skipped — in the Onboarding Queue: ' + d.skipped_onboarding + '</p>' : '';
+        var o = document.createElement('div');
+        o.className = 'lp-overlay'; o.id = 'lp-overlay';
+        o.innerHTML = '<div class="lp-box" role="dialog" aria-modal="true">'
+          + '<div class="lp-head">Send completion links to ' + n + ' agent' + (n === 1 ? '' : 's') + '?</div>'
+          + '<div class="lp-body">' + (n ? '<p style="margin:0 0 8px;color:#555">Each person gets their own link (expires in 30 days) asking only for what\'s missing. Any older link they have stops working.</p><table><thead><tr><th>Agent</th><th>Missing</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p>Nobody to email right now.</p>') + skipped + onb + '</div>'
+          + '<div class="lp-foot"><button type="button" class="btn-detail-link" id="lp-cancel">Cancel</button>'
+          + (n ? '<button type="button" class="btn-detail-link" id="lp-send" style="background:var(--green);border-color:var(--green);color:#111;font-weight:800">Send ' + n + ' email' + (n === 1 ? '' : 's') + '</button>' : '') + '</div></div>';
+        document.body.appendChild(o);
+        document.getElementById('lp-cancel').onclick = closeLinkPreview;
+        o.addEventListener('click', function (e) { if (e.target === o) closeLinkPreview(); });
+        var sendBtn = document.getElementById('lp-send');
+        if (sendBtn) sendBtn.onclick = function () {
+          sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+          postLinks({ action: 'bulk_incomplete', confirm_hash: d.confirm_hash })
+            .then(function (r) {
+              closeLinkPreview();
+              if (!r.ok) { alert(r.error || 'Could not send.'); return; }
+              alert('Sent to ' + r.sent + ' agent' + (r.sent === 1 ? '' : 's') + '.');
+            })
+            .catch(function () { closeLinkPreview(); alert('Network error.'); });
+        };
       })
       .catch(function () { btn.disabled = false; btn.textContent = orig; alert('Network error.'); });
   };
@@ -1507,7 +1657,7 @@ $missingCount = count($missingAgents);
 
   function intakeDetailLine(row) {
     var bits = [];
-    bits.push(row.submitted ? 'Submitted' : 'Draft');
+    bits.push(row.submitted ? 'Intake submitted' : 'Intake not submitted');
     if (row.license_number) bits.push('Lic #' + row.license_number);
     if (row.phone) bits.push(row.phone);
     bits.push('Updated ' + (row.updated_at || '—'));
