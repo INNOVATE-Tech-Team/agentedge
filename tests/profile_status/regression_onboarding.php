@@ -29,7 +29,7 @@ reset_db(); seed_base();
 // so the growth-network ("New Agent in Your Growth Network") email path is
 // exercised and compared too.
 $ok = crm_reset(['onb.public@test.invalid', 'onb.public2@test.invalid', 'onb.self@test.invalid', 'onb.partial@test.invalid',
-                 'onb.staffedit@test.invalid', 'onb.override@test.invalid', 'exist.self@test.invalid']);
+                 'onb.staffedit@test.invalid', 'onb.override@test.invalid', 'exist.self@test.invalid', 'onb.blankresub@test.invalid']);
 if (!ok($ok, 'mock CRM reachable and seeded (synthetic sponsor chain)')) { exit(summary()); }
 
 // ONB-1: public intake via the tokenized queue link, all 14 fields
@@ -136,6 +136,21 @@ preg_match_all('/WOULD SEND reminder \d+\/\d+ to #\d+ (.+?) </', $cron, $m);
 $who = $m[1]; sort($who);
 $sig['ONB-9'] = ['would_send' => $who];
 ok(in_array('Test Partial', $who, true) && !in_array('Test Selfsave', $who, true) && !in_array('Test Done', $who, true), 'reminders go only to active, unsubmitted agents', $cron);
+
+// ONB-10: production's 2026-09-18 fix — a record stamped submitted=1 with its
+// required fields still blank must NOT be blocked as a duplicate; the agent
+// can resubmit through the public form.
+section('ONB-10 submitted-but-blank record can resubmit (public form)');
+$e10 = 'onb.blankresub@test.invalid';
+$qid10 = add_queue($e10, 'Test Blankresub', 'active');
+insert_intake(['email' => $e10, 'full_name' => 'Test Blankresub'], 1);
+$n0 = max_notif();
+$b10 = full_row($e10, 'Test Blankresub') + ['qid' => $qid10, 'token' => intake_link_token($qid10)];
+$r = http_req(null, 'POST', '/api/intake_public.php', $b10);
+$row10 = tq('SELECT submitted, phone FROM agent_intake WHERE email=?', [$e10])[0] ?? [];
+$sig['ONB-10'] = ['http' => $r['code'], 'ok' => $r['json']['ok'] ?? null, 'submitted' => (int)($row10['submitted'] ?? -1),
+                  'saved' => ($row10['phone'] ?? '') !== '', 'notifs' => subjects_sig(notifs_since($n0))];
+ok(($r['json']['ok'] ?? false) === true && ($row10['phone'] ?? '') !== '', 'blank-but-submitted record is not dead-ended: resubmission accepted and saved', $r['body']);
 
 // EXIST-1 (EXPECTED TO DIFFER): an existing agent (no queue row) completes their own profile
 section('EXIST-1 existing agent self-saves a complete profile (bug case)');

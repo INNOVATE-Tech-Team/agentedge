@@ -42,8 +42,14 @@ if ($action === 'place') {
     if (!isset(REVIEW_HOLD_REASONS[$reason])) { http_response_code(400); echo json_encode(['ok' => false, 'error' => 'Pick a reason']); exit; }
     if ($reason === 'other' && $note === '') { http_response_code(400); echo json_encode(['ok' => false, 'error' => 'A note is required for "Other"']); exit; }
     if (active_review_holds($email)) { echo json_encode(['ok' => false, 'error' => 'This agent already has an active review hold.']); exit; }
-    $db->prepare("INSERT INTO agent_review_holds (email, reason_code, reason_note, source, placed_by) VALUES (?, ?, ?, 'staff', ?)")
-       ->execute([$email, $reason, $note, $actor]);
+    try {
+        $db->prepare("INSERT INTO agent_review_holds (email, reason_code, reason_note, source, placed_by) VALUES (?, ?, ?, 'staff', ?)")
+           ->execute([$email, $reason, $note, $actor]);
+    } catch (PDOException $e) {
+        // The unique index allows one active hold per email; a simultaneous second click lands here.
+        if (stripos($e->getMessage(), 'UNIQUE') !== false) { echo json_encode(['ok' => false, 'error' => 'This agent already has an active review hold.']); exit; }
+        throw $e;
+    }
     echo json_encode(['ok' => true, 'hold_id' => (int)$db->lastInsertId()]);
     exit;
 }

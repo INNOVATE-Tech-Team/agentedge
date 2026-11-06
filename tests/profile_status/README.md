@@ -1,6 +1,6 @@
 # Profile status tests (isolated only)
 
-These tests cover profile completeness vs. intake submission, Needs Review holds, completion-link rules, the `20261105_profile_status` migration, the growth-network emails, and behaviour during a CRM outage. They run **only** in throwaway Docker containers on an `--internal` network, which has no route out. Every suite also refuses to start unless it finds the dev config and the schema-only template.
+These tests cover profile completeness vs. intake submission, Needs Review holds, completion-link rules, the `20261105_profile_status` migration, restoring review holds after a schema rollback, the growth-network emails, and behaviour during a CRM outage. They run **only** in throwaway Docker containers on an `--internal` network, which has no route out. Every suite also refuses to start unless it finds the dev config and the schema-only template.
 
 All data is synthetic: `@test.invalid` accounts, a SQLite database copied from production's *structure only* (no rows), and a throwaway MariaDB that stands in for the CRM with fake `tblstaff` and `tblre_transaction_agents` rows. The SendGrid key is blank, so no email can be sent.
 
@@ -30,4 +30,5 @@ It runs:
 2. A diff of the two: every `ONB-*` scenario must be identical, and `EXIST-*` must differ (that difference is the fix).
 3. The migration tests.
 4. The feature tests.
-5. The CRM-outage tests. These run with the mock CRM stopped. The branch must pass; the baseline run is reported only, to document how production behaves today.
+5. The review-hold import tests (`import_tests.php`). These restore holds from a real schema-rollback export and cover: dry run, approval gating, 19 kinds of invalid export, full-fidelity restore, re-runs, conflicts, and interruption (both an aborted insert and `kill -9` mid-transaction in WAL mode).
+6. The CRM-outage tests. These run with the mock CRM stopped. The branch must pass; the baseline run is reported only, to document how production behaves today.

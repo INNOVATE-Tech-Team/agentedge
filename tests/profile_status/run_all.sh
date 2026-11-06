@@ -52,6 +52,9 @@ docker exec -u www-data $DEV php /var/www/html/tests/profile_status/migration_te
 echo; echo "######## 5. Feature tests — FEATURE branch"
 docker exec -u www-data $DEV php /var/www/html/tests/profile_status/feature_tests.php || rc=1
 
+echo; echo "######## 5b. Review-hold import / recovery — FEATURE branch"
+docker exec -u www-data $DEV php /var/www/html/tests/profile_status/import_tests.php || rc=1
+
 echo; echo "######## 6. CRM outage — mock CRM STOPPED"
 docker stop $CRM >/dev/null
 echo "--- FEATURE branch (must pass)"

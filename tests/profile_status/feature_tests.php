@@ -310,13 +310,37 @@ file_put_contents($csv, "email,reason_code,note\ndup.one@test.invalid,duplicate,
 $seed = fn($a) => (string)shell_exec('php ' . APP_DIR . '/scripts/review_holds_seed.php --db=' . DATA_DIR . '/agentedge.db --csv=' . $csv . ' ' . $a . ' 2>&1');
 $n0 = (int)tq1('SELECT COUNT(*) FROM agent_review_holds');
 $o = $seed('');
-ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n0 && strpos($o, 'Dry run: 2 hold(s) would be placed, 1 already held') !== false, 'dry run changes nothing and reports what it would do', $o);
+ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n0 && strpos($o, 'Dry run: 2 hold(s) would be placed, 1 skipped') !== false, 'dry run changes nothing and reports what it would do', $o);
 $o = $seed('--apply');
 ok(strpos($o, '--by') !== false && (int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n0, '--apply requires --by (who is placing them)', $o);
 $o = $seed('--apply --by=admin@test.invalid');
 ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n0 + 2 && fresh_status('dup.one@test.invalid')['needs_review'], 'apply places the 2 new holds (skips the already-held agent)', $o);
 $seed('--apply --by=admin@test.invalid');
 ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n0 + 2, 're-running is safe (no duplicates)');
+// A resolved seeded hold is never re-opened by a re-run.
+tx("UPDATE agent_review_holds SET resolved_at = datetime('now'), resolved_by = 'admin@test.invalid', resolution_note = 'checked' WHERE email = 'dup.one@test.invalid' AND resolved_at IS NULL");
+$o = $seed('--apply --by=admin@test.invalid');
+ok((int)tq1("SELECT COUNT(*) FROM agent_review_holds WHERE email = 'dup.one@test.invalid'") === 1 && strpos($o, 'seeded before, resolved') !== false && !fresh_status('dup.one@test.invalid')['needs_review'], 're-running never re-opens a hold an admin resolved', $o);
+// The database itself allows only one ACTIVE hold per email.
+$dupErr = '';
+try { tdb()->exec("INSERT INTO agent_review_holds (email, reason_code, placed_by) VALUES ('dup.two@test.invalid', 'other', 'x@test.invalid')"); } catch (PDOException $e) { $dupErr = $e->getMessage(); }
+ok(stripos($dupErr, 'UNIQUE') !== false, 'database refuses a second active hold for the same agent (unique index)', $dupErr);
+tx("INSERT INTO agent_review_holds (email, reason_code, placed_by, resolved_at) VALUES ('dup.two@test.invalid', 'other', 'x@test.invalid', datetime('now'))");
+ok(true, 'resolved history rows are still allowed alongside the active hold');
+$r = http_req('admin@test.invalid', 'POST', '/api/agent_review_hold.php', ['action' => 'place', 'email' => 'dup.two@test.invalid', 'reason_code' => 'duplicate']);
+ok(($r['json']['ok'] ?? true) === false && strpos($r['json']['error'] ?? '', 'already has an active review hold') !== false, 'placing a second hold through the page is refused cleanly', $r['body']);
+// An interrupted apply leaves nothing behind; re-running then completes it.
+tx("CREATE TRIGGER test_crash BEFORE INSERT ON agent_review_holds WHEN NEW.email = 'boom@test.invalid' BEGIN SELECT RAISE(ABORT, 'simulated crash'); END");
+file_put_contents($csv, "email,reason_code,note\nfirst.ok@test.invalid,other,interrupt test\nboom@test.invalid,other,interrupt test\n");
+$n1 = (int)tq1('SELECT COUNT(*) FROM agent_review_holds');
+$o = $seed('--apply --by=admin@test.invalid');
+ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n1 && strpos($o, 'Nothing applied') !== false, 'a run that fails part-way applies NOTHING (first row rolled back too)', $o);
+tx('DROP TRIGGER test_crash');
+$o = $seed('--apply --by=admin@test.invalid');
+ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n1 + 2, 're-running after the failure completes the whole CSV', $o);
+$o = $seed('--apply --by=admin@test.invalid');
+ok((int)tq1('SELECT COUNT(*) FROM agent_review_holds') === $n1 + 2, '…and a further re-run adds nothing', $o);
+tx("DELETE FROM agent_review_holds WHERE email IN ('first.ok@test.invalid','boom@test.invalid')");
 file_put_contents($csv, "email,reason_code,note\nx@test.invalid,bogus,\n");
 ok(strpos($seed('--apply --by=admin@test.invalid'), 'Nothing applied') !== false, 'a bad CSV applies nothing');
 ok(tq('SELECT email, submitted FROM agent_intake WHERE email IN (?,?) ORDER BY email', ['dup.one@test.invalid', 'dup.two@test.invalid']) == [['email' => 'dup.one@test.invalid', 'submitted' => 0], ['email' => 'dup.two@test.invalid', 'submitted' => 0]], 'seeding modified no agent records and merged nothing');

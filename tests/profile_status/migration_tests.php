@@ -65,16 +65,33 @@ ok($a2['rc'] === 0 && strpos($a2['out'], 'Already applied') !== false && count(g
 
 section('C. Rollback');
 mdb()->exec("INSERT INTO agent_review_holds (email, reason_code, placed_by) VALUES ('a@test.invalid','duplicate','admin@test.invalid')");
+mdb()->exec("INSERT INTO profile_completion_tokens (token, email, created_by, expires_at, revoked_at, revoked_reason) VALUES ('n1','a@test.invalid','x', datetime('now','+30 days'), datetime('now'), 'superseded')");
+$sigApplied = schema_sig(mdb());
 $rb = mig('--rollback');
-ok($rb['rc'] !== 0 && strpos($rb['out'], '--force') !== false && holds_table(), 'rollback refuses while holds exist (export first), nothing dropped', $rb['out']);
+ok($rb['rc'] !== 0 && strpos($rb['out'], '1 review hold(s), 1 link(s)') !== false && schema_sig(mdb()) === $sigApplied, 'rollback refuses while new data exists (holds AND new-link expiry/revocation), nothing dropped', $rb['out']);
 $rb = mig('--rollback --force');
-ok($rb['rc'] === 0 && strpos($rb['out'], 'ROLLED BACK') !== false, 'forced rollback succeeded', $rb['out']);
+ok($rb['rc'] !== 0 && strpos($rb['out'], '--export-dir') !== false && schema_sig(mdb()) === $sigApplied, '--force alone is not enough: an export directory is required, nothing dropped', $rb['out']);
+$EX = DATA_DIR . '/rollback-exports'; @mkdir($EX, 0777, true); foreach (glob($EX . '/*') ?: [] as $f) unlink($f);
+$rb = mig('--rollback --force --export-dir=' . $EX);
+ok($rb['rc'] === 0 && strpos($rb['out'], 'Export written and verified') !== false && strpos($rb['out'], 'ROLLED BACK') !== false, 'forced rollback exports, verifies the export, then drops', $rb['out']);
+$exf = glob($EX . '/rollback-export-*.json');
+$ex = $exf ? json_decode(file_get_contents($exf[0]), true) : [];
+ok(count($exf) === 1 && count($ex['agent_review_holds'] ?? []) === 1 && ($ex['agent_review_holds'][0]['email'] ?? '') === 'a@test.invalid' && count($ex['profile_completion_tokens_new_columns'] ?? []) === 1 && ($ex['profile_completion_tokens_new_columns'][0]['revoked_reason'] ?? '') === 'superseded', 'export holds every hold row and every new-link expiry/revocation', $ex);
+mdb()->exec("DELETE FROM profile_completion_tokens WHERE token = 'n1'");
 ok(schema_sig(mdb()) === $sigBefore, 'schema identical to pre-migration');
 ok((int)mdb()->query('SELECT COUNT(*) FROM profile_completion_tokens')->fetchColumn() === 3 && (int)mdb()->query('SELECT COUNT(*) FROM agent_intake')->fetchColumn() === 1, 'data intact after rollback');
 $a3 = mig('--apply --backup-dir=' . BK);
 ok($a3['rc'] === 0 && strpos($a3['out'], 'STATUS: APPLIED') !== false, 're-apply after rollback works');
+$rb = mig('--rollback');
+ok($rb['rc'] === 0 && strpos($rb['out'], 'ROLLED BACK') !== false && strpos($rb['out'], '0 review hold(s), 0 link(s)') !== false, 'with no new data, rollback needs no --force and drops nothing of value', $rb['out']);
+mig('--apply --backup-dir=' . BK);
 
 section('D. Safety checks');
+$u = mdb(); $uerr = '';
+$u->exec("INSERT INTO agent_review_holds (email, reason_code, placed_by) VALUES ('u@test.invalid','duplicate','x')");
+try { $u->exec("INSERT INTO agent_review_holds (email, reason_code, placed_by) VALUES ('u@test.invalid','other','x')"); } catch (PDOException $e) { $uerr = $e->getMessage(); }
+ok(stripos($uerr, 'UNIQUE') !== false, 'migrated schema enforces one active hold per email', $uerr);
+$u = null;
 @unlink(MDB); copy(TEMPLATE, MDB);
 mdb()->exec("ALTER TABLE profile_completion_tokens ADD COLUMN expires_at TEXT");
 $p = mig('--apply --backup-dir=' . BK);

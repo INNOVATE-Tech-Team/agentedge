@@ -12,7 +12,8 @@
 // Usage (run as the web user, e.g. docker exec -u www-data <container> php ...):
 //   php 20261105_profile_status.php --db=/path/agentedge.db                 # verify only (default, read-only)
 //   php 20261105_profile_status.php --db=... --apply --backup-dir=/path     # backup → apply → verify
-//   php 20261105_profile_status.php --db=... --rollback [--force]           # drop what this migration added
+//   php 20261105_profile_status.php --db=... --rollback                     # drop what this migration added (only if it holds no data)
+//   php 20261105_profile_status.php --db=... --rollback --force --export-dir=/path   # export new data first, verify the export, then drop
 //
 // What --apply does, in order (stops at the first failure):
 //   1. Pre-flight: SQLite >= 3.35, PRAGMA quick_check = ok, target tables
@@ -21,7 +22,9 @@
 //      (consistent online copy), then quick_check + row-count comparison of
 //      the backup against the live DB for the affected tables.
 //   3. Apply, in ONE transaction: 4 nullable/defaulted columns on
-//      profile_completion_tokens + table agent_review_holds + its index.
+//      profile_completion_tokens + table agent_review_holds + a UNIQUE
+//      partial index that lets the database itself refuse a second active
+//      hold for the same email.
 //      Additive only: no existing row or value is modified; the 312+
 //      historical links keep expires_at NULL (= never auto-expire).
 //   4. Post-verify: columns/table/index present, row counts unchanged,
@@ -31,9 +34,13 @@
 // Rollback (see also the runbook): first roll the CODE back (the previous code
 // ignores these columns/table, so a code-only rollback is already safe). Then,
 // only if the schema itself must go: --rollback drops the index, the
-// agent_review_holds table (refuses if it has rows unless --force) and the 4
-// columns (ALTER TABLE ... DROP COLUMN). Last resort: restore the backup file
-// (loses writes made after it was taken).
+// agent_review_holds table and the 4 columns (ALTER TABLE ... DROP COLUMN).
+// It never drops data silently: if any hold exists, or any link carries an
+// expiry / revocation / override, it refuses unless given --force AND
+// --export-dir; it then takes the write lock, writes every hold row and every
+// link's new-column values to a JSON export, re-reads and checks the export,
+// and only then drops — all in one transaction. Last resort: restore the
+// backup file (loses writes made after it was taken — see the runbook).
 if (php_sapi_name() !== 'cli') { http_response_code(404); exit; }
 
 const MIG_ID      = '20261105_profile_status';
@@ -55,10 +62,12 @@ const HOLDS_SQL = "CREATE TABLE agent_review_holds (
     resolved_by     TEXT,
     resolution_note TEXT
 )";
-const HOLDS_INDEX_SQL = "CREATE INDEX idx_agent_review_holds_active ON agent_review_holds(email, resolved_at)";
+const HOLDS_INDEX     = 'idx_agent_review_holds_one_active';
+// At most ONE active (unresolved) hold per email, enforced by SQLite itself.
+const HOLDS_INDEX_SQL = "CREATE UNIQUE INDEX " . HOLDS_INDEX . " ON agent_review_holds(email) WHERE resolved_at IS NULL";
 const COUNT_TABLES = ['profile_completion_tokens', 'agent_intake', 'onboard_queue', 'notification_queue'];
 
-$opt = getopt('', ['db:', 'apply', 'rollback', 'force', 'backup-dir:']);
+$opt = getopt('', ['db:', 'apply', 'rollback', 'force', 'backup-dir:', 'export-dir:']);
 $dbPath = $opt['db'] ?? '';
 if ($dbPath === '' || !is_file($dbPath)) { fwrite(STDERR, "--db=<path to agentedge.db> is required and must exist\n"); exit(2); }
 $mode = isset($opt['apply']) ? 'apply' : (isset($opt['rollback']) ? 'rollback' : 'verify');
@@ -81,7 +90,7 @@ function state(PDO $p): array {
         'missing_cols' => array_values(array_diff(array_keys(TOKEN_COLS), $tc)),
         'present_cols' => array_values(array_intersect(array_keys(TOKEN_COLS), $tc)),
         'holds_table'  => has_table($p, 'agent_review_holds'),
-        'holds_index'  => has_index($p, 'idx_agent_review_holds_active'),
+        'holds_index'  => has_index($p, HOLDS_INDEX),
     ];
 }
 function preflight(PDO $p): array {
@@ -151,20 +160,39 @@ if ($mode === 'apply') {
 
 if ($mode === 'rollback') {
     if (!$state['present_cols'] && !$state['holds_table'] && !$state['holds_index']) { out('Nothing to roll back.'); exit(0); }
-    if ($state['holds_table']) {
-        $n = (int)$p->query('SELECT COUNT(*) FROM agent_review_holds')->fetchColumn();
-        if ($n > 0 && !isset($opt['force'])) fail("agent_review_holds has $n row(s) — export them first, then re-run with --force");
+    // Take the write lock first so nothing can be written between the export and the drop.
+    $p->exec('BEGIN IMMEDIATE');
+    $holds = $state['holds_table'] ? $p->query('SELECT * FROM agent_review_holds ORDER BY id')->fetchAll(PDO::FETCH_ASSOC) : [];
+    $linkCols = $state['present_cols'];
+    $links = [];
+    if ($linkCols) {
+        $conds = [];
+        foreach ($linkCols as $c) $conds[] = $c === 'cooldown_override' ? 'COALESCE(cooldown_override,0) != 0' : "$c IS NOT NULL";
+        $links = $p->query('SELECT token, email, created_at, ' . implode(', ', $linkCols) . ' FROM profile_completion_tokens WHERE ' . implode(' OR ', $conds) . ' ORDER BY rowid')->fetchAll(PDO::FETCH_ASSOC);
+    }
+    out('Data held only in what this migration added: ' . count($holds) . ' review hold(s), ' . count($links) . ' link(s) with expiry/revocation/override set');
+    if ($holds || $links) {
+        if (!isset($opt['force'])) { $p->exec('ROLLBACK'); fail('refusing: rollback would drop the data above. Export it and drop with --force --export-dir=<dir> (or roll back the CODE only — see the runbook)'); }
+        $dir = rtrim($opt['export-dir'] ?? '', '/');
+        if ($dir === '' || !is_dir($dir) || !is_writable($dir)) { $p->exec('ROLLBACK'); fail('--export-dir=<existing writable dir> is required when data would be dropped; nothing changed'); }
+        $ex = $dir . '/rollback-export-' . MIG_ID . '-' . gmdate('Ymd\THis\Z') . '-' . bin2hex(random_bytes(3)) . '.json';
+        $payload = json_encode(['migration' => MIG_ID, 'exported_at_utc' => gmdate('c'), 'db' => $dbPath,
+                                'agent_review_holds' => $holds, 'profile_completion_tokens_new_columns' => $links],
+                               JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($payload === false || file_exists($ex) || file_put_contents($ex, $payload, LOCK_EX) !== strlen($payload)) { $p->exec('ROLLBACK'); fail("could not write export $ex; nothing changed"); }
+        $chk = json_decode((string)file_get_contents($ex), true);
+        if (!is_array($chk) || $chk['agent_review_holds'] != $holds || $chk['profile_completion_tokens_new_columns'] != $links) { $p->exec('ROLLBACK'); fail("export $ex did not read back identically; nothing changed"); }
+        out("Export written and verified: $ex  sha256=" . hash_file('sha256', $ex));
     }
     out('Rolling back (single transaction)…');
-    $p->beginTransaction();
     try {
-        if ($state['holds_index']) $p->exec('DROP INDEX idx_agent_review_holds_active');
+        if ($state['holds_index']) $p->exec('DROP INDEX ' . HOLDS_INDEX);
         if ($state['holds_table']) $p->exec('DROP TABLE agent_review_holds');
         foreach (array_reverse($state['present_cols']) as $c) $p->exec("ALTER TABLE profile_completion_tokens DROP COLUMN $c");
-        $p->commit();
+        $p->exec('COMMIT');
     } catch (\Throwable $e) {
-        $p->rollBack();
-        fail('rollback error, transaction rolled back: ' . $e->getMessage());
+        try { $p->exec('ROLLBACK'); } catch (\Throwable $e2) {}
+        fail('rollback error, transaction rolled back, nothing changed: ' . $e->getMessage());
     }
     $s = state($p);
     if ($s['present_cols'] || $s['holds_table'] || $s['holds_index']) fail('rollback verify failed ' . json_encode($s));
