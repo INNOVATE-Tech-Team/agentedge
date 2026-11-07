@@ -152,7 +152,6 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
         <select name="role" id="rm-role" class="rm-select" onchange="rmToggleMc(this.value)">
           <option value="super_admin">Super Admin</option>
           <option value="staff">Staff</option>
-          <option value="recruiter">Recruiter</option>
           <option value="bic">Broker in Charge</option>
           <option value="mc_leader">Market Center Leader</option>
           <option value="agent">Agent (no special role)</option>
