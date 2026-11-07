@@ -10,7 +10,6 @@ require_once __DIR__ . '/auth.php';
 const ROLE_LABELS = [
     'super_admin'          => 'Super Admin',
     'staff'                => 'Staff',
-    'recruiter'            => 'Recruiter',
     'bic'                  => 'Broker in Charge',
     'mc_leader'            => 'Market Center Leader',
     'team_leader'          => 'Team Leader',
@@ -22,9 +21,13 @@ const ROLE_LABELS = [
 ];
 
 // Legacy CRM role names → canonical AgentEdge role names.
+// 'recruiter' is an Advantage-only label (Darren, 2026-11-07): the recruiting
+// CRM keeps it, but in AgentEdge (and Leverage) those people are plain agents,
+// whether the role arrives from a local agent_roles row or the CRM whoami.
 const ROLE_ALIASES = [
     'retention_admin'  => 'staff',
     'broker_in_charge' => 'bic',
+    'recruiter'        => 'agent',
 ];
 
 function role_label(string $role): string {

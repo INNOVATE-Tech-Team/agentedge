@@ -60,7 +60,7 @@ $pageTitle  = $isNew ? 'New Course' : htmlspecialchars($course['title'] ?? '');
 
 $allStates  = ['FL','GA','MD','MA','NC','NJ','NH','OH','PA','RI','SC','TN','VA','DE'];
 $stateNames = ['FL'=>'Florida','GA'=>'Georgia','MD'=>'Maryland','MA'=>'Massachusetts','NC'=>'North Carolina','NJ'=>'New Jersey','NH'=>'New Hampshire','OH'=>'Ohio','PA'=>'Pennsylvania','RI'=>'Rhode Island','SC'=>'South Carolina','TN'=>'Tennessee','VA'=>'Virginia','DE'=>'Delaware'];
-$allRoles   = ['agent'=>'Agent','recruiter'=>'Recruiter','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','launch_coach'=>'Launch Coach','staff'=>'Staff','super_admin'=>'Super Admin'];
+$allRoles   = ['agent'=>'Agent','bic'=>'Broker in Charge','mc_leader'=>'Market Center Leader','team_leader'=>'Team Leader','launch_coach'=>'Launch Coach','staff'=>'Staff','super_admin'=>'Super Admin'];
 
 $courseInviteOnly  = (int)($course['invite_only']  ?? 0);
 $courseStateFilter = json_decode($course['state_filter'] ?? '[]', true) ?: [];
