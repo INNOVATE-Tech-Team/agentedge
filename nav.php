@@ -167,7 +167,16 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'bo_mls',                    'label'=>'MLS Integrations',    'href'=>'backoffice_mls.php',            'dept'=>'Broker Files'],
         ['key'=>'bo_state_reports',          'label'=>'State Annual Reports','href'=>'backoffice_state_reports.php', 'dept'=>'Broker Files'],
         ['key'=>'bo_licensing',              'label'=>'Licensing and Renewals','href'=>'backoffice_licensing.php',   'dept'=>'Broker Files'],
+        // Each Back Office tab with a Vault department of its own links
+        // straight into just that department's folders, rather than sending
+        // everyone to the one unscoped Vault page. Only the departments that
+        // actually exist in vault_depts get a link — an unknown slug would
+        // silently fall back to the unscoped view, which is worse than no
+        // link at all.
+        ['key'=>'vault_brokerage',           'label'=>'Vault',               'href'=>'vault.php?dept=brokerage',      'dept'=>'Broker Files'],
         ['key'=>'admin_vault_depts',         'label'=>'Vault Departments',   'href'=>'admin_vault_depts.php',         'dept'=>'Broker Files', 'superOnly'=>true],
+        // ── Human Resources ──────────────────────────────────────────────────────
+        ['key'=>'vault_hr',                  'label'=>'HR Vault',            'href'=>'vault.php?dept=hr-payroll',     'dept'=>'Human Resources'],
         // ── Agent Communications ─────────────────────────────────────────────────
         // 'mc_events' existed and worked (own API, own_mc_slugs+mc_slugs-scoped
         // permission checks, feeds the Company Calendar's Market Center tab via
@@ -189,6 +198,7 @@ function backoffice_nav_items(bool $superAdmin): array {
         ['key'=>'launch_schedule',           'label'=>'Launch Schedule',     'href'=>'launch_schedule.php',           'dept'=>'Agent Development'],
         ['key'=>'launch_coaching',           'label'=>'Launch Coaching',     'href'=>'launch_coaching.php',           'dept'=>'Agent Development'],
         // ── Finance ─────────────────────────────────────────────────────────────
+        ['key'=>'vault_finance',             'label'=>'Vault',               'href'=>'vault.php?dept=finance',        'dept'=>'Finance'],
         ['key'=>'finance_budget',            'label'=>'Department Budget',   'href'=>'finance_budget.php',            'dept'=>'Finance'],
         ['key'=>'finance_statements',        'label'=>'Statement Scanner',   'href'=>'finance_statements.php',        'dept'=>'Finance'],
         ['key'=>'listing_intel_billing',     'label'=>'Listing Intel Billing','href'=>'backoffice_listing_intel_billing.php','dept'=>'Finance'],
