@@ -1,10 +1,27 @@
 // My Profile — load the agent's record, let them edit contact + social links.
 const SOCIAL_KEYS = ['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'website', 'blog'];
-const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal', 'marketing_number'];
+const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal', 'marketing_number', 'office_number'];
 const FIELDS = ['fullName', 'email', 'phone', 'marketCenter', 'brokerage', ...SOCIAL_KEYS, 'googlePlaceId', 'zillowReviewLink'];
+// Business numbers shown on the agent's INNOVATE website (lib/agent_phones.php).
+const PHONE_LABELS = { marketing_number: 'Marketing Number', office_number: 'Office Number' };
 
 function set(id, v) { const el = document.getElementById('f-' + id); if (el) el.value = v || ''; }
 function get(id) { const el = document.getElementById('f-' + id); return el ? el.value.trim() : ''; }
+
+// Same rule as us_phone_normalize() in lib/agent_phones.php: '' when blank,
+// "(843) 555-1234" for a 10-digit US number (a leading 1 is dropped), null otherwise.
+function usPhone(raw) {
+  if (!String(raw || '').trim()) return '';
+  let d = String(raw).replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') d = d.slice(1);
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(d)) return null;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
+Object.keys(PHONE_LABELS).forEach(k => {
+  const el = document.getElementById('f-' + k);
+  if (el) el.addEventListener('blur', () => { const v = usPhone(el.value); if (v) el.value = v; });
+});
 
 function note(text) {
   const n = document.getElementById('profile-note');
@@ -86,6 +103,21 @@ Promise.allSettled([
 document.getElementById('profile-form').addEventListener('submit', e => {
   e.preventDefault();
   const btn = document.getElementById('save-btn');
+
+  // Check the business numbers before saving anything, so a typo doesn't
+  // leave the rest of the form saved and these not.
+  for (const k of Object.keys(PHONE_LABELS)) {
+    const el = document.getElementById('f-' + k);
+    if (!el) continue;
+    const v = usPhone(el.value);
+    if (v === null) {
+      msg(`${PHONE_LABELS[k]} must be a 10-digit US phone number, like (843) 555-1234, or blank.`, false);
+      el.focus();
+      return;
+    }
+    el.value = v;
+  }
+
   btn.disabled = true; msg('Saving…', true);
 
   const crmBody = {};
@@ -110,7 +142,13 @@ document.getElementById('profile-form').addEventListener('submit', e => {
   ]).then(([crmRes, extraRes]) => {
     const crmOk   = crmRes.status   === 'fulfilled' && (crmRes.value.ok   || crmRes.value.demo);
     const extraOk = extraRes.status === 'fulfilled' && extraRes.value.ok;
-    if (crmOk || extraOk) { msg('Saved ✓', true); }
+    if (crmOk && !extraOk) {
+      // The business numbers and dates save through agent_extra.php: say so
+      // rather than "Saved" when only that half failed.
+      msg((extraRes.status === 'fulfilled' && extraRes.value.error)
+        || 'Your business numbers and dates were not saved. Please try again.', false);
+    }
+    else if (crmOk || extraOk) { msg('Saved ✓', true); }
     else {
       const err = (crmRes.status === 'fulfilled' ? crmRes.value.error : null)
                || (extraRes.status === 'fulfilled' ? extraRes.value.error : null)

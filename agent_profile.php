@@ -126,6 +126,7 @@ if ($targetEmail !== '') {
 .em-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:14px 0 4px;padding-top:10px;border-top:1px solid var(--border)}
 .em-section:first-child{margin-top:0;padding-top:0;border-top:none}
 .em-full{grid-column:1/-1}
+.em-hint{font-size:11px;color:var(--faint);margin-top:3px;line-height:1.35}
 .em-check label{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;font-weight:600;color:var(--ink)}
 .em-check input{width:auto!important}
 .stub-pane{padding:40px;text-align:center;color:var(--faint);font-size:13px}
@@ -283,6 +284,8 @@ if ($targetEmail !== '') {
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
+          <div class="dg-field"><span class="dg-label">Marketing Number</span><?= dv($a['marketing_number'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Office Number</span><?= dv($a['office_number'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
             $addrParts = array_filter([$a['address_line1'] ?? '', $a['address_line2'] ?? '']);
@@ -619,6 +622,8 @@ if ($targetEmail !== '') {
             <div class="em-section">Contact Information</div>
             <div class="em-field"><label>Full Name</label><input id="em-full_name"></div>
             <div class="em-field"><label>Phone</label><input id="em-phone"></div>
+            <div class="em-field"><label>Marketing Number</label><input id="em-marketing_number" type="tel" placeholder="(843) 555-1234"><div class="em-hint">Shown on the agent's INNOVATE website instead of their cell (e.g. their Follow Up Boss number). Leave blank to show the cell.</div></div>
+            <div class="em-field"><label>Office Number</label><input id="em-office_number" type="tel" placeholder="(843) 555-1234"><div class="em-hint">The agent's office line, shown as the office number on their INNOVATE website. Leave blank if none.</div></div>
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
@@ -998,12 +1003,25 @@ var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone
   'website','additional_websites','facebook','linkedin','skype',
   'referring_agent','bio'];
 var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
+// Marketing/Office Number: saved through api/agent_extra.php, not intake.php
+// (agent_extra.marketing_number / office_number, lib/agent_phones.php).
+var EM_PHONE_LABELS = { marketing_number: 'Marketing Number', office_number: 'Office Number' };
 var emExtraBirthday = '';
 // Guards against saving before the async load below finishes (or after it
 // fails) — without this, Save was clickable the instant the modal opened,
 // so a slow/failed load let a mostly-blank payload blindly overwrite a
 // fully-populated profile (see api/intake.php's matching circuit-breaker).
 var emLoaded = false;
+
+// Same rule as us_phone_normalize() in lib/agent_phones.php: '' when blank,
+// "(843) 555-1234" for a 10-digit US number (a leading 1 is dropped), null otherwise.
+function emUsPhone(raw) {
+  if (!String(raw || '').trim()) return '';
+  var d = String(raw).replace(/\D/g, '');
+  if (d.length === 11 && d.charAt(0) === '1') d = d.slice(1);
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(d)) return null;
+  return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+}
 
 function emAddLicenseRow(lic) {
   lic = lic || {};
@@ -1144,6 +1162,9 @@ window.openEditModal = function () {
     document.getElementById('em-is_team_leader_tag').checked = !!extra.is_team_leader_tag;
     document.getElementById('em-alt_email').value = extra.alt_email || '';
     document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
+    Object.keys(EM_PHONE_LABELS).forEach(function (key) {
+      document.getElementById('em-' + key).value = extra[key] || '';
+    });
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1164,6 +1185,22 @@ window.saveEditModal = function () {
   var msg = document.getElementById('em-save-msg');
   var btn = document.getElementById('em-save-btn');
   if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
+
+  // Check the business numbers before saving anything, so a typo can't save
+  // the intake half of the form and not these.
+  var phones = {};
+  var phoneKeys = Object.keys(EM_PHONE_LABELS);
+  for (var i = 0; i < phoneKeys.length; i++) {
+    var phoneNode = document.getElementById('em-' + phoneKeys[i]);
+    var phone = emUsPhone(phoneNode.value);
+    if (phone === null) {
+      msg.textContent = EM_PHONE_LABELS[phoneKeys[i]] + ' must be a 10-digit US phone number, like (843) 555-1234, or blank.';
+      phoneNode.focus();
+      return;
+    }
+    phoneNode.value = phones[phoneKeys[i]] = phone;
+  }
+
   btn.disabled = true;
   msg.textContent = 'Saving…';
 
@@ -1187,7 +1224,9 @@ window.saveEditModal = function () {
     license_renewal: document.getElementById('em-license_renewal').value,
     alt_email: document.getElementById('em-alt_email').value,
     dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value,
-    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked
+    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked,
+    marketing_number: phones.marketing_number,
+    office_number: phones.office_number
   };
 
   Promise.all([

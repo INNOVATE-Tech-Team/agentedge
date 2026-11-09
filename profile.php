@@ -58,9 +58,20 @@ $agent = require_login();
               <div class="field"><label>Full Name</label><input id="f-fullName" type="text"></div>
               <div class="field"><label>Email <small style="font-weight:400;color:#999">Your sign-in email. Contact the back office to request a change.</small></label><input id="f-email" type="email" disabled></div>
               <div class="field"><label>Phone</label><input id="f-phone" type="tel"></div>
-              <div class="field"><label>Marketing Number <small style="font-weight:400;color:#999">(optional, if different from your phone)</small></label><input id="f-marketing_number" type="tel" placeholder="(843) 555-1234"></div>
               <div class="field"><label>Market Center</label><input id="f-marketCenter" type="text" disabled></div>
               <div class="field full"><label>Brokerage</label><input id="f-brokerage" type="text" disabled></div>
+
+              <div class="section-h">Business Numbers</div>
+              <div class="field">
+                <label>Marketing Number <small style="font-weight:400;color:#999">(optional)</small></label>
+                <input id="f-marketing_number" type="tel" inputmode="tel" autocomplete="off" placeholder="(843) 555-1234">
+                <div class="hs-note">Shown on your INNOVATE website instead of your cell (e.g. your Follow Up Boss number). Leave blank to show your cell.</div>
+              </div>
+              <div class="field">
+                <label>Office Number <small style="font-weight:400;color:#999">(optional)</small></label>
+                <input id="f-office_number" type="tel" inputmode="tel" autocomplete="off" placeholder="(843) 555-1234">
+                <div class="hs-note">Your office line, shown as the office number on your INNOVATE website. Leave blank if you don't have one.</div>
+              </div>
 
               <div class="section-h">Important Dates</div>
               <div class="field"><label>Birthday <small style="font-weight:400;color:#999">(MM-DD, shown on BIC calendar)</small></label><input id="f-birthday" type="text" placeholder="06-15" maxlength="5" pattern="\d{2}-\d{2}"></div>
@@ -200,7 +211,7 @@ $agent = require_login();
       </main>
     </div>
   </div>
-  <script src="assets/profile.js"></script>
+  <script src="assets/profile.js?v=20261109"></script>
   <script src="assets/headshot-crop.js"></script>
   <script src="assets/headshot-manager.js"></script>
   <script>
