@@ -32,6 +32,30 @@ $allDepts = $db->query("SELECT * FROM vault_depts ORDER BY sort_ord, name")->fet
 
 
 
+// Per-department deep link (?dept=slug). Each department is its own vault: the
+
+// link drops you straight into just that department's folders instead of
+
+// landing on one page that lists every department at once. An unknown slug
+
+// falls back to the full view rather than erroring.
+
+$scopedDeptSlug = trim((string) ($_GET['dept'] ?? ''));
+
+$scopedDept = null;
+
+if ($scopedDeptSlug !== '') {
+
+    foreach ($allDepts as $d) {
+
+        if ($d['slug'] === $scopedDeptSlug) { $scopedDept = $d; break; }
+
+    }
+
+}
+
+
+
 if ($admin) {
 
     $userDeptSlugs = array_column($allDepts, 'slug');
@@ -45,6 +69,26 @@ if ($admin) {
     $userDeptSlugs = $rows->fetchAll(PDO::FETCH_COLUMN);
 
 }
+
+
+
+// Only honor the deep link if this viewer can actually see that department —
+
+// otherwise fall back to the normal unscoped view rather than rendering an
+
+// empty scoped page for a department they have no access to.
+
+if ($scopedDept && !in_array($scopedDeptSlug, $userDeptSlugs, true)) {
+
+    $scopedDept     = null;
+
+    $scopedDeptSlug = '';
+
+}
+
+
+
+$vaultTitle = $scopedDept ? ($scopedDept['name'] . ' Vault') : 'The Vault';
 
 
 
@@ -116,6 +160,96 @@ $rootFolders = vault_visible_root_folders($admin, $userDeptSlugs, $email);
 
 
 
+// Each department's vault shows everything underneath it, not just its
+
+// top-level folders. Children are filtered with the same visibility rule as
+
+// roots above (and as user_can_see_folder() in api/vault_browse.php), then
+
+// indexed parent_id => children so the tree can render itself recursively.
+
+function vault_visible_child_map(bool $admin, array $userDeptSlugs, string $email): array {
+
+    $db = local_db();
+
+    $all = $db->query(
+
+        "SELECT * FROM vault_folders WHERE parent_id IS NOT NULL AND parent_id<>'' ORDER BY sort_ord, name"
+
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $map = [];
+
+    foreach ($all as $f) {
+
+        if ($f['visibility'] === 'public')         $visible = true;
+
+        elseif ($f['visibility'] === 'dept')       $visible = $admin || in_array($f['dept_slug'], $userDeptSlugs);
+
+        elseif ($f['visibility'] === 'personal')   $visible = ($f['owner_email'] ?? '') === $email;
+
+        else                                       $visible = $admin; // 'admin'
+
+        if ($visible) $map[$f['parent_id']][] = $f;
+
+    }
+
+    return $map;
+
+}
+
+
+
+$childMap = vault_visible_child_map($admin, $userDeptSlugs, $email);
+
+
+
+// Renders one folder plus everything beneath it. $crumb is the ancestor chain
+
+// handed to loadFolder() so the breadcrumb stays correct when you click
+
+// straight into a deeply nested folder from the tree. The depth cap is a
+
+// guard against a parent_id cycle in the data turning this into a hang.
+
+function vault_render_tree_item(array $f, array $childMap, array $crumb, int $depth = 0): void {
+
+    $args = htmlspecialchars(
+
+        json_encode((string) $f['id']) . ',' .
+
+        json_encode((string) $f['name']) . ',' .
+
+        json_encode($crumb),
+
+        ENT_QUOTES
+
+    );
+
+    echo '<div class="vault-folder-item" data-id="' . htmlspecialchars($f['id']) . '"'
+
+       . ' style="padding-left:' . (22 + $depth * 14) . 'px"'
+
+       . ' onclick="loadFolder(this,' . $args . ')">'
+
+       . '<span class="vf-icon">&#128193;</span> '
+
+       . htmlspecialchars($f['name']) . '</div>';
+
+    if ($depth >= 12) return;
+
+    $next = array_merge($crumb, [['id' => $f['id'], 'name' => $f['name']]]);
+
+    foreach ($childMap[$f['id']] ?? [] as $kid) {
+
+        vault_render_tree_item($kid, $childMap, $next, $depth + 1);
+
+    }
+
+}
+
+
+
 // Group root folders: personal first, then public, then by dept.
 
 $grouped = ['__personal' => [], '__public' => []];
@@ -144,6 +278,18 @@ foreach ($rootFolders as $f) {
 
 }
 
+
+
+// Scoped view: show only the one department, so it reads as that department's
+
+// own vault rather than one section among many.
+
+if ($scopedDept) {
+
+    $grouped = [$scopedDeptSlug => $grouped[$scopedDeptSlug] ?? []];
+
+}
+
 ?>
 
 <!doctype html>
@@ -156,7 +302,7 @@ foreach ($rootFolders as $f) {
 
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <title>The Vault — AgentEdge</title>
+  <title><?= htmlspecialchars($vaultTitle) ?> — AgentEdge</title>
 
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 
@@ -171,6 +317,14 @@ foreach ($rootFolders as $f) {
     .vault-main{flex:1;overflow-y:auto;padding:24px}
 
     .vault-section{margin-bottom:4px}
+
+    .vault-section-top{display:flex;align-items:center;gap:2px}
+
+    .vault-section-top .vault-section-hdr{flex:1;width:auto;min-width:0}
+
+    .vault-dept-open{padding:6px 12px 6px 4px;font-size:14px;line-height:1;color:#5b8e0d;text-decoration:none;flex-shrink:0}
+
+    .vault-dept-open:hover{color:#3a6b00}
 
     .vault-section-hdr{display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#888;cursor:pointer;user-select:none;background:none;border:none;width:100%;text-align:left}
 
@@ -270,7 +424,7 @@ foreach ($rootFolders as $f) {
 
     <header class="content-top">
 
-      <div class="content-title">The Vault</div>
+      <div class="content-title"><?= htmlspecialchars($vaultTitle) ?></div>
 
       <div class="content-hello">Documents &amp; Resources</div>
 
@@ -292,17 +446,50 @@ foreach ($rootFolders as $f) {
 
 
 
+        if ($scopedDept) {
+
+            echo '<div style="padding:6px 14px 10px">'
+
+               . '<a href="vault.php" class="btn-sm" style="display:block;text-align:center;text-decoration:none">&larr; All Departments</a>'
+
+               . '</div>';
+
+        }
+
+
+
         foreach ($grouped as $groupKey => $folders) {
 
-            if (empty($folders) && $groupKey !== '__public' && $groupKey !== '__personal') continue;
+            // When scoped to one department, always render it — an empty
+            // department vault should still show its header and "No folders"
+            // rather than a blank page with just the back link.
+            if (empty($folders) && !$scopedDept && $groupKey !== '__public' && $groupKey !== '__personal') continue;
 
-            $label = htmlspecialchars($deptNames[$groupKey] ?? ucfirst($groupKey));
+            $label  = htmlspecialchars($deptNames[$groupKey] ?? ucfirst($groupKey));
+
+            $isDept = ($groupKey !== '__public' && $groupKey !== '__personal');
 
             echo '<div class="vault-section">';
+
+            echo '<div class="vault-section-top">';
 
             echo '<button class="vault-section-hdr" onclick="toggleVaultSection(this)">'
 
                . $label . ' <span class="vs-arrow">&#9660;</span></button>';
+
+            // Each department also links to its own vault — the same page
+
+            // scoped to just that department. Pointless once already scoped.
+
+            if ($isDept && !$scopedDept) {
+
+                echo '<a class="vault-dept-open" href="vault.php?dept=' . urlencode($groupKey) . '"'
+
+                   . ' title="Open this department&#39;s vault">&rarr;</a>';
+
+            }
+
+            echo '</div>';
 
             echo '<div class="vault-section-body">';
 
@@ -312,15 +499,13 @@ foreach ($rootFolders as $f) {
 
             } else {
 
+                // Full tree, not just roots — everything in the department
+
+                // hangs underneath it here.
+
                 foreach ($folders as $f) {
 
-                    $fid  = htmlspecialchars($f['id']);
-
-                    $name = htmlspecialchars($f['name']);
-
-                    echo '<div class="vault-folder-item" data-id="' . $fid . '" onclick="loadFolder(this,\'' . $fid . '\',\'' . addslashes($name) . '\',[])">
-
-                        <span class="vf-icon"></span> ' . $name . '</div>';
+                    vault_render_tree_item($f, $childMap, []);
 
                 }
 
@@ -378,7 +563,14 @@ function toggleVaultSection(btn) {
 
     btn.classList.toggle('collapsed');
 
-    btn.nextElementSibling.classList.toggle('hidden');
+    // The header button sits inside .vault-section-top alongside the
+    // "open this department's vault" link, so the body is no longer the
+    // button's next sibling — find it from the section instead.
+    const section = btn.closest('.vault-section');
+
+    const body = section ? section.querySelector('.vault-section-body') : null;
+
+    if (body) body.classList.toggle('hidden');
 
 }
 
@@ -942,7 +1134,10 @@ function mimeLabel(mime) {
 
 }
 
-// Deep link from the Finance → Insurance nav item: vault.php?open=<folder id>
+// Deep link straight to one folder: vault.php?open=<folder id>. Now that the
+// tree renders nested folders too, this resolves any folder, not just a
+// top-level one. Kept as a general entry point after the standalone
+// Finance → Insurance nav item was folded into the Finance vault.
 (function () {
     const id = new URLSearchParams(location.search).get('open');
     if (!id) return;
