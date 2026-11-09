@@ -7,8 +7,12 @@
 //
 // GET /api/agent_profile_export.php?token=...
 //   Bulk metadata only (no image bytes) — cheap to call for the whole roster.
-//   Response: { profiles: [{ email, bio, phone, license_number, license_state,
-//              specialty, languages, headshot_uploaded_at }] }
+//   Response: { profiles: [{ email, bio, phone, marketing_phone, office_phone,
+//              license_number, license_state, specialty, languages,
+//              headshot_uploaded_at }] }
+//   marketing_phone / office_phone are always present; '' means the agent has
+//   no such number, and the website clears the one it stored (it then shows
+//   the next number: Marketing Number, else `phone`).
 //   is_military/first_responder/is_teacher were considered for this export
 //   too but turned out to be free-text self-descriptions ("Veteran", "NYPD
 //   Sergeant", "not_applicable", "Substitute Teacher" in the is_military
@@ -101,7 +105,7 @@ if ($action === 'headshot') {
 // match: anyone with ANY of these fields set, not just bio or a headshot.
 header('Content-Type: application/json');
 $rows = $pdo->query(
-    "SELECT i.email, i.bio, i.phone, i.license_number, i.license_state, i.specialty, i.languages,
+    "SELECT i.email, i.bio, i.phone, i.marketing_phone, i.office_phone, i.license_number, i.license_state, i.specialty, i.languages,
             NULLIF(MAX(
                 COALESCE((SELECT MAX(f.uploaded_at) FROM agent_intake_files f WHERE f.agent_email = i.email), ''),
                 COALESCE((SELECT hs.updated_at FROM agent_headshot hs WHERE hs.agent_email = i.email), '')
@@ -109,6 +113,8 @@ $rows = $pdo->query(
      FROM agent_intake i
      WHERE i.bio IS NOT NULL AND i.bio != ''
         OR i.phone IS NOT NULL AND i.phone != ''
+        OR i.marketing_phone IS NOT NULL AND i.marketing_phone != ''
+        OR i.office_phone IS NOT NULL AND i.office_phone != ''
         OR i.license_number IS NOT NULL AND i.license_number != ''
         OR i.specialty IS NOT NULL AND i.specialty != ''
         OR i.languages IS NOT NULL AND i.languages != ''

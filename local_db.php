@@ -136,6 +136,14 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_text TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_submitted_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
+    // Agent's Marketing Number and Office Number, sent to the website by
+    // api/agent_profile_export.php as marketing_phone / office_phone (the
+    // website shows the Marketing Number instead of the cell in `phone`; see
+    // innovate-advantage-server PR #216, migration 355). Schema only: no
+    // AgentEdge form writes these yet, so they stay '' until one does.
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN marketing_phone TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN office_phone    TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
     // Cross-system identity map for the Coach Dashboard production layer
     // (backfill_agent_identity.php / lib/agent_identity.php). darwin_agent_person_id
     // and perfex_staff_id sit alongside the existing canonical_agent_id as
