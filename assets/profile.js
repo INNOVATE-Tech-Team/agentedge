@@ -1,6 +1,6 @@
 // My Profile — load the agent's record, let them edit contact + social links.
 const SOCIAL_KEYS = ['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'website', 'blog'];
-const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal'];
+const EXTRA_KEYS  = ['birthday', 'hire_date', 'license_renewal', 'marketing_number'];
 const FIELDS = ['fullName', 'email', 'phone', 'marketCenter', 'brokerage', ...SOCIAL_KEYS, 'googlePlaceId', 'zillowReviewLink'];
 
 function set(id, v) { const el = document.getElementById('f-' + id); if (el) el.value = v || ''; }

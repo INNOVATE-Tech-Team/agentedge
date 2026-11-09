@@ -24,6 +24,13 @@ if ($myMcSlugs !== null) {
         $rosterMcSlugsByEmail[strtolower(trim($r['email']))][] = slugify_mc($r['market_center'] ?: '');
     }
 }
+// Email -> active roster Market Center names, for the Offboard Agent action.
+$offMcsByEmail = [];
+if ($isAdmin) {
+    foreach (local_db()->query("SELECT email, market_center FROM innovate_roster WHERE active=1 AND email != ''")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $offMcsByEmail[strtolower(trim($r['email']))][] = (string)$r['market_center'];
+    }
+}
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 function dv(string $val): string {
     if ($val === '' || $val === null) return '<span class="dg-value empty">—</span>';
@@ -474,6 +481,7 @@ $missingCount = count($missingAgents);
                   <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
                   <button type="button" class="btn-detail-link" onclick="openEditModal('<?= h($p['email']) ?>', '<?= h($p['full_name'] ?: $p['email']) ?>', { office_location: '<?= h($p['office_location']) ?>', phone: '<?= h($p['phone'] ?? '') ?>' })">Edit Profile →</button>
                   <a href="agent_profile.php?email=<?= h($p['email']) ?>" class="btn-detail-link">View Full Profile →</a>
+                  <button type="button" class="btn-detail-link" style="color:#b00020" onclick="openOffboardModal('<?= h($p['email']) ?>', '<?= h($p['full_name'] ?: $p['email']) ?>')">Offboard Agent →</button>
                   <?php endif; ?>
                 </div>
               </div>
@@ -665,6 +673,28 @@ $missingCount = count($missingAgents);
   </div>
 </div>
 
+<div class="modal-overlay" id="offboardModalOverlay" style="display:none">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-header">
+      <h3>Offboard Agent</h3>
+      <button type="button" class="modal-close" onclick="closeOffboardModal()">&times;</button>
+    </div>
+    <div style="padding:16px 22px;overflow:auto">
+      <p id="ob-sub" style="font-size:12px;color:var(--muted);margin:0 0 12px"></p>
+      <div class="em-field" style="margin-bottom:10px"><label>Last Day</label><input type="date" id="ob-last-day"></div>
+      <div class="em-field" style="margin-bottom:10px"><label>Reason</label>
+        <select id="ob-reason"><option value="voluntary">Voluntary</option><option value="termination">Termination</option><option value="transfer">Transfer</option><option value="other">Other</option></select></div>
+      <div class="em-field" style="margin-bottom:10px"><label>Book of Business Goes To</label><input type="text" id="ob-bob"></div>
+      <div class="em-field"><label>Notes</label><textarea id="ob-notes"></textarea></div>
+      <div id="ob-err" style="font-size:12px;color:#b00020;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-save" id="ob-save" style="background:#b00020" onclick="saveOffboard()">Send to Offboarding</button>
+      <button type="button" class="btn-detail-link" onclick="closeOffboardModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="mergeModalOverlay" style="display:none">
   <div class="modal-box">
     <div class="modal-header">
@@ -719,7 +749,9 @@ $missingCount = count($missingAgents);
   </div>
 </div>
 
+<script src="assets/headshot-crop.js?v=20261019"></script>
 <script src="assets/language_options.js"></script>
+<script src="assets/onboard_send_confirm.js?v=<?= (int)@filemtime(__DIR__ . '/assets/onboard_send_confirm.js') ?>"></script>
 <script>
 (function () {
   initLanguageChecklist('em-languages-checks', 'em-languages');
@@ -802,25 +834,43 @@ $missingCount = count($missingAgents);
       .catch(function () { span.textContent = 'Network error.'; });
   };
 
-  // Recruit Source — populate every row's dropdown from the live agent
-  // roster (fetched once, not per-row) so it always reflects who's currently
-  // active rather than a static list baked into the page.
-  fetch('api/roster.php', { credentials: 'same-origin' })
+  // Recruit Source — populate every ".rs-select" dropdown from the live
+  // agent roster. Fetched once and cached (not re-fetched per row) so it
+  // always reflects who's currently active rather than a static list baked
+  // into the page. Exposed as populateRecruitSourceSelects(root) rather than
+  // a one-shot .then() because each agent's actual <select> is added to the
+  // DOM later, by loadAgentDetail()'s AJAX row-expansion (api/agent_detail.php)
+  // — a one-time querySelectorAll('.rs-select') run here at page load always
+  // found zero elements (no row had been expanded yet), and nothing ever
+  // re-ran it, so this dropdown always rendered as just "— none —" no matter
+  // what was actually saved. Confirmed live 2026-10-17 via Lynette Gilliland/
+  // Melissa Urso: agent_admin.recruit_source_email was correct, this dropdown
+  // just never reflected it — and worse, "Save Staff-Managed Fields" would
+  // have silently blanked the real value back out, since the select never
+  // had anything but the empty option to submit.
+  var rosterOptsPromise = fetch('api/roster.php', { credentials: 'same-origin' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       var agents = (d.agents || []).filter(function (a) { return a.email; })
         .sort(function (a, b) { return a.name.localeCompare(b.name); });
-      var opts = '<option value="">— none —</option>' + agents.map(function (a) {
+      return '<option value="">— none —</option>' + agents.map(function (a) {
         return '<option value="' + a.email.toLowerCase() + '">' + (a.name.replace(/[&<>"]/g, function (c) {
           return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
         })) + '</option>';
       }).join('');
-      document.querySelectorAll('.rs-select').forEach(function (sel) {
+    })
+    .catch(function () { return ''; });
+
+  window.populateRecruitSourceSelects = function (root) {
+    rosterOptsPromise.then(function (opts) {
+      if (!opts) return;
+      (root || document).querySelectorAll('.rs-select').forEach(function (sel) {
         sel.innerHTML = opts;
         sel.value = (sel.dataset.current || '').toLowerCase();
       });
-    })
-    .catch(function () {});
+    });
+  };
+  populateRecruitSourceSelects();
 
   window.sendCompletionLink = function (email, btnId) {
     var btn = document.getElementById(btnId);
@@ -839,6 +889,56 @@ $missingCount = count($missingAgents);
         if (d.ok) setTimeout(function () { btn.textContent = orig; }, 3000);
       })
       .catch(function () { btn.disabled = false; btn.textContent = orig; alert('Network error.'); });
+  };
+
+  // "Resend to Onboarding": puts the agent back on the Active onboarding queue
+  // (their existing entry reopened with its steps intact, or a new entry if
+  // they never had one), then offers to send / resend the onboarding documents.
+  window.resendToOnboarding = function (email, name, btnId) {
+    if (!confirm('Put ' + name + ' back in the Active onboarding queue?\n\nTheir existing onboarding steps and intake info are kept.')) return;
+    var btn  = document.getElementById(btnId);
+    var orig = btn.textContent;
+    var busy = function (txt) { btn.disabled = true; btn.textContent = txt; };
+    var post = function (action, payload) {
+      return fetch('api/onboard_action.php?action=' + action, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) { return r.json(); });
+    };
+    var finish = function (msg) {
+      btn.disabled = false; btn.textContent = 'Done ✓';
+      setTimeout(function () { btn.textContent = orig; }, 3000);
+      if (msg) alert(msg);
+    };
+    var fail = function (msg) { btn.disabled = false; btn.textContent = orig; alert(msg || 'Something went wrong.'); };
+
+    busy('Reopening…');
+    post('reopen_for_agent', { agent_email: email, agent_name: name })
+      .then(function (d) {
+        if (!d.ok) { fail(d.error || 'Could not reopen onboarding.'); return; }
+        var where = ({
+          reopened:       'is back on the Active onboarding queue',
+          created:        'was added to the Active onboarding queue',
+          already_active: 'is already on the Active onboarding queue'
+        })[d.outcome] || 'is on the Active onboarding queue';
+        var doc     = d.doc || {};
+        var queueId = d.id;
+        // The document send itself is confirmed in the shared popup, which shows
+        // exactly what goes out: resend while documents are out for signature, a
+        // brand-new package (signed step reset) if already signed, else a first send.
+        var opts = { queueId: queueId, kind: 'provision' };
+        if (doc.status === 'sent' && doc.has_doc) opts.kind = 'resend';
+        else if (doc.status === 'done') opts.assumeReset = true;
+        busy('Reviewing…');
+        opts.onCancel = function () { finish(name + ' ' + where + '. No documents were sent.'); };
+        opts.onResult = function (r) {
+          if (!r.ok) { fail('Documents were NOT sent: ' + (r.error || 'Unknown error') + '\n\nOpen the Onboarding page to retry from the agent\'s card.'); return; }
+          finish(name + ' ' + where + '. Onboarding documents sent.' + (r.note ? '\n\n' + r.note : ''));
+        };
+        OnboardSendConfirm.open(opts);
+      })
+      .catch(function () { fail('Network error.'); });
   };
 
   window.sendBulkCompletionLinks = function () {
@@ -887,27 +987,82 @@ $missingCount = count($missingAgents);
       .catch(function () { msg.textContent = 'Network error.'; });
   };
 
+  // Headshots on the detail card work like the photo manager
+  // (assets/headshot-manager.js): an upload is kept as the uncropped
+  // original, then framed right away (assets/headshot-crop.js), and the
+  // framed square is saved as the agent's headshot (set_headshot), which is
+  // what the website shows. "Adjust crop" reopens that framing.
+  function headshotPost(action, fd, email) {
+    fd.append('email', email);
+    return fetch('api/intake.php?action=' + action, { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) throw HeadshotCrop.userError(res.error || 'Something went wrong.');
+        return res;
+      });
+  }
+
+  // allowSmall: frame a photo under the 400x400 minimum (the admin
+  // override; api/intake.php only honours allow_small from admins).
+  function frameAndSaveHeadshot(email, msg, key, rect, allowSmall) {
+    return HeadshotCrop.crop('api/intake.php?action=headshot&key=' + encodeURIComponent(key) + '&full=1', rect, { allowSmall: allowSmall })
+      .then(function (result) {
+        msg.textContent = 'Saving headshot…';
+        var fd = new FormData();
+        fd.append('key', key);
+        fd.append('crop', result.blob, 'headshot.jpg');
+        fd.append('rect', JSON.stringify(result.rect));
+        if (allowSmall) fd.append('allow_small', '1');
+        return headshotPost('set_headshot', fd, email);
+      });
+  }
+
+  // An error next to the card's buttons, plus "Use this photo anyway" when
+  // the photo is just under the size minimum (this card's photo controls
+  // are admin-only). retrySmall is null once already overriding.
+  function headshotError(msg, err, retrySmall) {
+    msg.textContent = HeadshotCrop.errorText(err);
+    var bypass = retrySmall && HeadshotCrop.bypassButton(err, retrySmall);
+    if (bypass) msg.appendChild(bypass);
+  }
+
   window.uploadHeadshot = function (email, idx, inputEl) {
     var file = inputEl.files[0];
+    inputEl.value = '';
     if (!file) return;
     var msg = document.getElementById('hs-msg-' + idx);
-    if (file.size > 10 * 1024 * 1024) { msg.textContent = 'File exceeds 10 MB limit.'; return; }
-    msg.textContent = '';
-    HeadshotCrop.pick(file)
-      .then(function (blob) {
-        msg.textContent = 'Uploading…';
-        var fd = new FormData();
-        fd.append('headshot', blob, 'headshot.jpg');
-        fd.append('email', email);
-        return fetch('api/intake.php?action=upload', { method: 'POST', credentials: 'same-origin', body: fd })
-          .then(function (r) { return r.json(); });
-      })
-      .then(function (res) {
-        if (res.ok) { location.reload(); }
-        else { msg.textContent = res.error || 'Upload failed.'; }
-      })
-      .catch(function (err) { msg.textContent = HeadshotCrop.errorText(err); });
-    inputEl.value = '';
+    (function attempt(allowSmall) {
+      msg.textContent = '';
+      HeadshotCrop.checkFile(file, { allowSmall: allowSmall })
+        .then(function () {
+          msg.textContent = 'Uploading…';
+          var fd = new FormData();
+          fd.append('headshot', file);
+          if (allowSmall) fd.append('allow_small', '1');
+          return headshotPost('upload', fd, email);
+        })
+        .then(function (res) {
+          msg.textContent = '';
+          // Cancelling the framing still leaves the photo uploaded, so the
+          // card reloads either way to show it.
+          return frameAndSaveHeadshot(email, msg, res.file_key, null, allowSmall).catch(function (err) {
+            if (!err || err.message !== 'cancelled') throw err;
+          });
+        })
+        .then(function () { location.reload(); })
+        .catch(function (err) { headshotError(msg, err, allowSmall ? null : function () { attempt(true); }); });
+    })(false);
+  };
+
+  window.frameHeadshot = function (btn, idx) {
+    var msg = document.getElementById('hs-msg-' + idx);
+    var rect = btn.dataset.rect ? JSON.parse(btn.dataset.rect) : null;
+    (function attempt(allowSmall) {
+      msg.textContent = '';
+      frameAndSaveHeadshot(btn.dataset.email, msg, btn.dataset.key, rect, allowSmall)
+        .then(function () { location.reload(); })
+        .catch(function (err) { headshotError(msg, err, allowSmall ? null : function () { attempt(true); }); });
+    })(false);
   };
 
   window.deleteHeadshot = function (key) {
@@ -1385,6 +1540,7 @@ $missingCount = count($missingAgents);
         if (res.status !== 200 || !res.body.ok) throw new Error(res.body.error || 'load failed');
         td.innerHTML = res.body.html;
         makeSectionsCollapsible(td);
+        populateRecruitSourceSelects(td);
         detailLoadedIdx[idx] = true;
       })
       .catch(function () {
@@ -1473,6 +1629,50 @@ $missingCount = count($missingAgents);
     setTimeout(function () { document.getElementById('mg-search').focus(); }, 0);
   };
 
+  var OFF_MCS = <?= json_encode((object)$offMcsByEmail) ?>;
+  var obEmail = '', obName = '';
+  window.openOffboardModal = function (email, name) {
+    obEmail = email; obName = name;
+    var mcs = OFF_MCS[email.toLowerCase().trim()] || [];
+    document.getElementById('ob-sub').textContent = 'Starts offboarding for ' + name + (mcs.length ? ' (' + mcs.join(', ') + ')' : '') +
+      ': removes them from the active roster, restricts their AgentEdge access to the exit interview, and notifies the offboarding team.';
+    ['ob-last-day','ob-bob','ob-notes'].forEach(function (i) { document.getElementById(i).value = ''; });
+    document.getElementById('ob-reason').value = 'voluntary';
+    document.getElementById('ob-err').style.display = 'none';
+    document.getElementById('offboardModalOverlay').style.display = 'flex';
+  };
+  window.closeOffboardModal = function () { document.getElementById('offboardModalOverlay').style.display = 'none'; };
+  window.saveOffboard = async function () {
+    var err = document.getElementById('ob-err'), btn = document.getElementById('ob-save');
+    err.style.display = 'none';
+    if (!confirm('Offboard ' + obName + '? This starts the offboarding process and sends notifications.')) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    var fields = {
+      last_day: document.getElementById('ob-last-day').value,
+      reason: document.getElementById('ob-reason').value,
+      book_of_biz_to: document.getElementById('ob-bob').value,
+      reason_notes: document.getElementById('ob-notes').value
+    };
+    // One call per active Market Center: the first creates the queue entry,
+    // the rest are de-duplicated server-side and just detach that roster row.
+    var mcs = OFF_MCS[obEmail.toLowerCase().trim()] || [''];
+    var id = null;
+    try {
+      for (var i = 0; i < mcs.length; i++) {
+        var r = await fetch('api/offboard_action.php?action=add_to_queue', {
+          method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(Object.assign({agent_email: obEmail, agent_name: obName, market_center: mcs[i]}, fields))
+        });
+        var d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Error');
+        id = d.id;
+      }
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Send to Offboarding';
+      err.textContent = 'Failed: ' + e.message; err.style.display = ''; return;
+    }
+    location.href = 'offboarding.php?open=' + id;
+  };
   window.closeMergeModal = function () {
     document.getElementById('mergeModalOverlay').style.display = 'none';
   };
@@ -1554,6 +1754,10 @@ $missingCount = count($missingAgents);
       var line = t.table + ': ';
       if (t.conflict) {
         line += '<span style="color:#b45309">both sides have a row — the surviving side\'s is kept, the other side\'s (' + loseCount + ') is discarded</span>';
+      } else if (loseCount > 0 && t.collide > 0) {
+        var moving = loseCount - t.collide;
+        line += (moving > 0 ? moving + ' row(s) move over; ' : '')
+          + '<span style="color:#b45309">' + t.collide + ' discarded — the surviving side already has the same record (same loop/event/etc.)</span>';
       } else if (loseCount > 0) {
         line += loseCount + ' row(s) move over';
       } else {
@@ -1609,6 +1813,5 @@ $missingCount = count($missingAgents);
   };
 }());
 </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>

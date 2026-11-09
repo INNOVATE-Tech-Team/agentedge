@@ -56,8 +56,9 @@ $agent = require_login();
           <form id="profile-form">
             <div class="form-grid">
               <div class="field"><label>Full Name</label><input id="f-fullName" type="text"></div>
-              <div class="field"><label>Email</label><input id="f-email" type="email"></div>
+              <div class="field"><label>Email <small style="font-weight:400;color:#999">Your sign-in email. Contact the back office to request a change.</small></label><input id="f-email" type="email" disabled></div>
               <div class="field"><label>Phone</label><input id="f-phone" type="tel"></div>
+              <div class="field"><label>Marketing Number <small style="font-weight:400;color:#999">(optional, if different from your phone)</small></label><input id="f-marketing_number" type="tel" placeholder="(843) 555-1234"></div>
               <div class="field"><label>Market Center</label><input id="f-marketCenter" type="text" disabled></div>
               <div class="field full"><label>Brokerage</label><input id="f-brokerage" type="text" disabled></div>
 

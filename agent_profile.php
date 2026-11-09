@@ -10,9 +10,7 @@ require_once __DIR__ . '/lib/headshot_select.php';
 
 $agent = require_login();
 $perms = current_perms();
-$isAdmin  = !empty($perms['isAdmin']);
-$isLeader = $isAdmin || is_mc_leader() || is_bic();
-if (!$isLeader) { header('Location: index.php'); exit; }
+if (empty($perms['isAdmin'])) { header('Location: index.php'); exit; }
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES); }
 function dv($val): string {
@@ -24,16 +22,6 @@ function dvBool($val): string {
 }
 
 $targetEmail = strtolower(trim($_GET['email'] ?? ''));
-
-// mc_leader/bic may only open a profile for an agent on their own Market
-// Center's active roster — mirrors backoffice_agents.php's scoping so a
-// leader can't browse agents outside the MC(s) they lead.
-if (!$isAdmin) {
-    $stmt = local_db()->prepare("SELECT market_center FROM innovate_roster WHERE active=1 AND email=?");
-    $stmt->execute([$targetEmail]);
-    $targetMcSlugs = array_map(fn($mc) => slugify_mc($mc ?: ''), $stmt->fetchAll(PDO::FETCH_COLUMN));
-    if (!array_intersect($targetMcSlugs, my_mc_slugs())) { header('Location: index.php'); exit; }
-}
 
 $TABS = [
     'profile'        => 'Agent Profile',
@@ -81,6 +69,15 @@ if ($targetEmail !== '') {
 }
 
 $displayName = $profileData['full_name'] ?? $targetEmail;
+
+// Office name(s) shown beside the name: active roster market centers, else the intake office_location.
+$officeName = '';
+if ($targetEmail !== '') {
+    $ost = local_db()->prepare("SELECT DISTINCT market_center FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 AND TRIM(COALESCE(market_center,''))!='' ORDER BY market_center");
+    $ost->execute([$targetEmail]);
+    $officeName = implode(', ', $ost->fetchAll(PDO::FETCH_COLUMN));
+    if ($officeName === '') $officeName = trim($profileData['office_location'] ?? '');
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -254,7 +251,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
       <?php endif; ?>
       <div>
         <div class="bo-eyebrow">Agent</div>
-        <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?></div>
+        <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?><?php if ($officeName !== ''): ?> <span style="font-size:14px;font-weight:500;color:var(--faint)">· <?= h($officeName) ?></span><?php endif; ?></div>
       </div>
     </div>
     <a href="backoffice_agents.php" class="btn-detail-link">← Back to Agent Profiles</a>
@@ -399,7 +396,6 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <span class="dg-value" style="white-space:pre-line"><?= dv($retentionNotes) ?></span>
           </div>
           <?php endif; ?>
-          <?php if ($isAdmin): ?>
           <div class="dg-section">Staff-Managed <span style="font-weight:400;text-transform:none;letter-spacing:0">(not visible to the agent)</span></div>
           <div class="dg-field">
             <span class="dg-label">1099 Type</span>
@@ -424,7 +420,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           </div>
           <div class="dg-field">
             <span class="dg-label">Coached By</span>
-            <input type="text" id="admin-coached" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+            <?php
+              $launchCoaches = list_launch_coaches(local_db());
+              $curCoach = trim((string)($a['coached_by'] ?? ''));
+            ?>
+            <select id="admin-coached" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+              <option value="">— none —</option>
+              <?php foreach ($launchCoaches as $lc): ?>
+                <option value="<?= h($lc['email']) ?>" <?= strcasecmp($curCoach, $lc['email']) === 0 ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <span style="font-size:11px;color:var(--faint);margin-top:2px">If the coach isn't in the dropdown, assign them the Launch Coach (or Director of Coaching) role first, then add them to an agent's profile.</span>
           </div>
           <div class="dg-field">
             <span class="dg-label">Managed By</span>
@@ -454,7 +460,6 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <button type="button" class="btn-detail-link" onclick="resetAgentPassword()">Reset Password</button>
             <span id="admin-reset-pw-msg" style="font-size:11px;color:var(--faint);margin-left:8px"></span>
           </div>
-          <?php endif; ?>
 
           <div class="detail-actions">
             <?php if (!empty($a['submitted'])): ?>
@@ -463,9 +468,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
               <span style="font-size:11px;color:var(--faint)">Last updated <?= h($a['updated_at'] ? fmt_dt_et($a['updated_at'], 'M j, Y') : '—') ?></span>
             <?php endif; ?>
             <a href="onboarding.php" target="_blank" class="btn-detail-link">Onboarding Steps →</a>
-            <?php if ($isAdmin): ?>
             <button type="button" class="btn-detail-link" onclick="openEditModal()">Edit Profile →</button>
-            <?php endif; ?>
           </div>
 
         </div>
@@ -739,8 +742,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
-<script src="assets/headshot-crop.js"></script>
-<script src="assets/headshot-manager.js"></script>
+<script src="assets/headshot-crop.js?v=20261019"></script>
+<script src="assets/headshot-manager.js?v=20261019"></script>
 <script>
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
@@ -798,7 +801,8 @@ window.switchApTab = function (t) {
 
 // ── Headshots ────────────────────────────────────────────────────────────────
 if (document.getElementById('hs-manager')) {
-  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL });
+  // allowSmall: admins can override the 400×400 photo minimum.
+  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL, allowSmall: <?= !empty($perms['isAdmin']) ? 'true' : 'false' ?> });
 }
 
 // ── Documents tab ────────────────────────────────────────────────────────────
@@ -1570,6 +1574,5 @@ if (CAN_EDIT_PERMISSIONS && document.getElementById('ap-tab-permission') && docu
   permissionLoaded = true; loadPermissionTab();
 }
 </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>
