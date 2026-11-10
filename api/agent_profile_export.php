@@ -7,8 +7,14 @@
 //
 // GET /api/agent_profile_export.php?token=...
 //   Bulk metadata only (no image bytes) — cheap to call for the whole roster.
-//   Response: { profiles: [{ email, bio, phone, license_number, license_state,
-//              specialty, languages, headshot_uploaded_at }] }
+//   Response: { profiles: [{ email, bio, phone, marketing_phone, office_phone,
+//              license_number, license_state, specialty, languages,
+//              headshot_uploaded_at }] }
+//   marketing_phone / office_phone are the agent's Marketing Number and Office
+//   Number (agent_extra.marketing_number / office_number, lib/agent_phones.php).
+//   Both keys are on every row, '' when the agent has none: the website
+//   (innovate-advantage-server PR #216) then clears the number it stored and
+//   shows the next one (Marketing Number, else `phone`, the cell).
 //   is_military/first_responder/is_teacher were considered for this export
 //   too but turned out to be free-text self-descriptions ("Veteran", "NYPD
 //   Sergeant", "not_applicable", "Substitute Teacher" in the is_military
@@ -24,6 +30,7 @@
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
 require_once __DIR__ . '/../lib/headshot_select.php';
+require_once __DIR__ . '/../lib/agent_phones.php';
 
 $c     = cfg();
 $token = $c['crm_token'] ?? '';
@@ -99,20 +106,37 @@ if ($action === 'headshot') {
 // specialty/languages too, not just bio+photo — feeds the specialty +
 // language filters on the public agent directory. Filter widened to
 // match: anyone with ANY of these fields set, not just bio or a headshot.
+// The Marketing/Office Number count too, so an agent with only a Marketing
+// Number is still exported.
 header('Content-Type: application/json');
+agent_phones_ensure_columns($pdo);
 $rows = $pdo->query(
-    "SELECT i.email, i.bio, i.phone, i.license_number, i.license_state, i.specialty, i.languages,
+    "SELECT i.email, i.bio, i.phone,
+            COALESCE(e.marketing_number, '') AS marketing_phone,
+            COALESCE(e.office_number, '')    AS office_phone,
+            i.license_number, i.license_state, i.specialty, i.languages,
             NULLIF(MAX(
                 COALESCE((SELECT MAX(f.uploaded_at) FROM agent_intake_files f WHERE f.agent_email = i.email), ''),
                 COALESCE((SELECT hs.updated_at FROM agent_headshot hs WHERE hs.agent_email = i.email), '')
             ), '') AS headshot_uploaded_at
      FROM agent_intake i
+     LEFT JOIN agent_extra e ON e.email = i.email
      WHERE i.bio IS NOT NULL AND i.bio != ''
         OR i.phone IS NOT NULL AND i.phone != ''
+        OR TRIM(COALESCE(e.marketing_number, '')) != ''
+        OR TRIM(COALESCE(e.office_number, '')) != ''
         OR i.license_number IS NOT NULL AND i.license_number != ''
         OR i.specialty IS NOT NULL AND i.specialty != ''
         OR i.languages IS NOT NULL AND i.languages != ''
         OR EXISTS (SELECT 1 FROM agent_intake_files f WHERE f.agent_email = i.email)"
 )->fetchAll(PDO::FETCH_ASSOC);
+
+// Same "(843) 555-1234" format for every number; a value saved before the
+// strict check that isn't a valid US number goes out as stored.
+foreach ($rows as &$r) {
+    $r['marketing_phone'] = us_phone_for_export($r['marketing_phone']);
+    $r['office_phone']    = us_phone_for_export($r['office_phone']);
+}
+unset($r);
 
 echo json_encode(['profiles' => $rows]);

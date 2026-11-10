@@ -4,6 +4,7 @@
 // refactor) so this new page can't regress that working list/detail tool.
 if (defined('AGENTEDGE_AGENT_PROFILE_LIB_LOADED')) return;
 define('AGENTEDGE_AGENT_PROFILE_LIB_LOADED', true);
+require_once __DIR__ . '/agent_phones.php';
 
 // Fields checked for the completion-reminder email/popup and the
 // resend-only-missing form. Deliberately narrower than the required-field
@@ -67,6 +68,7 @@ function agent_intake_row(string $email): array {
 }
 
 function load_agent_profile(string $email): ?array {
+    agent_phones_ensure_columns(local_db());
     $st = local_db()->prepare(
         "SELECT i.email, i.full_name, i.phone, i.license_number, i.license_state,
                 i.license_exp, i.nar_number, i.mls_board, i.mls_id, i.office_location,
@@ -83,6 +85,7 @@ function load_agent_profile(string $email): ?array {
                 i.personal_tax_id_enc, i.corporate_tax_id_enc,
                 i.submitted, i.submitted_at, i.updated_at,
                 e.hire_date, e.license_renewal, e.alt_email, e.dotloop_alt_email, e.is_team_leader_tag,
+                e.marketing_number, e.office_number,
                 ar.role,
                 aa.tax_1099_type, aa.gets_1099, aa.terminated_date, aa.agent_team, aa.coached_by, aa.managed_by,
                 aa.recruit_source_email

@@ -81,6 +81,15 @@ if ($targetEmail !== '') {
 }
 
 $displayName = $profileData['full_name'] ?? $targetEmail;
+
+// Office name(s) shown beside the name: active roster market centers, else the intake office_location.
+$officeName = '';
+if ($targetEmail !== '') {
+    $ost = local_db()->prepare("SELECT DISTINCT market_center FROM innovate_roster WHERE LOWER(TRIM(email))=? AND active=1 AND TRIM(COALESCE(market_center,''))!='' ORDER BY market_center");
+    $ost->execute([$targetEmail]);
+    $officeName = implode(', ', $ost->fetchAll(PDO::FETCH_COLUMN));
+    if ($officeName === '') $officeName = trim($profileData['office_location'] ?? '');
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -129,6 +138,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 .em-section{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:14px 0 4px;padding-top:10px;border-top:1px solid var(--border)}
 .em-section:first-child{margin-top:0;padding-top:0;border-top:none}
 .em-full{grid-column:1/-1}
+.em-hint{font-size:11px;color:var(--faint);margin-top:3px;line-height:1.35}
 .em-check label{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;font-weight:600;color:var(--ink)}
 .em-check input{width:auto!important}
 .stub-pane{padding:40px;text-align:center;color:var(--faint);font-size:13px}
@@ -254,7 +264,7 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
       <?php endif; ?>
       <div>
         <div class="bo-eyebrow">Agent</div>
-        <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?></div>
+        <div class="content-title"><?= h($displayName ?: 'Agent Profile') ?><?php if ($officeName !== ''): ?> <span style="font-size:14px;font-weight:500;color:var(--faint)">· <?= h($officeName) ?></span><?php endif; ?></div>
       </div>
     </div>
     <a href="backoffice_agents.php" class="btn-detail-link">← Back to Agent Profiles</a>
@@ -286,6 +296,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           <div class="dg-field"><span class="dg-label">Commissions Email</span><?= dv($a['commissions_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Alternate Email (Darwin match)</span><?= dv($a['alt_email'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Phone</span><?= dv($a['phone']) ?></div>
+          <div class="dg-field"><span class="dg-label">Marketing Number</span><?= dv($a['marketing_number'] ?? '') ?></div>
+          <div class="dg-field"><span class="dg-label">Office Number</span><?= dv($a['office_number'] ?? '') ?></div>
           <div class="dg-field"><span class="dg-label">Birthday</span><?= dv($a['birthday'] ? date('M j', strtotime($a['birthday'])) : '') ?></div>
           <?php
             $addrParts = array_filter([$a['address_line1'] ?? '', $a['address_line2'] ?? '']);
@@ -424,7 +436,17 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
           </div>
           <div class="dg-field">
             <span class="dg-label">Coached By</span>
-            <input type="text" id="admin-coached" value="<?= h($a['coached_by'] ?? '') ?>" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+            <?php
+              $launchCoaches = list_launch_coaches(local_db());
+              $curCoach = trim((string)($a['coached_by'] ?? ''));
+            ?>
+            <select id="admin-coached" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:5px">
+              <option value="">— none —</option>
+              <?php foreach ($launchCoaches as $lc): ?>
+                <option value="<?= h($lc['email']) ?>" <?= strcasecmp($curCoach, $lc['email']) === 0 ? 'selected' : '' ?>><?= h($lc['full_name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <span style="font-size:11px;color:var(--faint);margin-top:2px">If the coach isn't in the dropdown, assign them the Launch Coach (or Director of Coaching) role first, then add them to an agent's profile.</span>
           </div>
           <div class="dg-field">
             <span class="dg-label">Managed By</span>
@@ -616,6 +638,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
             <div class="em-section">Contact Information</div>
             <div class="em-field"><label>Full Name</label><input id="em-full_name"></div>
             <div class="em-field"><label>Phone</label><input id="em-phone"></div>
+            <div class="em-field"><label>Marketing Number</label><input id="em-marketing_number" type="tel" placeholder="(843) 555-1234"><div class="em-hint">Shown on the agent's INNOVATE website instead of their cell (e.g. their Follow Up Boss number). Leave blank to show the cell.</div></div>
+            <div class="em-field"><label>Office Number</label><input id="em-office_number" type="tel" placeholder="(843) 555-1234"><div class="em-hint">The agent's office line, shown as the office number on their INNOVATE website. Leave blank if none.</div></div>
             <div class="em-field"><label>Personal Email</label><input id="em-personal_email" type="email"></div>
             <div class="em-field"><label>Commissions Email</label><input id="em-commissions_email" type="email"></div>
             <div class="em-field"><label>Alternate Email (Darwin match)</label><input id="em-alt_email" type="email" placeholder="if different from your login email"></div>
@@ -739,8 +763,8 @@ $displayName = $profileData['full_name'] ?? $targetEmail;
 </div>
 </div>
 
-<script src="assets/headshot-crop.js"></script>
-<script src="assets/headshot-manager.js"></script>
+<script src="assets/headshot-crop.js?v=20261019"></script>
+<script src="assets/headshot-manager.js?v=20261019"></script>
 <script>
 const PROFILE_EMAIL = <?= json_encode($targetEmail) ?>;
 const CAN_EDIT_PERMISSIONS = <?= json_encode($canEditPermissions) ?>;
@@ -798,7 +822,8 @@ window.switchApTab = function (t) {
 
 // ── Headshots ────────────────────────────────────────────────────────────────
 if (document.getElementById('hs-manager')) {
-  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL });
+  // allowSmall: admins can override the 400×400 photo minimum.
+  HeadshotManager.mount(document.getElementById('hs-manager'), { email: PROFILE_EMAIL, allowSmall: <?= !empty($perms['isAdmin']) ? 'true' : 'false' ?> });
 }
 
 // ── Documents tab ────────────────────────────────────────────────────────────
@@ -994,12 +1019,25 @@ var EM_FIELDS = ['full_name','phone','personal_email','commissions_email','phone
   'website','additional_websites','facebook','linkedin','skype',
   'referring_agent','bio'];
 var EM_CHECK_FIELDS = ['full_time', 'show_on_internet'];
+// Marketing/Office Number: saved through api/agent_extra.php, not intake.php
+// (agent_extra.marketing_number / office_number, lib/agent_phones.php).
+var EM_PHONE_LABELS = { marketing_number: 'Marketing Number', office_number: 'Office Number' };
 var emExtraBirthday = '';
 // Guards against saving before the async load below finishes (or after it
 // fails) — without this, Save was clickable the instant the modal opened,
 // so a slow/failed load let a mostly-blank payload blindly overwrite a
 // fully-populated profile (see api/intake.php's matching circuit-breaker).
 var emLoaded = false;
+
+// Same rule as us_phone_normalize() in lib/agent_phones.php: '' when blank,
+// "(843) 555-1234" for a 10-digit US number (a leading 1 is dropped), null otherwise.
+function emUsPhone(raw) {
+  if (!String(raw || '').trim()) return '';
+  var d = String(raw).replace(/\D/g, '');
+  if (d.length === 11 && d.charAt(0) === '1') d = d.slice(1);
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(d)) return null;
+  return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+}
 
 function emAddLicenseRow(lic) {
   lic = lic || {};
@@ -1140,6 +1178,9 @@ window.openEditModal = function () {
     document.getElementById('em-is_team_leader_tag').checked = !!extra.is_team_leader_tag;
     document.getElementById('em-alt_email').value = extra.alt_email || '';
     document.getElementById('em-dotloop_alt_email').value = extra.dotloop_alt_email || '';
+    Object.keys(EM_PHONE_LABELS).forEach(function (key) {
+      document.getElementById('em-' + key).value = extra[key] || '';
+    });
     document.getElementById('em-personal_tax_id').value = '';
     document.getElementById('em-corporate_tax_id').value = '';
     document.getElementById('em-personal-tax-hint').textContent = intake.personal_tax_id_last4 ? '(on file, ending in ' + intake.personal_tax_id_last4 + ')' : '(none on file)';
@@ -1160,6 +1201,22 @@ window.saveEditModal = function () {
   var msg = document.getElementById('em-save-msg');
   var btn = document.getElementById('em-save-btn');
   if (!emLoaded) { msg.textContent = 'Still loading this agent\'s data — please wait before saving.'; return; }
+
+  // Check the business numbers before saving anything, so a typo can't save
+  // the intake half of the form and not these.
+  var phones = {};
+  var phoneKeys = Object.keys(EM_PHONE_LABELS);
+  for (var i = 0; i < phoneKeys.length; i++) {
+    var phoneNode = document.getElementById('em-' + phoneKeys[i]);
+    var phone = emUsPhone(phoneNode.value);
+    if (phone === null) {
+      msg.textContent = EM_PHONE_LABELS[phoneKeys[i]] + ' must be a 10-digit US phone number, like (843) 555-1234, or blank.';
+      phoneNode.focus();
+      return;
+    }
+    phoneNode.value = phones[phoneKeys[i]] = phone;
+  }
+
   btn.disabled = true;
   msg.textContent = 'Saving…';
 
@@ -1183,7 +1240,9 @@ window.saveEditModal = function () {
     license_renewal: document.getElementById('em-license_renewal').value,
     alt_email: document.getElementById('em-alt_email').value,
     dotloop_alt_email: document.getElementById('em-dotloop_alt_email').value,
-    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked
+    is_team_leader_tag: document.getElementById('em-is_team_leader_tag').checked,
+    marketing_number: phones.marketing_number,
+    office_number: phones.office_number
   };
 
   Promise.all([
@@ -1570,6 +1629,5 @@ if (CAN_EDIT_PERMISSIONS && document.getElementById('ap-tab-permission') && docu
   permissionLoaded = true; loadPermissionTab();
 }
 </script>
-<script src="assets/headshot-crop.js"></script>
 </body>
 </html>
