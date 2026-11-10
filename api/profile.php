@@ -20,6 +20,18 @@ if (!$me) { http_response_code(401); echo json_encode(['error' => 'not signed in
 $myEmail = strtolower(trim($me['email'] ?? ''));
 $db      = local_db();
 
+// Restricted seats (agent_roles.restricted_to: a calendar-only partner, or an
+// agent in offboarding limited to the exit interview) don't get My Profile.
+// require_login() keeps them off profile.php but deliberately leaves /api/ to
+// each endpoint, so the check lives here. Reading stays allowed: the calendar
+// page (assets/calendar.js) and mc-links.js load the market center from GET.
+// Every write below is a POST, so refusing POST covers them all.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && my_restricted_to() !== '') {
+    http_response_code(403);
+    echo json_encode(['error' => 'Your account does not have access to edit a profile.']);
+    exit;
+}
+
 // Find the agent's roster row by their stored email
 function find_roster_row(object $db, string $email): ?array {
     if ($email === '') return null;
@@ -113,6 +125,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         $fallbackMc = $row ? $row['market_center'] : ($intake['office_location'] ?? '');
         if ($fallbackMc !== '') $mcSlugs = [slugify_mc($fallbackMc)];
     }
+    // Everywhere this agent can see/manage Market Center Events — their own
+    // roster office(s) (marketCenters, above) UNION whatever they lead as
+    // BIC/MC-leader (my_mc_slugs()). Same union api/mc_events_cal.php scopes
+    // its own feed by. The Company Calendar's "Market Center" tab uses this
+    // specifically to decide whether it's safe to relabel the tab with one
+    // specific office name (fine for a plain single-office agent) or whether
+    // it must stay generic (a leader covering several offices was getting
+    // relabeled to just their own personal desk's office -- e.g. "Quakertown"
+    // -- even though the tab's actual feed correctly covered all 5 they lead;
+    // confirmed live 2026-09-25 via Melanie Henderson's screenshot).
+    $calendarMcSlugs = array_values(array_unique(array_merge($mcSlugs, my_mc_slugs())));
 
     echo json_encode([
         'matched'  => true,
@@ -123,6 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             'phone'               => $phone,
             'marketCenter'        => $row ? $row['market_center'] : ($intake['office_location'] ?? ''),
             'marketCenters'       => $mcSlugs,
+            'calendarMcSlugs'     => $calendarMcSlugs,
             'brokerage'           => 'INNOVATE Real Estate',
             'social'              => (object)$social,
             'googlePlaceId'       => $intake['google_place_id'] ?? '',
@@ -142,7 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 $in       = json_decode(file_get_contents('php://input'), true) ?: [];
-$email    = strtolower(trim($in['email'] ?? $myEmail));
 $phone    = trim($in['phone'] ?? '');
 $name     = trim($in['fullName'] ?? '');
 $placeId  = trim($in['googlePlaceId'] ?? '');
@@ -163,15 +186,26 @@ $beforeOptIn   = !empty($beforeIntake['review_requests_opt_in']);
 $beforeZillowLink  = $beforeIntake['zillow_review_link'] ?? '';
 $beforeZillowOptIn = !empty($beforeIntake['zillow_review_requests_opt_in']);
 
+// Sage: changing the Google review checkbox is an explicit choice (checked = opted in,
+// unchecked after being on = opted out), which also releases/blocks closings waiting on it.
+if ((bool) $reviewOptIn !== (bool) $beforeOptIn) {
+    require_once __DIR__ . '/../lib/sage_lib.php';
+    try { sage_set_opt($db, $myEmail, $reviewOptIn ? 'in' : 'out', 'profile'); } catch (\Throwable $e) { error_log('sage_set_opt: ' . $e->getMessage()); }
+}
+
 // Dual-write: keep innovate_roster in sync (Advantage/coastline-server's CRM
 // roster export/sync reads this table directly, not agent_intake).
+// Never the email: it is the agent's identity across many tables, and changing
+// it on the roster alone locks the agent out (see admin_agent_login.php's
+// agent_email_rename, the admin tool that renames it everywhere at once).
+// Any 'email' in the request (older cached profile.js still sends one) is ignored.
 $row = find_roster_row($db, $myEmail);
 if ($row) {
     $db->prepare(
-        "UPDATE innovate_roster SET email=?, phone=?" . ($name !== '' ? ", agent_name=?" : "") . " WHERE id=?"
+        "UPDATE innovate_roster SET phone=?" . ($name !== '' ? ", agent_name=?" : "") . " WHERE id=?"
     )->execute($name !== ''
-        ? [$email, $phone, $name, $row['id']]
-        : [$email, $phone, $row['id']]
+        ? [$phone, $name, $row['id']]
+        : [$phone, $row['id']]
     );
 }
 

@@ -2,8 +2,32 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/nav.php';
+require_once __DIR__ . '/lib/company_email.php';
 $agent = require_login();
 if (!can_send_company_email()) { header('Location: index.php'); exit; }
+
+// Launched from an event's attendee list (Email Registrants): pre-fill the
+// "Specific Person" audience with that event's currently-registered attendees.
+// Only if the caller may manage that event's RSVPs (Staff/Super Admin/creator);
+// otherwise the composer just opens blank. Nothing is sent from here — the
+// sender still writes, reviews and presses Send, and every recipient gets their
+// own individual copy (api/company_email_action.php queues one row each).
+$eventPrefill = null;
+if (isset($_GET['event_scope'], $_GET['event_id'])) {
+    require_once __DIR__ . '/lib/event_attendees.php';
+    $pfScope = $_GET['event_scope'];          // 'events' | 'training' | 'mc' — anything else is ignored, never defaulted to another scope
+    $pfId    = trim($_GET['event_id']);
+    if (event_rsvp_scope_valid($pfScope) && $pfId !== '' && event_rsvp_can_manage(local_db(), $pfScope, $pfId) && event_rsvp_enabled(local_db(), $pfScope, $pfId)) {
+        $t = $pfScope === 'mc'
+            ? local_db()->prepare('SELECT name FROM mc_events WHERE id=?')
+            : local_db()->prepare('SELECT event_title FROM ' . event_rsvp_table($pfScope) . ' WHERE event_id=? LIMIT 1');
+        $t->execute([$pfId]);
+        $eventPrefill = [
+            'title'  => (string)$t->fetchColumn(),
+            'people' => array_map(fn($a) => ['email' => strtolower(trim($a['email'])), 'label' => $a['name']], event_rsvp_attendees(local_db(), $pfScope, $pfId)),
+        ];
+    }
+}
 
 $myMcSlugs = my_mc_slugs();
 $isMcOnly  = is_mc_leader() && !is_bic() && !is_admin();
@@ -19,6 +43,16 @@ $mcNameMap = [];
 foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PDO::FETCH_ASSOC) as $r) {
     $mcNameMap[$r['slug']] = $r['name'];
 }
+
+// State codes this user can target with the "state" audience — every state
+// with an enabled MC for admin, or just the state(s) of the MC(s) a
+// mc_leader/bic actually leads (see ce_state_options()).
+$myStateCodes = $myMcSlugs ? ce_state_options($myMcSlugs) : [];
+$stateOptsAll = is_admin() ? ce_state_options() : $myStateCodes;
+
+// BICs can pick any office in their state(s), not just the ones they're assigned to.
+$bicOfficeSlugs = $isBicOnly ? ce_allowed_mc_slugs() : [];
+foreach ($mcOptsAll as $o) { if (!isset($mcNameMap[$o['slug']])) $mcNameMap[$o['slug']] = $o['name']; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -125,6 +159,7 @@ foreach (local_db()->query("SELECT slug, name FROM market_centers")->fetchAll(PD
 .aud-chip.all{background:#eef5e8;color:#5b8e0d}
 .aud-chip.admin{background:#fff4e0;color:#a07221}
 .aud-chip.mc{background:#e8f0fe;color:#1a56c4}
+.aud-chip.state{background:#e0f7fa;color:#0f7a8c}
 .aud-chip.person{background:#f3e8fe;color:#7a1ac4}
 .aud-chip.leaders{background:#fce8f0;color:#c41a6a}
 .aud-chip.mc_leader{background:#fce8f0;color:#c41a6a}
@@ -187,6 +222,16 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
   </div>
   <div class="wrap">
 
+    <?php if ($eventPrefill): $pfN = count($eventPrefill['people']); ?>
+    <div style="background:#eef7dc;border:1px solid #cfe5a6;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#333">
+      <?php if ($pfN): ?>
+        Emailing the <strong><?= $pfN ?></strong> registered attendee<?= $pfN === 1 ? '' : 's' ?> of <strong><?= htmlspecialchars($eventPrefill['title'] ?: 'this event', ENT_QUOTES) ?></strong>.
+        Each person gets their own copy — recipients can&rsquo;t see each other&rsquo;s addresses. Nothing is sent until you review it and press Send; you can remove people below.
+      <?php else: ?>
+        No one is registered for <strong><?= htmlspecialchars($eventPrefill['title'] ?: 'this event', ENT_QUOTES) ?></strong> yet, so no recipients were added.
+      <?php endif; ?>
+    </div>
+    <?php endif; ?>
     <div class="email-form">
       <h3>Compose</h3>
 
@@ -206,13 +251,19 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
           <?php endif; ?>
           <?php if (is_admin() || $isMcOnly || $isBicOnly): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="mc" onchange="onAudienceChange()">
-            <?= $isBicOnly ? "Market Center(s) I'm BIC Over" : ($isMcOnly ? "Market Center(s) I Lead" : "Specific Market Center(s)") ?>
+            <?= $isBicOnly ? "Specific Office(s) in My State" : ($isMcOnly ? "Market Center(s) I Lead" : "Specific Market Center(s)") ?>
           </label>
+          <?php if ($stateOptsAll): ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="state" onchange="onAudienceChange()">
+            <?= is_admin() ? "Specific State(s)" : "Entire State I'm Licensed In" ?>
+          </label>
+          <?php endif; ?>
           <?php endif; ?>
           <?php if (can_manage_cohorts()): ?>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="launch_agents" onchange="onAudienceChange()"> LAUNCH Agents</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="launch_coaches" onchange="onAudienceChange()"> LAUNCH Coaches</label>
           <?php endif; ?>
+          <label class="aud-check"><input type="checkbox" class="em-aud" value="tag" onchange="onAudienceChange()"> Tag&hellip;</label>
           <label class="aud-check"><input type="checkbox" class="em-aud" value="person" onchange="onAudienceChange()"> Specific Person</label>
         </div>
       </div>
@@ -223,6 +274,15 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
           <?php if (is_admin()): ?>
             <div class="mc-check-list" id="mc-check-list">
               <?php foreach ($mcOptsAll as $opt): ?>
+              <label class="mc-check">
+                <input type="checkbox" class="em-mc" value="<?= htmlspecialchars($opt['slug']) ?>" onchange="onAudienceChange()">
+                <?= htmlspecialchars(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?>
+              </label>
+              <?php endforeach; ?>
+            </div>
+          <?php elseif ($isBicOnly && $bicOfficeSlugs): ?>
+            <div class="mc-check-list" id="mc-check-list">
+              <?php foreach ($mcOptsAll as $opt): if (!in_array($opt['slug'], $bicOfficeSlugs, true)) continue; ?>
               <label class="mc-check">
                 <input type="checkbox" class="em-mc" value="<?= htmlspecialchars($opt['slug']) ?>" onchange="onAudienceChange()">
                 <?= htmlspecialchars(($opt['state_code'] ? $opt['state_code'] . ' - ' : '') . $opt['name']) ?>
@@ -241,11 +301,29 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
             </div>
           <?php endif; ?>
         </div>
+        <div class="field" id="state-target-row" style="display:none">
+          <label>State(s)</label>
+          <div class="mc-check-list" id="state-check-list">
+            <?php foreach ($stateOptsAll as $sc): ?>
+            <label class="mc-check">
+              <input type="checkbox" class="em-state" value="<?= htmlspecialchars($sc) ?>"
+                <?= (!is_admin() && count($stateOptsAll) === 1) ? 'checked disabled' : '' ?> onchange="onAudienceChange()">
+              <?= htmlspecialchars($sc . ' - ' . (CE_STATE_NAMES[$sc] ?? $sc)) ?>
+            </label>
+            <?php endforeach; ?>
+          </div>
+        </div>
         <div class="field" id="person-target-row" style="display:none">
           <label>Recipients</label>
           <div id="em-person-chips" class="person-chips"></div>
           <input type="text" id="em-person" list="em-person-list" placeholder="Type a name or email, press Enter to add…" autocomplete="off" onkeydown="onPersonKeydown(event)" onblur="addPersonFromInput()">
           <datalist id="em-person-list"></datalist>
+        </div>
+        <div class="field" id="tag-target-row" style="display:none">
+          <label>Tag(s) <a href="backoffice_agent_tags.php" style="font-weight:400;text-transform:none;letter-spacing:normal;color:#5b8e0d" target="_blank">Manage tags &rarr;</a></label>
+          <div class="mc-check-list" id="tag-check-list">
+            <div style="font-size:12px;color:#aaa">Loading…</div>
+          </div>
         </div>
         <div class="field" id="launch-class-target-row" style="display:none">
           <label>LAUNCH Class <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:#aaa">(optional)</span></label>
@@ -256,6 +334,18 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
       </div>
 
       <p class="reach-note" id="reach-note">Pick at least one audience above.</p>
+
+      <div class="field-full field">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:normal;font-weight:400;font-size:13px;color:#333;cursor:pointer">
+          <input type="checkbox" id="em-reply-to-toggle" onchange="onReplyToToggle()">
+          Reply To <span style="font-weight:400;color:#aaa">(optional — route replies to specific people instead of back to you)</span>
+        </label>
+        <div id="reply-to-checks" style="display:none;margin-top:8px">
+          <div id="reply-to-groups" style="display:flex;flex-wrap:wrap;gap:16px">
+            <div style="font-size:12px;color:#aaa">Loading…</div>
+          </div>
+        </div>
+      </div>
 
       <div class="field-full field">
         <label>Templates</label>
@@ -412,6 +502,10 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
                 <svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="1.5"/><circle cx="7" cy="8" r="1.2" fill="currentColor" stroke="none"/><path d="M4 14l4-4 3 3 3-4 3 5"/></svg>
               </button>
               <input type="file" id="em-img-file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" onchange="uploadEmailImage(this.files[0])">
+              <button type="button" class="rte-btn" onmousedown="event.preventDefault()" onclick="evRememberCaret();document.getElementById('em-vid-file').click()" title="Embed video (poster image linking to a video page; up to 500 MB)">
+                <svg viewBox="0 0 20 20"><rect x="2.5" y="4.5" width="15" height="11" rx="1.5"/><path d="M8.5 7.5l4 2.5-4 2.5z" fill="currentColor" stroke="none"/></svg>
+              </button>
+              <input type="file" id="em-vid-file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v" style="display:none" onchange="embedEmailVideo(this.files[0])">
               <button type="button" class="rte-btn" onmousedown="event.preventDefault();insertTable()" title="Insert table">
                 <svg viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="1"/><line x1="3" y1="8" x2="17" y2="8"/><line x1="3" y1="13" x2="17" y2="13"/><line x1="8.3" y1="3" x2="8.3" y2="17"/><line x1="12.7" y1="3" x2="12.7" y2="17"/></svg>
               </button>
@@ -464,8 +558,9 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <button type="button" class="btn-secondary" onclick="document.getElementById('em-attach-file').click()" style="padding:7px 14px">+ Add File</button>
           <input type="file" id="em-attach-file" style="display:none" onchange="uploadAttachment(this.files[0])"
-                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.jpg,.jpeg,.png,.gif">
+                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.jpg,.jpeg,.png,.gif,.mp4,.mov,.webm,.m4v,.mpg,.avi">
           <span id="attach-status" style="font-size:12px;color:var(--faint)"></span>
+          <span style="font-size:11px;color:var(--faint)">Documents, images and video (MP4, MOV, WEBM). Max 20 MB total.</span>
         </div>
         <div id="attach-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
       </div>
@@ -630,6 +725,9 @@ button.stat-chip:hover,button.stat-chip:focus-visible{background:#eef5e8;outline
 const IS_ADMIN     = <?= is_admin() ? 'true' : 'false' ?>;
 const ME_EMAIL     = <?= json_encode(strtolower(trim($agent['email'] ?? ''))) ?>;
 const MC_NAME_MAP  = <?= json_encode($mcNameMap) ?>;
+const STATE_NAME_MAP = <?= json_encode(CE_STATE_NAMES) ?>;
+let TAG_NAME_MAP = {};
+let TAGS_LOADED = false;
 let PERSON_LIST_LOADED = false;
 let LAUNCH_CLASSES_LOADED = false;
 let PERSON_EMAILS = []; // [{email, label}] — added via the recipient picker below
@@ -650,25 +748,98 @@ function selectedMcSlugs() {
   return Array.from(document.querySelectorAll('.em-mc:checked')).map(el => el.value);
 }
 
+function selectedTagIds() {
+  return Array.from(document.querySelectorAll('.em-tag:checked')).map(el => el.value);
+}
+
+function selectedStateCodes() {
+  return Array.from(document.querySelectorAll('.em-state:checked')).map(el => el.value);
+}
+
+let REPLY_TO_LOADED = false;
+
+function onReplyToToggle() {
+  const on = document.getElementById('em-reply-to-toggle').checked;
+  document.getElementById('reply-to-checks').style.display = on ? '' : 'none';
+  if (on && !REPLY_TO_LOADED) loadReplyToCandidates();
+  if (!on) document.querySelectorAll('.em-reply-to-person').forEach(el => el.checked = false);
+}
+
+function loadReplyToCandidates() {
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'reply_to_candidates'})
+  })
+  .then(r => r.json())
+  .then(d => {
+    REPLY_TO_LOADED = true;
+    const container = document.getElementById('reply-to-groups');
+    if (!d.ok) { container.innerHTML = '<div style="font-size:12px;color:#c00">Failed to load — try again.</div>'; return; }
+
+    const order = ['mc_leader', 'bic', 'staff', 'admin'];
+    container.innerHTML = order.map(key => {
+      const g = d.groups[key];
+      if (!g) return '';
+      const label = escapeHtml(g.label);
+      if (!g.people.length) {
+        return `<div style="min-width:200px;flex:1 1 200px">
+          <div class="bo-eyebrow" style="margin-bottom:6px">${label}</div>
+          <div style="font-size:12px;color:#aaa">No one in this group yet.</div>
+        </div>`;
+      }
+      const items = g.people.map(p => `
+        <label class="mc-check">
+          <input type="checkbox" class="em-reply-to-person" value="${escapeHtml(p.email)}">
+          ${escapeHtml(p.name || p.email)} <span style="color:#aaa">(${escapeHtml(p.email)})</span>
+        </label>`).join('');
+      return `<div style="min-width:200px;flex:1 1 200px">
+        <div class="bo-eyebrow" style="margin-bottom:6px">${label}</div>
+        <div class="mc-check-list">${items}</div>
+      </div>`;
+    }).join('');
+  })
+  .catch(() => {
+    document.getElementById('reply-to-groups').innerHTML = '<div style="font-size:12px;color:#c00">Network error loading candidates.</div>';
+  });
+}
+
+function selectedReplyToEmails() {
+  if (!document.getElementById('em-reply-to-toggle').checked) return [];
+  return Array.from(document.querySelectorAll('.em-reply-to-person:checked')).map(el => el.value);
+}
+
 function onAudienceChange() {
   const auds = selectedAudiences();
   document.getElementById('mc-target-row').style.display           = auds.includes('mc')            ? '' : 'none';
+  document.getElementById('state-target-row').style.display        = auds.includes('state')          ? '' : 'none';
   document.getElementById('person-target-row').style.display       = auds.includes('person')         ? '' : 'none';
   document.getElementById('launch-class-target-row').style.display = auds.includes('launch_agents')  ? '' : 'none';
+  document.getElementById('tag-target-row').style.display          = auds.includes('tag')            ? '' : 'none';
   if (auds.includes('person') && !PERSON_LIST_LOADED) loadPersonList();
   if (auds.includes('launch_agents') && !LAUNCH_CLASSES_LOADED) loadLaunchClasses();
+  if (auds.includes('tag') && !TAGS_LOADED) loadTagList();
 
   const note = document.getElementById('reach-note');
-  if (!auds.length) { note.textContent = 'Pick at least one audience above.'; return; }
+  REACH_PREVIEW = null;
+  if (!auds.length) { REACH_SEQ++; note.textContent = 'Pick at least one audience above.'; return; }
   const parts = auds.map(a => {
     if (a === 'mc') {
       const names = selectedMcSlugs().map(s => MC_NAME_MAP[s] || s);
       return names.length ? names.join(', ') : 'Market Center(s) — none selected yet';
     }
+    if (a === 'state') {
+      const names = selectedStateCodes().map(s => STATE_NAME_MAP[s] || s);
+      return names.length ? names.join(', ') : 'State(s) — none selected yet';
+    }
     if (a === 'launch_agents') {
       const sel = document.getElementById('em-launch-class');
       const opt = sel.options[sel.selectedIndex];
       return sel.value ? `LAUNCH Agents, ${opt.textContent}` : 'LAUNCH Agents (all)';
+    }
+    if (a === 'tag') {
+      const names = selectedTagIds().map(id => TAG_NAME_MAP[id] || id);
+      return names.length ? names.join(', ') : 'Tag(s) — none selected yet';
     }
     if (a === 'person') {
       return PERSON_EMAILS.length
@@ -677,7 +848,78 @@ function onAudienceChange() {
     }
     return AUD_LABELS[a] || a;
   });
-  note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.';
+  note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '. <span style="color:#aaa">Counting recipients…</span>';
+  clearTimeout(REACH_TIMER);
+  const seq = ++REACH_SEQ;
+  REACH_TIMER = setTimeout(() => loadReachPreview(seq, auds, parts), 300);
+}
+
+// ── Live recipient preview: per-audience headcount + "See who" list ──────────
+let REACH_SEQ = 0, REACH_TIMER = null, REACH_PREVIEW = null;
+function loadReachPreview(seq, auds, parts) {
+  const launchSel = document.getElementById('em-launch-class');
+  fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      action: 'recipient_preview',
+      audience: auds, target_mc_slug: selectedMcSlugs(), target_state: selectedStateCodes(),
+      target_tag: selectedTagIds(), target_email: PERSON_EMAILS.map(p => p.email),
+      launch_class_date: auds.includes('launch_agents') ? launchSel.value : '',
+    })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (seq !== REACH_SEQ) return; // a newer selection superseded this one
+    const note = document.getElementById('reach-note');
+    if (!d.ok) { note.innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.'; return; }
+    REACH_PREVIEW = d;
+    const withCounts = auds.map((a, i) => {
+      // A picked LAUNCH class label already carries its "(N agents)" count.
+      if (a === 'launch_agents' && launchSel.value) return escapeHtml(parts[i]);
+      const n = d.counts[a] ?? 0;
+      return escapeHtml(parts[i]) + ` <strong>(${n} ${n === 1 ? 'person' : 'people'})</strong>`;
+    });
+    const dupNote = auds.length > 1 ? ' unique' : '';
+    note.innerHTML = 'Sends to: ' + withCounts.join('; ') + '. '
+      + `<strong>${d.total}${dupNote} ${d.total === 1 ? 'recipient' : 'recipients'} total</strong>`
+      + (d.total ? ` &middot; <a href="#" onclick="showReachRecipients();return false" style="color:#5b8e0d">See who &rarr;</a>` : '');
+  })
+  .catch(() => {
+    if (seq !== REACH_SEQ) return;
+    document.getElementById('reach-note').innerHTML = 'Sends to: ' + parts.map(escapeHtml).join('; ') + '.';
+  });
+}
+function showReachRecipients() {
+  const d = REACH_PREVIEW;
+  if (!d) return;
+  rcptCurrent = {id: 'draft', stat: 'preview', subject: '', available: true, count: d.total, rows: d.rows};
+  document.getElementById('rcpt-warn').style.display = 'none';
+  renderRecipients(rcptCurrent);
+  document.getElementById('rcpt-title').textContent = 'Will be sent to (' + d.total + ')';
+  document.getElementById('rcpt-subject').textContent = (document.getElementById('em-subject')?.value || '').trim();
+  document.getElementById('rcpt-note').textContent = 'Based on the audiences checked right now. This is the same list the send uses. Each person gets one copy, even if they match more than one audience.';
+  document.getElementById('rcpt-modal').style.display = 'flex';
+}
+
+function loadTagList() {
+  return fetch('api/company_email_action.php', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'tag_list'})
+  })
+  .then(r => r.json())
+  .then(d => {
+    TAGS_LOADED = true;
+    const list = document.getElementById('tag-check-list');
+    if (!d.ok || !d.tags.length) { list.innerHTML = '<div style="font-size:12px;color:#aaa">No tags yet — create one on the Agent Tags page.</div>'; return; }
+    d.tags.forEach(t => { TAG_NAME_MAP[t.id] = t.name; });
+    list.innerHTML = d.tags.map(t => `
+      <label class="mc-check">
+        <input type="checkbox" class="em-tag" value="${t.id}" onchange="onAudienceChange()">
+        ${escapeHtml(t.name)} <span style="color:#aaa">(${t.member_count})</span>
+      </label>`).join('');
+  });
 }
 
 function loadPersonList() {
@@ -757,15 +999,20 @@ function loadLaunchClasses() {
   });
 }
 
-// audience/mcSlug are CSV-joined when a send targeted more than one audience
-// and/or more than one Market Center — render one chip per component.
-function audLabel(audience, mcSlug, leaderTypes) {
+// audience/mcSlug/stateCodes are CSV-joined when a send targeted more than
+// one audience and/or more than one Market Center/state — render one chip
+// per component.
+function audLabel(audience, mcSlug, leaderTypes, stateCodes, tagIds) {
   const auds = String(audience || '').split(',').filter(Boolean);
   if (!auds.length) return '—';
-  return auds.map(a => singleAudChip(a, mcSlug, leaderTypes)).join(' ');
+  return auds.map(a => singleAudChip(a, mcSlug, leaderTypes, stateCodes, tagIds)).join(' ');
 }
 
-function singleAudChip(audience, mcSlug, leaderTypes) {
+function singleAudChip(audience, mcSlug, leaderTypes, stateCodes, tagIds) {
+  if (audience === 'tag') {
+    const names = String(tagIds || '').split(',').filter(Boolean).map(id => TAG_NAME_MAP[id] || ('Tag #' + id));
+    return '<span class="aud-chip mc">' + escapeHtml(names.join(', ') || '—') + '</span>';
+  }
   if (audience === 'all')       return '<span class="aud-chip all">Entire Company</span>';
   if (audience === 'admin')     return '<span class="aud-chip admin">Admin &amp; Staff</span>';
   if (audience === 'mc_leader') return '<span class="aud-chip mc_leader">Market Center Leaders</span>';
@@ -785,6 +1032,10 @@ function singleAudChip(audience, mcSlug, leaderTypes) {
   if (audience === 'mc') {
     const names = String(mcSlug || '').split(',').filter(Boolean).map(s => MC_NAME_MAP[s] || s);
     return '<span class="aud-chip mc">' + escapeHtml(names.join(', ') || '—') + '</span>';
+  }
+  if (audience === 'state') {
+    const names = String(stateCodes || '').split(',').filter(Boolean).map(s => STATE_NAME_MAP[s] || s);
+    return '<span class="aud-chip state">' + escapeHtml(names.join(', ') || '—') + '</span>';
   }
   return '<span class="aud-chip mc">' + escapeHtml(audience) + '</span>';
 }
@@ -922,6 +1173,105 @@ function uploadEmailImage(file){
     })
     .catch(() => alert('Network error uploading image.'));
   document.getElementById('em-img-file').value = '';
+}
+
+// ── Embedded video ─────────────────────────────────────────────────────────────
+// Uploads straight to S3 (api/email_video.php presigns), grabs a poster frame in the
+// browser with a play button baked in, and inserts a poster image linking to the
+// public watch page. Email clients can't play video inline, so this is the standard.
+function evPosterBlob(file){
+  return new Promise(resolve => {
+    const v = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const finish = b => { if (done) return; done = true; URL.revokeObjectURL(url); resolve(b); };
+    v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 1) / 2); };
+    v.onseeked = () => {
+      try {
+        const w = 640, h = Math.round(w * (v.videoHeight || 360) / (v.videoWidth || 640));
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const x = c.getContext('2d');
+        x.drawImage(v, 0, 0, w, h);
+        x.fillStyle = 'rgba(0,0,0,0.55)'; x.beginPath(); x.arc(w/2, h/2, 44, 0, Math.PI*2); x.fill();
+        x.fillStyle = '#fff'; x.beginPath(); x.moveTo(w/2-14, h/2-24); x.lineTo(w/2+26, h/2); x.lineTo(w/2-14, h/2+24); x.closePath(); x.fill();
+        c.toBlob(b => finish(b), 'image/jpeg', 0.82);
+      } catch (e) { finish(null); }
+    };
+    v.onerror = () => finish(null);
+    setTimeout(() => finish(null), 15000);
+  });
+}
+
+// The upload takes long enough that the editor loses its selection, and
+// execCommand('insertHTML') silently does nothing without one (the video was
+// uploaded but never landed in the email body). Remember the caret when the
+// button is clicked, and put the block back at it — or at the end — afterwards.
+let EV_RANGE = null;
+function evRememberCaret(){
+  const body = document.getElementById('em-body');
+  const sel = window.getSelection();
+  EV_RANGE = (sel.rangeCount && body.contains(sel.getRangeAt(0).commonAncestorContainer)) ? sel.getRangeAt(0).cloneRange() : null;
+}
+function evInsertHtml(html){
+  const body = document.getElementById('em-body');
+  body.focus();
+  const sel = window.getSelection();
+  const r = EV_RANGE || (() => { const x = document.createRange(); x.selectNodeContents(body); x.collapse(false); return x; })();
+  sel.removeAllRanges(); sel.addRange(r);
+  if (!document.execCommand('insertHTML', false, html)) {
+    body.insertAdjacentHTML('beforeend', html);
+  }
+  EV_RANGE = null;
+}
+
+async function embedEmailVideo(file){
+  const input = document.getElementById('em-vid-file');
+  if (!file) return;
+  const status = document.getElementById('attach-status');
+  const say = t => { if (status) status.textContent = t; };
+  try {
+    say('Preparing video…');
+    const pre = await fetch('api/email_video.php', { method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'presign', name:file.name, size:file.size }) }).then(r => r.json());
+    if (!pre.ok) throw new Error(pre.error || 'Could not start upload');
+
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', pre.upload_url, true);
+      xhr.setRequestHeader('Content-Type', pre.content_type);
+      xhr.upload.onprogress = e => { if (e.lengthComputable) say('Uploading video… ' + Math.round(e.loaded / e.total * 100) + '%'); };
+      xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('Upload failed (' + xhr.status + ')'));
+      xhr.onerror = () => reject(new Error('Network error uploading video'));
+      xhr.send(file);
+    });
+
+    say('Creating thumbnail…');
+    let posterUrl = '';
+    const blob = await evPosterBlob(file);
+    if (blob) {
+      const fd = new FormData(); fd.append('image', blob, 'poster.jpg');
+      const r = await fetch('api/email_image.php', { method:'POST', credentials:'same-origin', body: fd }).then(r => r.json()).catch(() => null);
+      if (r && r.ok) posterUrl = r.url;
+    }
+    const title = file.name.replace(/\.[^.]+$/, '');
+    const conf = await fetch('api/email_video.php', { method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'confirm', token:pre.token, poster_url:posterUrl, title }) }).then(r => r.json());
+    if (!conf.ok) throw new Error('Could not finish video setup');
+
+    const link = pre.watch_url;
+    const html = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0;max-width:100%"><tr><td>'
+      + (posterUrl ? '<a href="' + link + '" target="_blank"><img src="' + posterUrl + '" alt="Watch video" width="480" style="display:block;width:100%;max-width:480px;border-radius:6px;border:0"></a>' : '')
+      + '</td></tr><tr><td style="padding-top:8px"><a href="' + link + '" target="_blank" style="display:inline-block;background:#1a1a1a;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 18px;border-radius:6px">&#9654; Watch video</a></td></tr></table><p><br></p>';
+    evInsertHtml(html);
+    say('');
+  } catch (e) {
+    say('');
+    alert('Video failed: ' + (e.message || 'Unknown error'));
+  }
+  input.value = '';
 }
 
 // ── Resize/remove an inserted image ─────────────────────────────────────────
@@ -1066,7 +1416,7 @@ function loadScheduled(){
       <tr>
         <td>${fmtDt(r.send_at)}</td>
         <td>${escapeHtml(r.subject)}</td>
-        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types, r.target_state, r.target_tag)}</td>
         <td>${r.recipient_count}</td>
         <td><button class="btn-cancel-sched" onclick="cancelScheduled(${r.id})">Cancel</button></td>
       </tr>`).join('');
@@ -1099,7 +1449,7 @@ function loadHistory() {
       <tr>
         <td>${fmtDt(r.sent_at)}</td>
         <td><div class="subject-clamp" title="${escapeHtml(r.subject)}">${escapeHtml(r.subject)}</div></td>
-        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types)}</td>
+        <td>${audLabel(r.audience, r.target_mc_slug, r.leader_types, r.target_state, r.target_tag)}</td>
         <td>${escapeHtml(r.sender_email)}</td>
         <td><button type="button" class="btn-view-email" onclick="viewSentEmail(${r.id})">
           <svg viewBox="0 0 20 20"><path d="M2 10s2.8-5.5 8-5.5S18 10 18 10s-2.8 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.3"/></svg>
@@ -1428,7 +1778,10 @@ function closePreview() {
 
 function sendEmail() {
   const audiences = selectedAudiences();
-  const mcSlugs    = audiences.includes('mc') ? selectedMcSlugs() : [];
+  const mcSlugs    = audiences.includes('mc')    ? selectedMcSlugs()    : [];
+  const stateCodes = audiences.includes('state') ? selectedStateCodes() : [];
+  const tagIds     = audiences.includes('tag')   ? selectedTagIds()     : [];
+  const replyToEmails = selectedReplyToEmails();
 
   if (audiences.includes('person')) addPersonFromInput();
   const targetEmails = audiences.includes('person') ? PERSON_EMAILS.map(p => p.email) : [];
@@ -1444,7 +1797,10 @@ function sendEmail() {
   if (!subject || !hasText) { status.textContent = 'Subject and message are required.'; status.className = 'send-status err'; return; }
   if (!audiences.length) { status.textContent = 'Pick at least one audience.'; status.className = 'send-status err'; return; }
   if (audiences.includes('mc') && !mcSlugs.length) { status.textContent = 'Pick at least one Market Center.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('state') && !stateCodes.length) { status.textContent = 'Pick at least one state.'; status.className = 'send-status err'; return; }
+  if (audiences.includes('tag') && !tagIds.length) { status.textContent = 'Pick at least one tag.'; status.className = 'send-status err'; return; }
   if (audiences.includes('person') && !targetEmails.length) { status.textContent = 'Add at least one recipient.'; status.className = 'send-status err'; return; }
+  if (document.getElementById('em-reply-to-toggle').checked && !replyToEmails.length) { status.textContent = 'Pick at least one person for Reply To, or uncheck Reply To.'; status.className = 'send-status err'; return; }
 
   let sendAtIso = '';
   if (isSchedule) {
@@ -1466,7 +1822,7 @@ function sendEmail() {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       action: isSchedule ? 'schedule' : 'send',
-      audience: audiences, target_mc_slug: mcSlugs, target_email: targetEmails,
+      audience: audiences, target_mc_slug: mcSlugs, target_state: stateCodes, target_tag: tagIds, target_email: targetEmails, reply_to_emails: replyToEmails,
       launch_class_date: audiences.includes('launch_agents') ? document.getElementById('em-launch-class').value : '',
       subject, body: bodyHtml, send_at: sendAtIso,
       attachment_tokens: ATTACHMENTS.map(a => a.token),
@@ -1497,11 +1853,21 @@ function sendEmail() {
   .catch(() => { btn.disabled = false; btn.textContent = isSchedule ? 'Schedule' : 'Send'; status.textContent = 'Network error.'; status.className = 'send-status err'; });
 }
 
+<?php if ($eventPrefill && $eventPrefill['people']): ?>
+// Event attendee prefill (see top of file). Selects "Specific Person" and adds
+// each registrant as a removable chip — the normal composer takes over from here.
+(function () {
+  const pre = <?= json_encode($eventPrefill['people']) ?>;
+  const cb = document.querySelector('.em-aud[value="person"]');
+  if (cb) cb.checked = true;
+  pre.forEach(p => { if (!PERSON_EMAILS.some(x => x.email === p.email)) PERSON_EMAILS.push({ email: p.email, label: p.label || p.email }); });
+  renderPersonChips();
+})();
+<?php endif; ?>
 onAudienceChange();
 loadSignature();
 loadTemplateList();
-loadScheduled();
-loadHistory();
+loadTagList().then(() => { loadScheduled(); loadHistory(); });
 </script>
 </body>
 </html>

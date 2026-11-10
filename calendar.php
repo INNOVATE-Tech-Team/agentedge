@@ -7,6 +7,7 @@ require_once __DIR__ . '/nav.php';
 $agent    = require_login();
 $is_admin = is_admin();
 $is_leader = is_leader();
+$can_manage_mc = can_manage_mc_events();
 $cal_id   = cfg()['gcal_calendar_id'] ?? 'training@innovateonline.com';
 $events_cal_id = cfg()['gcal_events_calendar_id'] ?? '';
 // For the "Restrict to Market Center(s)" picker on the Events-tab admin
@@ -22,7 +23,7 @@ $mcOptsAll = $is_admin
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Calendar — AgentEdge</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/app.css">
+  <link rel="stylesheet" href="assets/app.css?v=<?= (int)@filemtime(__DIR__ . '/assets/app.css') ?>">
 </head>
 <body>
   <div class="layout">
@@ -98,6 +99,9 @@ $mcOptsAll = $is_admin
                target="_blank" rel="noopener" style="text-decoration:none">&#128197; Subscribe to Training Calendar</a>
             <?php if ($is_admin): ?>
             <button id="cal-add-event-btn" class="cal-rsvp-btn cal-rsvp-active">+ Add Event</button>
+            <?php elseif ($can_manage_mc): ?>
+            <span style="font-size:12px;color:var(--faint)">Only admins post to the company Training calendar &mdash;
+              <a href="mc_events.php" style="font-weight:700">manage your own Market Center's events instead &rarr;</a></span>
             <?php endif; ?>
           </div>
           <!-- Events tab actions — shown/hidden by JS -->
@@ -116,7 +120,7 @@ $mcOptsAll = $is_admin
           <!-- Market Center tab actions — shown/hidden by JS; MC leaders/BICs
                manage their own MC's events on the dedicated page (own
                create/edit/delete UI, already scoped to the MCs they lead). -->
-          <?php if ($is_leader): ?>
+          <?php if ($can_manage_mc): ?>
           <div id="cal-mc-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
             <a class="cal-rsvp-btn cal-rsvp-active" href="mc_events.php" style="text-decoration:none">+ Add Event</a>
           </div>
@@ -164,6 +168,12 @@ $mcOptsAll = $is_admin
         </div>
         <label class="cal-field-label">Location
           <input type="text" id="cal-ev-location" class="cal-field-input" placeholder="e.g. Zoom / 1309 Professional Dr">
+        </label>
+        <label class="cal-field-label" id="cal-ev-zoom-wrap" style="display:none">Zoom meeting
+          <select id="cal-ev-zoom-host" class="cal-field-input">
+            <option value="">No Zoom meeting</option>
+          </select>
+          <span id="cal-ev-zoom-note" style="font-size:11px;color:#888;font-weight:400">Pick a host account to create the meeting. The join link is added to this event (needs start and end times).</span>
         </label>
         <label class="cal-field-label">Description
           <textarea id="cal-ev-description" class="cal-field-input" rows="3" placeholder="Details, links, what to bring…"></textarea>
@@ -278,6 +288,8 @@ $mcOptsAll = $is_admin
   </div>
 
   <script>const CAL_IS_ADMIN = <?= $is_admin ? 'true' : 'false' ?>;</script>
-  <script src="assets/calendar.js"></script>
+  <script src="assets/event_attendee_panel.js"></script>
+  <script src="assets/calendar.js?v=<?= (int)@filemtime(__DIR__ . '/assets/calendar.js') ?>"></script>
+  <script src="assets/calendar_modal.js?v=<?= (int)@filemtime(__DIR__ . '/assets/calendar_modal.js') ?>"></script>
 </body>
 </html>

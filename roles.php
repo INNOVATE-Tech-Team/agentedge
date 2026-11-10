@@ -9,8 +9,8 @@ require_once __DIR__ . '/auth.php';
 
 const ROLE_LABELS = [
     'super_admin'          => 'Super Admin',
+    'admin'                => 'Admin',
     'staff'                => 'Staff',
-    'recruiter'            => 'Recruiter',
     'bic'                  => 'Broker in Charge',
     'mc_leader'            => 'Market Center Leader',
     'team_leader'          => 'Team Leader',
@@ -22,9 +22,13 @@ const ROLE_LABELS = [
 ];
 
 // Legacy CRM role names → canonical AgentEdge role names.
+// 'recruiter' is an Advantage-only label (Darren, 2026-11-07): the recruiting
+// CRM keeps it, but in AgentEdge (and Leverage) those people are plain agents,
+// whether the role arrives from a local agent_roles row or the CRM whoami.
 const ROLE_ALIASES = [
     'retention_admin'  => 'staff',
     'broker_in_charge' => 'bic',
+    'recruiter'        => 'agent',
 ];
 
 function role_label(string $role): string {
@@ -45,12 +49,13 @@ function default_perms(string $role = 'agent'): array {
         'role'          => $r,
         'roles'         => [$r],
         'isSuperAdmin'  => $r === 'super_admin',
-        'isAdmin'       => in_array($r, ['super_admin', 'staff'], true),
+        'isAdmin'       => in_array($r, ['super_admin', 'admin', 'staff'], true),
         'mc_slugs'      => [],
         'own_mc_slug'   => '',
         'own_mc_slugs'  => [],
         'bic_email'     => '',
         'name'          => '',
+        'restricted_to' => '',
     ];
 }
 
@@ -64,7 +69,7 @@ function fetch_perms_local(string $email): ?array {
     // silently drops the local role assignment and falls through to the CRM
     // lookup instead (see fetch_perms()) — confirmed causing a super_admin's
     // role to not load when their tblstaff email had different casing.
-    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, extra_roles_json FROM agent_roles WHERE LOWER(email)=LOWER(?)");
+    $stmt = local_db()->prepare("SELECT role, mc_slugs, own_mc_slug, own_mc_slugs, bic_email, extra_roles_json, restricted_to FROM agent_roles WHERE LOWER(email)=LOWER(?)");
     $stmt->execute([$email]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) return null;
@@ -78,12 +83,35 @@ function fetch_perms_local(string $email): ?array {
     $perms['own_mc_slug']  = $row['own_mc_slug'] ?? '';
     $perms['own_mc_slugs'] = $ownMcs;
     $perms['bic_email']    = $row['bic_email']   ?? '';
-    // Merge the optional "extra role" (e.g. Team Leader alongside a BIC's
-    // primary role) into the effective roles list so course role_filter
-    // checks recognize it, not just the primary role.
+    $perms['restricted_to'] = $row['restricted_to'] ?? '';
+    // Merge the optional extra roles (e.g. Team Leader and/or Launch Coach
+    // alongside a BIC's primary role — up to two, see admin_roles.php) into
+    // the effective roles list so course role_filter checks recognize them,
+    // not just the primary role.
     $extra = json_decode($row['extra_roles_json'] ?? '[]', true);
-    $extraRole = (is_array($extra) && !empty($extra[0]['role'])) ? canonical_role($extra[0]['role']) : '';
-    $perms['roles'] = array_values(array_unique(array_filter([$r, $extraRole])));
+    $extraRoles = [];
+    $perms['secondary_mc_slugs'] = [];   // MCs from a secondary bic/mc_leader role
+    if (is_array($extra)) {
+        foreach ($extra as $er) {
+            if (empty($er['role'])) continue;
+            $erRole = canonical_role($er['role']);
+            $extraRoles[] = $erRole;
+            if ($erRole === 'bic' || $erRole === 'mc_leader') {
+                $erSlugs = is_array($er['mc_slugs'] ?? null) ? $er['mc_slugs'] : [];
+                $perms['secondary_mc_slugs'] = array_values(array_unique(array_merge($perms['secondary_mc_slugs'], $erSlugs)));
+            }
+        }
+    }
+    $perms['roles'] = array_values(array_unique(array_filter(array_merge([$r], $extraRoles))));
+    // Re-derive isAdmin from the effective role set, not just the primary
+    // role default_perms() computed it from above — 'staff' can be granted as
+    // an additional role (see admin_roles.php's extraRoleOptions) alongside a
+    // BIC/mc_leader/etc. primary role, and without this the admin/staff-tier
+    // gates (is_admin(), can_send_company_email(), nav's Back Office admin
+    // filtering, and the few call sites that read $perms['isAdmin'] directly)
+    // would silently ignore that grant. 'super_admin' can't be assigned as an
+    // extra role (excluded from extraRoleOptions), so it never needs this.
+    if (in_array('staff', $perms['roles'], true)) $perms['isAdmin'] = true;
     return $perms;
 }
 
@@ -156,6 +184,12 @@ function current_perms(): array {
 
 // The MC slugs this user leads (mc_leader / bic).
 function my_mc_slugs(): array    { return current_perms()['mc_slugs'] ?? []; }
+// Market Centers from a SECONDARY bic/mc_leader role (primary role is something
+// else, e.g. agent). Deliberately separate from mc_slugs: it only unlocks
+// Create Event / Market Center events, not the rest of the leader tools.
+function my_secondary_mc_slugs(?array $perms = null): array { return ($perms ?? current_perms())['secondary_mc_slugs'] ?? []; }
+// Slugs the Market Center event pages may manage: primary leader slugs + secondary.
+function my_event_mc_slugs(): array { return array_values(array_unique(array_merge(my_mc_slugs(), my_secondary_mc_slugs()))); }
 // The MC this agent belongs to (set by admin in agent_roles). Kept as a
 // scalar "first MC" mirror for callers that only need one value for display.
 function my_own_mc_slug(): string { return current_perms()['own_mc_slug'] ?? ''; }
@@ -181,30 +215,49 @@ function my_roster_mc_slugs(): array {
 }
 // The BIC email assigned to this agent.
 function my_bic_email(): string   { return current_perms()['bic_email'] ?? ''; }
+// Non-empty only for a restricted seat (e.g. 'calendar') — enforced in
+// auth.php's require_login() (redirects anywhere else back to the one
+// allowed page) and nav.php's render_sidebar() (shows a minimal sidebar).
+function my_restricted_to(): string { return current_perms()['restricted_to'] ?? ''; }
 // The team this user leads (one team per leader, resolved live from the teams
 // table — see fetch_perms()). Null if they don't lead a team.
 function my_team_id(): ?int       { $t = current_perms()['team_id'] ?? null; return $t !== null ? (int)$t : null; }
 // The team this agent is a member of (not leading it) — via team_members.
 function my_own_team_id(): ?int   { $t = current_perms()['own_team_id'] ?? null; return $t !== null ? (int)$t : null; }
 
-function is_super_admin(): bool    { return !empty(current_perms()['isSuperAdmin']); }
-function is_admin(): bool          { return !empty(current_perms()['isAdmin']); }
+// Every gate below takes an optional $perms override (a default_perms()-shaped
+// array) on top of its normal current_perms()-based check. Every existing
+// zero-arg call site is unaffected (falls through to current_perms() exactly
+// as before) — the override exists solely so role_permission_matrix() below
+// can run these SAME functions against a synthetic per-role perms array
+// instead of duplicating their logic into a second, driftable copy.
+function is_super_admin(?array $perms = null): bool    { return !empty(($perms ?? current_perms())['isSuperAdmin']); }
+function is_admin(?array $perms = null): bool          { return !empty(($perms ?? current_perms())['isAdmin']); }
 // Editing University master templates (On-Demand course scaffolding) is
 // intentionally a tighter gate than regular course editing (is_admin()) --
 // templates propagate structure into every course instantiated from them.
-function can_edit_uni_templates(): bool { return is_super_admin(); }
-function is_bic(): bool            { return (current_perms()['role'] ?? '') === 'bic'; }
-function is_mc_leader(): bool      { return (current_perms()['role'] ?? '') === 'mc_leader'; }
+function can_edit_uni_templates(?array $perms = null): bool { return is_super_admin($perms); }
+function is_bic(?array $perms = null): bool            { return (($perms ?? current_perms())['role'] ?? '') === 'bic'; }
+function is_mc_leader(?array $perms = null): bool      { return (($perms ?? current_perms())['role'] ?? '') === 'mc_leader'; }
 // NOTE: deliberately not folded into is_leader() below — that gate is checked
 // by unrelated features (announcements, company email audiences) not part of
 // this build. Team-specific pages check is_team_leader() explicitly instead.
+// Not $perms-overridable: team leadership comes from a live teams/team_leaders
+// table lookup, not anything storable in a role-only perms array.
 function is_team_leader(): bool   { return my_team_id() !== null; }
-function is_recruiter(): bool      { return (current_perms()['role'] ?? '') === 'recruiter'; }
+function is_recruiter(?array $perms = null): bool      { return (($perms ?? current_perms())['role'] ?? '') === 'recruiter'; }
 // Can view "Leaders & Recruiters" visibility docs (super_admin, mc_leader, bic, recruiter)
-function can_view_leader_docs(): bool { return is_super_admin() || is_mc_leader() || is_bic() || is_recruiter(); }
-function is_leader(): bool         { return is_admin() || is_bic() || is_mc_leader(); }
+function can_view_leader_docs(?array $perms = null): bool { return is_super_admin($perms) || is_mc_leader($perms) || is_bic($perms) || is_recruiter($perms); }
+function is_leader(?array $perms = null): bool         { return is_admin($perms) || is_bic($perms) || is_mc_leader($perms); }
 // Can post announcements (any role except plain agent/recruiter)
-function can_post_announcements(): bool { return is_admin() || is_mc_leader() || is_bic(); }
+function can_post_announcements(?array $perms = null): bool { return is_admin($perms) || is_mc_leader($perms) || is_bic($perms); }
+// Can manage Market Center events (mc_events.php: create/edit/delete, see
+// RSVP counts) — the normal mc_leader/bic/admin roles, OR anyone with
+// mc_slugs manually assigned regardless of role (e.g. an outside partner
+// restricted to just this page for specific offices, via agent_roles'
+// restricted_to — doesn't make them a leader for anything else, like the
+// Birthdays/Anniversaries calendar tabs, which stay is_leader()-gated).
+function can_manage_mc_events(?array $perms = null): bool { return can_post_announcements($perms) || !empty(($perms ?? current_perms())['mc_slugs'] ?? []) || my_secondary_mc_slugs($perms) !== []; }
 // Buy Back Your Time (Eliminate/Automate/Delegate agents): every producing
 // agent's own book of business. Unlike can_send_hot_deals() there's no
 // per-use paid third-party data API here (just Claude + the agent's own
@@ -212,20 +265,20 @@ function can_post_announcements(): bool { return is_admin() || is_mc_leader() ||
 // for roles that don't have their own client book (recruiting/coaching
 // staff), not allowlisted to producing-role names, so it stays correct as
 // new roles get added.
-function can_use_buyback(): bool {
-    return !in_array(my_role(), ['staff', 'recruiter', 'launch_coach', 'director_of_coaching', 'launch_facilitator'], true);
+function can_use_buyback(?array $perms = null): bool {
+    return !in_array(my_role($perms), ['staff', 'recruiter', 'launch_coach', 'director_of_coaching', 'launch_facilitator'], true);
 }
 // Can send a Company Email — same tier as announcements: admin/staff (any audience),
 // mc_leader/bic (only the Market Centers in their own mc_slugs), plus LAUNCH
 // coaching staff (Launch Agents/Launch Coaches audiences only — see backoffice_email.php).
-function can_send_company_email(): bool { return can_post_announcements() || is_launch_coach(); }
+function can_send_company_email(?array $perms = null): bool { return can_post_announcements($perms) || is_launch_coach($perms); }
 // LAUNCH coaching staff (coach or the director role above them). Checks the
 // effective role set (my_roles(), primary + the one optional extra role from
 // agent_roles.extra_roles_json) rather than just the primary role, so
 // someone whose primary role is 'agent' with Launch Coach assigned only as
 // an additional role (the safe way to grant it without disturbing their
 // existing agent placement/bic_email) is still recognized as a coach.
-function is_launch_coach(): bool { return array_intersect(my_roles(), ['launch_coach', 'director_of_coaching']) !== []; }
+function is_launch_coach(?array $perms = null): bool { return array_intersect(my_roles($perms), ['launch_coach', 'director_of_coaching']) !== []; }
 
 // Every agent whose EFFECTIVE role (primary agent_roles.role, or the one
 // optional additional role in extra_roles_json) is Launch Coach or Director
@@ -299,20 +352,20 @@ function coach_can_access_agent(\PDO $pdo, string $coachEmail, string $agentEmai
 }
 
 // Can create/edit cohorts and reassign coaches (admin or coaching leadership).
-function can_manage_cohorts(): bool { return is_admin() || is_launch_coach(); }
+function can_manage_cohorts(?array $perms = null): bool { return is_admin($perms) || is_launch_coach($perms); }
 // Can view (and edit) the LAUNCH Curriculum reference content — coaching
 // staff only, not agents. launch_facilitator is a separate role from
 // launch_coach/director_of_coaching (is_launch_coach()) since a facilitator
 // may run sessions without carrying an active coaching caseload.
-function can_view_launch_curriculum(): bool { return is_admin() || is_launch_coach() || my_role() === 'launch_facilitator'; }
+function can_view_launch_curriculum(?array $perms = null): bool { return is_admin($perms) || is_launch_coach($perms) || my_role($perms) === 'launch_facilitator'; }
 // Hot Deals: find best-value listings matching a spec, email FUB leads
 // searching for that type of property. Phase 1 scope is admin/BIC only —
 // widening to all agents is gated on a prepaid-credit wallet / per-use
 // billing existing first (see the coastline-server hot-deal-alerts Phase 2
 // plan) so open access can't run up real AirROI/data costs unrecovered.
-function can_send_hot_deals(): bool { return is_admin() || is_bic(); }
+function can_send_hot_deals(?array $perms = null): bool { return is_admin($perms) || is_bic($perms); }
 // Can manage the Launch Schedule / Launch Coaching roster (admin or coaching leadership).
-function can_manage_launch_roster(): bool { return is_admin() || is_launch_coach(); }
+function can_manage_launch_roster(?array $perms = null): bool { return is_admin($perms) || is_launch_coach($perms); }
 // True if this agent has an active cohort_members row in a LAUNCH-program
 // cohort right now — the same "active member" definition api/leaderboard.php
 // itself uses to decide who appears on the board, not the static launch_agent
@@ -334,22 +387,147 @@ function can_view_launch_leaderboard(): bool {
     return is_super_admin() || is_launch_coach() || is_active_launch_agent();
 }
 // Can search / view other agents' networks (super_admin, staff, recruiter)
-function can_search_network(): bool { return is_admin() || is_recruiter(); }
-function my_role(): string         { return current_perms()['role'] ?? 'agent'; }
+function can_search_network(?array $perms = null): bool { return is_admin($perms) || is_recruiter($perms); }
+function my_role(?array $perms = null): string         { return ($perms ?? current_perms())['role'] ?? 'agent'; }
 // All effective roles for the current agent (primary + optional extra role) --
 // use for role_filter-style checks so an extra role counts too.
-function my_roles(): array         { return current_perms()['roles'] ?? [my_role()]; }
+function my_roles(?array $perms = null): array         { return ($perms ?? current_perms())['roles'] ?? [my_role($perms)]; }
 
 // Finance Accounting Checklists — scoped to specific named staff, not a role tier.
 // Same hardcoded-allowlist shape as reconciliation.php, centralized here since
 // both finance_checklists.php and its api/ counterpart need the same check.
-const FINANCE_CHECKLIST_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com', 'dominic@innovateonline.com'];
+// To grant a new Finance hire, add their own account's email here.
+// (dominic@ removed 2026-10-30: no longer with the company.)
+const FINANCE_CHECKLIST_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com'];
 function can_access_finance_checklists(): bool {
-    if (is_admin()) return true;
+    // Was is_admin() (any admin-tier role) until the 'admin' role was split
+    // off from 'super_admin' 2026-10-08 specifically so the new tier does
+    // NOT see Finance — narrowed to is_super_admin() to match every other
+    // Finance gate in this file, rather than leaving this one wider.
+    if (is_super_admin()) return true;
     $email = strtolower(trim(current_agent()['email'] ?? ''));
     return $email !== '' && in_array($email, FINANCE_CHECKLIST_EMAILS, true);
 }
 
+// Finance → Cap Tracking — super_admins plus the named accounts below
+// (narrowed 2026-10-30 from the wider FINANCE_CHECKLIST_EMAILS audience).
+// The page, its JSON API, its CSV export and the nav entry all check this
+// one helper. To grant a new Finance hire, add their own account's email.
+const CAP_TRACKING_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com'];
+function can_access_cap_tracking(): bool {
+    if (is_super_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, CAP_TRACKING_EMAILS, true);
+}
+
+// Finance → Team Commission Plans — the team directory's commission-plan
+// assignments (backoffice_team_commission_plans.php + api/team_commission_action.php).
+// Audience per Abril 2026-10-30: super_admins plus Michele Chalk ONLY
+// (michele@innovateonline.com — the account Darren set to super_admin on
+// 2026-07-06; also the Finance ticket-department staff row). Same allowlist
+// shape as Cap Tracking above, but a separate list: nothing here widens any
+// other Finance gate. Viewing and editing share this one gate; the page, its
+// JSON API and the nav entry (incl. the Finance-section bypass in nav.php)
+// all check it. Everyone else — 'admin', 'staff', BIC, MC Leader, agents —
+// is denied, including by direct URL or API call. (Added 2026-10-30; not yet live.)
+const TEAM_COMMISSION_PLAN_EMAILS = ['michele@innovateonline.com'];
+function can_access_team_commission_plans(): bool {
+    if (is_super_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, TEAM_COMMISSION_PLAN_EMAILS, true);
+}
+
 function require_admin_page(): void {
     if (!is_admin()) { header('Location: index.php'); exit; }
+}
+
+// State Annual Reports — Super Admins plus the two named staff who actually
+// run state filings. Same hardcoded-allowlist shape as
+// FINANCE_CHECKLIST_EMAILS above, but gated on is_super_admin() rather than
+// is_admin() per how the module was scoped when it was installed.
+const ANNUAL_REPORTS_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com'];
+function can_access_annual_reports(): bool {
+    if (is_super_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, ANNUAL_REPORTS_EMAILS, true);
+}
+
+// Role Assignments (admin_roles.php) — Super Admins plus named admin-tier staff.
+// Named users can manage roles but never Super Admin ones: admin_roles.php
+// refuses to grant, change or remove super_admin unless the actor is one.
+const ROLE_ASSIGNMENT_EMAILS = ['haley@innovateonline.com', 'mike@mikeblumrealestate.com'];
+function can_access_role_assignments(): bool {
+    if (is_super_admin()) return true;
+    if (!is_admin()) return false;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, ROLE_ASSIGNMENT_EMAILS, true);
+}
+
+// MLS & Board Cost Audit — same scope as State Annual Reports (Super Admins
+// plus Michele and Darren); built from the same Finance receipts work.
+const MLS_COSTS_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com'];
+function can_access_mls_costs(): bool {
+    if (is_super_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, MLS_COSTS_EMAILS, true);
+}
+
+// MLS & Boards Payables — same scope as MLS & Board Cost Audit above, which
+// this module supersedes for day-to-day use (Super Admins plus Michele and
+// Darren only; not every admin, and never agents/other staff).
+const MLSAP_EMAILS = ['darren@innovateonline.com', 'michele@innovateonline.com'];
+function can_access_mlsap(): bool {
+    if (is_super_admin()) return true;
+    $email = strtolower(trim(current_agent()['email'] ?? ''));
+    return $email !== '' && in_array($email, MLSAP_EMAILS, true);
+}
+
+// Office Payables — sister page to MLS & Boards Payables, same Finance-only
+// scope (Super Admins plus Michele and Darren). Reuses MLSAP_EMAILS directly
+// rather than a second named allowlist, since it's the same two people.
+function can_access_officeap(): bool {
+    return can_access_mlsap();
+}
+
+// Capability label => gate function name, for the Role Assignments page's
+// "What can each role do?" reference (see role_permission_matrix() below).
+// Only gates whose result depends purely on role/roles (nothing from a live
+// per-agent DB lookup) are listed here, since those are the only ones a
+// synthetic default_perms($role) array can answer correctly. Left out on
+// purpose: is_team_leader() (teams/team_leaders table membership, not a
+// role field), is_active_launch_agent() and can_view_launch_leaderboard()
+// (live cohort_members enrollment), and can_access_finance_checklists()
+// (a named-email allowlist, not a role tier) — role_permission_matrix()
+// documents these separately instead of trying to compute them.
+const ROLE_PERMISSION_CAPABILITIES = [
+    'Full Super Admin access'                      => 'is_super_admin',
+    'Admin access (Super Admin or Staff)'          => 'is_admin',
+    'Leader-gated pages (MLS, Docs, Press Releases, Workflows, State Reports, Event creation, Agent Stats)' => 'is_leader',
+    "View Leaders & Recruiters' visibility-restricted docs" => 'can_view_leader_docs',
+    'Post Company Announcements'                   => 'can_post_announcements',
+    'Send Company Email'                           => 'can_send_company_email',
+    "Search / view other agents' networks"         => 'can_search_network',
+    'Send Hot Deals'                               => 'can_send_hot_deals',
+    'Manage LAUNCH Cohorts'                        => 'can_manage_cohorts',
+    'Manage LAUNCH Schedule / Coaching roster'     => 'can_manage_launch_roster',
+    'View/edit LAUNCH Curriculum reference'        => 'can_view_launch_curriculum',
+    'Buy Back Your Time tool'                      => 'can_use_buyback',
+    'Edit University master templates'             => 'can_edit_uni_templates',
+];
+
+// Builds the full role -> capability matrix by actually calling each gate
+// function above against a synthetic default_perms() array per role — not a
+// hand-maintained copy of the logic — so this can never silently drift out
+// of sync with the real access-control checks every page in the app uses.
+function role_permission_matrix(): array {
+    $matrix = [];
+    foreach (ROLE_LABELS as $roleKey => $roleLabel) {
+        $perms = default_perms($roleKey);
+        $caps  = [];
+        foreach (ROLE_PERMISSION_CAPABILITIES as $label => $fn) {
+            $caps[$label] = (bool)$fn($perms);
+        }
+        $matrix[$roleKey] = ['label' => $roleLabel, 'capabilities' => $caps];
+    }
+    return $matrix;
 }

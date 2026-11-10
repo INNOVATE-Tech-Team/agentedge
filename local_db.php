@@ -28,7 +28,7 @@ define('AGENTEDGE_LOCAL_DB_LOADED', true);
 // (it also meant an agent's intake submission and a staff member's page load
 // racing that same lock could leave the just-submitted data slow to
 // appear — see the AgentEdge intake duplicate-agent investigation, Aug 2026).
-const LOCAL_DB_SCHEMA_VERSION = 1;
+const LOCAL_DB_SCHEMA_VERSION = 10;
 
 // Onboarding Stage 1 / Stage 2 split — schema foundation only (no behavior
 // reads these yet except lib/onboarding.php's onboard_queue_state() helper).
@@ -42,6 +42,25 @@ const LOCAL_DB_SCHEMA_VERSION = 1;
 // actually adds the stage column, in one transaction, so re-running is a no-op
 // and an admin-deleted step is never resurrected. The fast path is three
 // read-only PRAGMAs — no write lock on normal page loads.
+// On-Demand template lessons: optional uploaded video/document (file_key) and
+// optional document attachments. Lives outside local_db_migrate() because that
+// block never runs on the live DB (see the note in local_db()).
+function local_db_ensure_uni_template_files(PDO $pdo): void {
+    // Optional document attachments on On-Demand template lessons; copied (file + row)
+    // onto each course instantiated from the template.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_template_lesson_files (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_lesson_id INTEGER NOT NULL,
+        file_key           TEXT    NOT NULL,
+        original_name      TEXT    NOT NULL DEFAULT '',
+        sort_ord           INTEGER NOT NULL DEFAULT 0,
+        created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_utlf_lesson ON uni_template_lesson_files(template_lesson_id)");
+    // Optional uploaded video file on a template lesson (alongside embed_url).
+    try { $pdo->exec("ALTER TABLE uni_template_lessons ADD COLUMN file_key TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+}
+
 function local_db_ensure_onboard_stages(PDO $pdo): void {
     $cols = function (string $table) use ($pdo): array {
         return array_column($pdo->query("PRAGMA table_info($table)")->fetchAll(PDO::FETCH_ASSOC), 'name');
@@ -81,6 +100,166 @@ function local_db_ensure_onboard_stages(PDO $pdo): void {
     }
 }
 
+// Agent type / compensation plan / team info captured by Advantage's
+// Add-to-Team form (see lib/onboarding.php onboard_normalize_agent_fields()).
+// Blank = never provided (older pushes); send_team_agreement is NULL until
+// provided so "not asked" stays distinct from "no". Always-run and idempotent
+// like local_db_ensure_onboard_stages() -- local_db_migrate() never runs on the
+// live DB (see the note in local_db()) -- and only ALTERs columns that are missing.
+function local_db_ensure_onboard_agent_fields(PDO $pdo): void {
+    $cols = array_column($pdo->query("PRAGMA table_info(onboard_queue)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!$cols) return;   // onboard_queue not created yet
+    foreach ([
+        'agent_type'            => "TEXT NOT NULL DEFAULT ''",
+        'compensation_plan_key' => "TEXT NOT NULL DEFAULT ''",
+        'team_name'             => "TEXT NOT NULL DEFAULT ''",
+        'team_leader_email'     => "TEXT NOT NULL DEFAULT ''",
+        'team_leader_name'      => "TEXT NOT NULL DEFAULT ''",
+        'send_team_agreement'   => "INTEGER",
+        // Admin edits on the onboarding card (set_agent_fields): 'local_only'
+        // until Advantage accepts the same values, then 'synced'; '' = the
+        // values came from Advantage (or nobody has edited them here).
+        'agent_fields_sync'       => "TEXT NOT NULL DEFAULT ''",
+        'agent_fields_sync_error' => "TEXT NOT NULL DEFAULT ''",
+        'agent_fields_edited_by'  => "TEXT NOT NULL DEFAULT ''",
+        'agent_fields_edited_at'  => "TEXT",
+    ] as $col => $def) {
+        if (in_array($col, $cols, true)) continue;
+        try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN {$col} {$def}"); } catch (\Exception $e) {}   // lost a race: already added
+    }
+}
+
+// Extra onboarding documents sent with the onboarding package: the agent's
+// compensation plan and, for a new team member, the Team Agreement.
+//  - pandadoc_doc_templates: doc_key -> PandaDoc template id. doc_key is a plan
+//    key (INDIVIDUAL_95_5, LEADER_*, MEMBER_*) or TEAM_AGREEMENT. Not pre-seeded;
+//    managed in admin_pandadoc_templates.php.
+//  - onboard_extra_docs: one row per extra document per queue entry, so the
+//    webhook / repair cron can match completions and Provision Now can retry
+//    only what is missing. Always-run and idempotent, like the ensure functions above.
+function local_db_ensure_pandadoc_extra_docs(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS pandadoc_doc_templates (
+        doc_key     TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL DEFAULT '',
+        updated_by  TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS onboard_extra_docs (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        queue_id             INTEGER NOT NULL,
+        doc_key              TEXT    NOT NULL,                 -- 'compensation_plan' | 'team_agreement'
+        template_key         TEXT    NOT NULL DEFAULT '',      -- plan key or TEAM_AGREEMENT
+        template_id          TEXT    NOT NULL DEFAULT '',
+        pandadoc_document_id TEXT,
+        status               TEXT    NOT NULL DEFAULT 'pending', -- pending | sent | completed | failed
+        error_msg            TEXT,
+        recipients_json      TEXT    NOT NULL DEFAULT '[]',
+        created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(queue_id, doc_key)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_onboard_extra_docs_doc ON onboard_extra_docs(pandadoc_document_id)");
+}
+
+// Office Payables (desk rentals, virtual offices, mailboxes, coworking,
+// leases) — sister table family to mlsap_accounts/mlsap_bills below, same
+// shape, kept in its own tables per spec rather than mixed into MLS spend.
+// See lib/officeap_lib.php, backoffice_officeap.php. Always-run/idempotent
+// like the other local_db_ensure_* functions, since local_db_migrate() never
+// re-runs on the live DB (see the note in local_db() below).
+function local_db_ensure_officeap(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS officeap_accounts (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor                  TEXT    NOT NULL DEFAULT '',
+        location_name           TEXT    NOT NULL,
+        address                 TEXT    NOT NULL DEFAULT '',
+        state                   TEXT    NOT NULL DEFAULT '',
+        market_center           TEXT    NOT NULL DEFAULT '',
+        account_type            TEXT    NOT NULL DEFAULT 'Virtual office',
+        vendor_account_number   TEXT    NOT NULL DEFAULT '',
+        billing_frequency       TEXT    NOT NULL DEFAULT 'Monthly',
+        contract_amount         REAL,
+        expected_invoice_amount REAL,
+        term_start              TEXT    NOT NULL DEFAULT '',
+        term_end                TEXT    NOT NULL DEFAULT '',
+        auto_renew              INTEGER NOT NULL DEFAULT 0,
+        renewal_notice_deadline TEXT    NOT NULL DEFAULT '',
+        purpose                 TEXT    NOT NULL DEFAULT '',
+        decision                TEXT    NOT NULL DEFAULT '',
+        owner_email             TEXT    NOT NULL DEFAULT 'michele@innovateonline.com',
+        notes                   TEXT    NOT NULL DEFAULT '',
+        active                  INTEGER NOT NULL DEFAULT 1,
+        created_by              TEXT    NOT NULL DEFAULT '',
+        created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at              TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS officeap_bills (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id           INTEGER NOT NULL REFERENCES officeap_accounts(id) ON DELETE CASCADE,
+        invoice_number       TEXT    NOT NULL DEFAULT '',
+        invoice_date         TEXT    NOT NULL DEFAULT '',
+        due_date             TEXT    NOT NULL DEFAULT '',
+        amount               REAL    NOT NULL DEFAULT 0,
+        expense_code         TEXT    NOT NULL DEFAULT '',
+        period_start         TEXT    NOT NULL DEFAULT '',
+        period_end           TEXT    NOT NULL DEFAULT '',
+        status               TEXT    NOT NULL DEFAULT 'Open',
+        paid_date            TEXT    NOT NULL DEFAULT '',
+        paid_amount          REAL,
+        payment_method       TEXT    NOT NULL DEFAULT '',
+        receipt_key          TEXT    NOT NULL DEFAULT '',
+        receipt_name         TEXT    NOT NULL DEFAULT '',
+        darwin_status        TEXT    NOT NULL DEFAULT 'Not entered',
+        darwin_entered_by    TEXT    NOT NULL DEFAULT '',
+        darwin_entered_at    TEXT    NOT NULL DEFAULT '',
+        notes                TEXT    NOT NULL DEFAULT '',
+        created_by           TEXT    NOT NULL DEFAULT '',
+        created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_officeap_bills_account ON officeap_bills(account_id)");
+}
+
+// Agent Membership Mapping (MLS & Boards Payables) — which real people hold a
+// seat on a given mlsap_accounts row, independent of market-center roster
+// counts. See lib/mlsap_lib.php (membership functions), backoffice_mlsap.php.
+// Distinct from the older, unrelated agent_mls_memberships table (agent
+// self-reported free-text MLS name/number from the intake form) — this one
+// links to a specific payables account and carries role/payer/status.
+function local_db_ensure_mlsap_memberships(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mlsap_memberships (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id      INTEGER NOT NULL REFERENCES mlsap_accounts(id) ON DELETE CASCADE,
+        person_email    TEXT    NOT NULL DEFAULT '',
+        person_name     TEXT    NOT NULL DEFAULT '',
+        role            TEXT    NOT NULL DEFAULT 'Agent',
+        payer           TEXT    NOT NULL DEFAULT 'Brokerage',
+        member_id       TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'Active',
+        start_date      TEXT    NOT NULL DEFAULT '',
+        end_date        TEXT    NOT NULL DEFAULT '',
+        source          TEXT    NOT NULL DEFAULT 'Manual',
+        license_number  TEXT    NOT NULL DEFAULT '',
+        created_by      TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mlsap_memberships_account ON mlsap_memberships(account_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mlsap_memberships_email ON mlsap_memberships(person_email)");
+
+    // Small key/value settings table scoped to this module (currently just
+    // the low-usage $/agent threshold, editable from the Broker-Only report).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mlsap_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("INSERT OR IGNORE INTO mlsap_settings (key, value) VALUES ('low_usage_threshold', '300')");
+
+    // Alternate names a Bills CSV import can match an account by, beyond its
+    // exact name (e.g. a vendor's own short code on an invoice). Comma-separated.
+    try { $pdo->exec("ALTER TABLE mlsap_accounts ADD COLUMN aliases TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+}
+
 function local_db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
@@ -116,9 +295,69 @@ function local_db(): PDO {
     // reliably apply go here instead: cheap, always-run, fully idempotent
     // statements only (CREATE TABLE IF NOT EXISTS / ALTER wrapped in try/catch).
     local_db_ensure_onboard_stages($pdo);
+    local_db_ensure_onboard_agent_fields($pdo);
+    local_db_ensure_pandadoc_extra_docs($pdo);
+    // Team Commission Plans (Finance): plan assignment + change log on top of
+    // the existing teams table (lib/team_commission_plans.php). Idempotent.
+    require_once __DIR__ . '/lib/team_commission_plans.php';
+    team_commission_plans_ensure_schema($pdo);
+    // LAUNCH Calendar -> Launch Schedule enrollment: class links, per-registrant
+    // enrollment outcomes and their audit log (lib/launch_enroll.php). Idempotent.
+    require_once __DIR__ . '/lib/launch_enroll.php';
+    launch_enroll_ensure_schema($pdo);
+    // Polls tables + the idempotent first-poll seed (lib/polls_schema.php).
+    require_once __DIR__ . '/lib/polls_schema.php';
+    polls_ensure_schema($pdo);
+    // Open House sign requests (INNOVATE Agent Support > Open House Signs).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS oh_sign_requests (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email     TEXT    NOT NULL,
+        agent_name      TEXT    NOT NULL,
+        phone           TEXT    NOT NULL,
+        sign_count      INTEGER NOT NULL,
+        open_house_date TEXT    NOT NULL,
+        return_by_date  TEXT    NOT NULL,
+        ack_return      INTEGER NOT NULL DEFAULT 0,
+        status          TEXT    NOT NULL DEFAULT 'new',
+        handled_by      TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_oh_sign_requests_agent ON oh_sign_requests(agent_email, id)");
+    // For Sale sign requests (INNOVATE Agent Support > For Sale Signs). One sign per request.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS sale_sign_requests (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_email TEXT    NOT NULL,
+        agent_name  TEXT    NOT NULL,
+        phone       TEXT    NOT NULL,
+        mls_number  TEXT    NOT NULL,
+        status      TEXT    NOT NULL DEFAULT 'new',
+        handled_by  TEXT    NOT NULL DEFAULT '',
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sale_sign_requests_agent ON sale_sign_requests(agent_email, id)");
+    local_db_ensure_uni_template_files($pdo);
     // onboard_steps.coach_name on the Stage 2 Coach step of the Onboarding Queue: the Launch
     // Coach's email (validated against list_launch_coaches()) or 'n/a'; NULL = unassigned.
     try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN coach_name TEXT"); } catch (\Exception $e) {}
+    // LAUNCH step on the Onboarding Queue: confirmed / not_confirmed + a date.
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_status TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_date TEXT"); } catch (\Exception $e) {}
+    // Free-text note on the Coach / LAUNCH steps of the Onboarding Queue (Stage 4).
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN step_note TEXT"); } catch (\Exception $e) {}
+    // Set once the "LAUNCH attendance confirmed" notification has been queued (send-once guard).
+    try { $pdo->exec("ALTER TABLE onboard_steps ADD COLUMN launch_notified_at TEXT"); } catch (\Exception $e) {}
+    // When onboarding was marked complete (Stage 2 close-out) — Roster Changes holds an agent's
+    // 'added'/'restored' entry until then, and dates it from this moment.
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN completed_at TEXT"); } catch (\Exception $e) {}
+    // When the exit interview link was last sent (greys out Send Exit Interview on the Offboarding Queue).
+    try { $pdo->exec("ALTER TABLE offboard_queue ADD COLUMN exit_interview_sent_at TEXT"); } catch (\Exception $e) {}
+    // Offboarding queue DotLoop line: the date picked for the "remove them from DotLoop" reminder.
+    // (Lives here, not in local_db_migrate(), because that migration gate never reruns on the live DB.)
+    try { $pdo->exec("ALTER TABLE offboard_steps ADD COLUMN due_date TEXT"); } catch (\Exception $e) {}
+    // Send-once guards for the Stage 2 / Stage 3 completion emails (lib/onboarding.php).
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage2_notified_at TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage3_notified_at TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE onboard_queue ADD COLUMN stage4_notified_at TEXT"); } catch (\Exception $e) {}
     // Onboarding Queue MLS step is labeled "MLS Number" (the number itself is read from the intake form).
     $pdo->exec("UPDATE step_defs SET label='MLS Number' WHERE process='onboard' AND step_key='mls' AND label='MLS Access'");
     $pdo->exec("UPDATE onboard_steps SET tool_label='MLS Number' WHERE tool_key='mls' AND tool_label='MLS Access'");
@@ -141,6 +380,84 @@ function local_db(): PDO {
     try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_requested_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_text TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
     try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN feedback_submitted_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    // Counter-offer on a declined request: the listing agent can suggest a new
+    // date/time when declining. counter_status is '' (none), 'pending' (awaiting
+    // the requester), 'accepted' or 'declined' — see api/oh_action.php (respond)
+    // and the tokenized public page oh_counter.php. Always-run because the
+    // versioned migration block never executes on the live DB.
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN proposed_date TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN proposed_time TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN counter_status TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE oh_requests ADD COLUMN counter_responded_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Event Planner ↔ Google Calendar sync (see lib/ep_calendar.php). Nullable
+    // and left unset on existing rows — an event with no gcal_event_id yet
+    // just gets its Calendar event created the next time it's saved.
+    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN gcal_event_id TEXT"); } catch (\Exception $e) {}
+    // Real organizer-set end time for a timed event (HH:MM), replacing the
+    // synthesized 2-hour-after-start guess Calendar sync used before this
+    // column existed. NULL on rows saved before this column existed —
+    // ep_gcal_event_fields() falls back to the old synthesized duration for
+    // those until the event is next edited (see lib/ep_calendar.php).
+    try { $pdo->exec("ALTER TABLE ep_events ADD COLUMN end_time TEXT"); } catch (\Exception $e) {}
+
+    // Who created a Company Calendar Event / Training session (lowercased admin
+    // email). Written only by the create actions (api/event_action.php,
+    // api/training_event_action.php) and used to let the creator see their own
+    // event's RSVP list (lib/event_attendees.php). Blank for events created
+    // before this column existed — never guessed or back-filled. Always-run
+    // because the versioned migration block never executes on the live DB.
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN created_by_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN created_by_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Optional RSVP on Market Center Events (mc_events.php). rsvp_enabled=0 (the
+    // default) leaves an MC Event exactly as it always was: no RSVP UI, no
+    // records. Turning it off later never deletes registrations — they're kept
+    // in mc_event_rsvps and reappear if it's turned back on. Separate table
+    // (not events_rsvps) so MC registrations can't leak into the Back Office
+    // RSVP page or the attendee-reminder script, which read that one generically.
+    // status: registered | cancelled (cancel keeps the row as history).
+    try { $pdo->exec("ALTER TABLE mc_events ADD COLUMN rsvp_enabled INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    // Optional image on a Market Center Event (mc_events.php): a relative
+    // api/mc_event_image.php?key=... URL, or '' for none. Uploaded via
+    // api/mc_events_action.php action=upload_image, served login-gated.
+    try { $pdo->exec("ALTER TABLE mc_events ADD COLUMN image_url TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mc_event_rsvps (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id    INTEGER NOT NULL,
+        agent_email TEXT    NOT NULL,
+        agent_name  TEXT    NOT NULL DEFAULT '',
+        status      TEXT    NOT NULL DEFAULT 'registered',
+        rsvped_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(event_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_event_rsvps_event ON mc_event_rsvps(event_id, status)");
+
+    // Company Email "state" audience — lets a broker (mc_leader/bic) reach
+    // every agent across the whole state their Market Center(s) sit in, not
+    // just their own specific MC(s). CSV-joined state codes, same storage
+    // pattern as target_mc_slug (see lib/company_email.php ce_resolve_state()).
+    try { $pdo->exec("ALTER TABLE company_emails ADD COLUMN target_state TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN target_state TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Company Email "Reply To" override — CSV-joined specific email
+    // addresses the sender picked (from the Market Center Leader/BIC/Staff/
+    // Admin candidate lists) to receive replies instead of themselves.
+    // Stored on scheduled_emails so the cron worker can re-validate the
+    // picks are still current at send time (see ce_validate_reply_to_emails()
+    // in lib/company_email.php); stored on company_emails too, same as
+    // target_mc_slug/target_state, for a consistent audit trail even though
+    // nothing re-reads it after send.
+    try { $pdo->exec("ALTER TABLE company_emails ADD COLUMN reply_to_emails TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN reply_to_emails TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Which MLS a pool listing's data actually came from (Trestle's
+    // OriginatingSystemName, e.g. "CCAR") — captured at add-time so a new
+    // listing can notify agents in that same MLS (see
+    // notify_new_open_house_listing() in lib/notifications.php). Blank for
+    // listings added before this column existed, or whose mls_number never
+    // resolved via Trestle.
+    try { $pdo->exec("ALTER TABLE oh_listings ADD COLUMN mls_association TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
 
     // Cross-system identity map for the Coach Dashboard production layer
     // (backfill_agent_identity.php / lib/agent_identity.php). darwin_agent_person_id
@@ -236,7 +553,396 @@ function local_db(): PDO {
         closed_side_rows      INTEGER
     )");
 
+    // Optional per-class display info for the Launch Schedule page — one row
+    // per distinct launch_roster.start_date. Lets a class be labeled with a
+    // Market Center and/or a Launch Facilitator instead of just a bare date;
+    // both are optional and blank unless someone fills them in.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS launch_classes (
+        start_date     TEXT PRIMARY KEY,
+        market_center  TEXT NOT NULL DEFAULT '',
+        facilitator    TEXT NOT NULL DEFAULT '',
+        updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Whether the coach contract has been signed for this LAUNCH enrollment
+    // (Launch Coaching page) -- a checkbox next to Coach, separate from the
+    // coach name itself since that now displays from the agent's profile
+    // (agent_admin.coached_by) rather than being typed here.
+    try { $pdo->exec("ALTER TABLE launch_roster ADD COLUMN coach_contract_signed INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+
+    // State Annual Reports (Back Office > Finance) — Michele's filing calendar
+    // for every state annual report INNOVATE now files in-house instead of
+    // paying Northwest Registered Agent. See backoffice_annual_reports.php,
+    // lib/annual_reports_lib.php, lib/annual_reports_adapter.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS ar_registrations (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_name        TEXT    NOT NULL,
+        state              TEXT    NOT NULL,
+        registration_type  TEXT    NOT NULL,
+        state_entity_id    TEXT,
+        agency             TEXT    NOT NULL,
+        filing_name        TEXT    NOT NULL,
+        portal_url         TEXT,
+        due_rule           TEXT    NOT NULL,
+        next_due_date      TEXT,
+        window_opens       TEXT,
+        expected_fee       REAL,
+        fee_note           TEXT,
+        late_penalty       TEXT,
+        info_needed        TEXT,
+        filing_steps       TEXT,
+        notes              TEXT,
+        northwest_status   TEXT    NOT NULL DEFAULT 'Unknown',
+        owner              TEXT    NOT NULL DEFAULT 'Michele Chalk',
+        status             TEXT    NOT NULL DEFAULT 'Active',
+        created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ar_reg_due ON ar_registrations(next_due_date)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ar_reg_state ON ar_registrations(state)");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS ar_filings (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        registration_id   INTEGER NOT NULL REFERENCES ar_registrations(id) ON DELETE CASCADE,
+        report_year       INTEGER NOT NULL,
+        due_date          TEXT,
+        filed_on          TEXT    NOT NULL,
+        amount_paid       REAL,
+        confirmation_no   TEXT,
+        receipt_path      TEXT,
+        filed_by          TEXT,
+        notes             TEXT,
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_ar_fil_reg ON ar_filings(registration_id)");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS ar_tasks (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        title       TEXT    NOT NULL,
+        detail      TEXT,
+        owner       TEXT    NOT NULL DEFAULT 'Michele Chalk',
+        due_date    TEXT,
+        done_at     TEXT,
+        done_by     TEXT,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS ar_reminders_sent (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        registration_id  INTEGER NOT NULL,
+        due_date         TEXT    NOT NULL,
+        reminder_key     TEXT    NOT NULL,
+        sent_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (registration_id, due_date, reminder_key)
+    )");
+
+    // MLS & Board Cost Audit (Back Office > Finance) — every state MLS/
+    // REALTOR board membership INNOVATE pays for, built from Michele's
+    // receipts folder. See backoffice_mls_costs.php, lib/mls_costs_lib.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_cost_items (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        state             TEXT    NOT NULL,
+        organization      TEXT    NOT NULL,
+        item_type         TEXT    NOT NULL,
+        covers            TEXT    NOT NULL DEFAULT '',
+        frequency         TEXT    NOT NULL DEFAULT 'Annual',
+        amount_per_bill   REAL    NOT NULL DEFAULT 0,
+        bills_per_year    INTEGER NOT NULL DEFAULT 1,
+        last_paid         TEXT    NOT NULL DEFAULT '',
+        confidence        TEXT    NOT NULL DEFAULT 'Medium',
+        notes             TEXT    NOT NULL DEFAULT '',
+        status            TEXT    NOT NULL DEFAULT 'Active',
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mc_items_state ON mls_cost_items(state)");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_one_time_fees (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        state             TEXT    NOT NULL DEFAULT '',
+        organization      TEXT    NOT NULL,
+        description       TEXT    NOT NULL DEFAULT '',
+        amount            REAL    NOT NULL DEFAULT 0,
+        paid              TEXT    NOT NULL DEFAULT '',
+        notes             TEXT    NOT NULL DEFAULT '',
+        created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mls_open_items (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        title         TEXT    NOT NULL,
+        detail        TEXT,
+        due_date      TEXT,
+        owner         TEXT    NOT NULL DEFAULT 'Michele Chalk',
+        done_at       TEXT,
+        done_by       TEXT,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Atlas (CRM-side AI agent) findings about MLS/board fees, renewals,
+    // licenses, feeds and MLS records. See backoffice_atlas.php, lib/atlas_lib.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS atlas_findings (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        dedupe_key      TEXT    NOT NULL UNIQUE,
+        kind            TEXT    NOT NULL,
+        severity        TEXT    NOT NULL DEFAULT 'info',
+        title           TEXT    NOT NULL,
+        detail          TEXT    NOT NULL DEFAULT '',
+        target_table    TEXT    NOT NULL DEFAULT '',
+        target_id       INTEGER,
+        target_field    TEXT    NOT NULL DEFAULT '',
+        proposed_change TEXT,
+        source_url      TEXT    NOT NULL DEFAULT '',
+        due_date        TEXT,
+        status          TEXT    NOT NULL DEFAULT 'open',
+        decided_by      TEXT,
+        decided_at      TEXT,
+        decision_note   TEXT    NOT NULL DEFAULT '',
+        resolved_at     TEXT,
+        first_seen      TEXT    NOT NULL DEFAULT (datetime('now')),
+        last_seen       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_atlas_open ON atlas_findings(status, kind)");
+
+    // Sage (CRM-side AI agent): review opt in/out per agent, Sage-managed
+    // review requests, and Market Center Google pages. See lib/sage_lib.php.
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN review_opt_status TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN review_opt_source TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE agent_intake ADD COLUMN review_opt_changed_at TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN send_after TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN place_source TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN mc_slug TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN sage_prepared_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN sage_offer_sent_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN sage_offer_token TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN zillow_included INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE review_request_queue ADD COLUMN sender_email TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mc_google_pages (
+        mc_slug         TEXT PRIMARY KEY,
+        place_id        TEXT NOT NULL DEFAULT '',
+        name            TEXT NOT NULL DEFAULT '',
+        address         TEXT NOT NULL DEFAULT '',
+        phone           TEXT NOT NULL DEFAULT '',
+        website         TEXT NOT NULL DEFAULT '',
+        maps_url        TEXT NOT NULL DEFAULT '',
+        rating          REAL,
+        review_count    INTEGER NOT NULL DEFAULT 0,
+        business_status TEXT NOT NULL DEFAULT '',
+        has_hours       INTEGER NOT NULL DEFAULT 0,
+        confirmed       INTEGER NOT NULL DEFAULT 0,
+        confirmed_by    TEXT,
+        confirmed_at    TEXT,
+        candidates_json TEXT NOT NULL DEFAULT '',
+        last_checked_at TEXT,
+        last_error      TEXT NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mc_google_reviews (
+        review_key    TEXT PRIMARY KEY,
+        place_id      TEXT NOT NULL,
+        author        TEXT NOT NULL DEFAULT '',
+        rating        INTEGER NOT NULL DEFAULT 0,
+        text          TEXT NOT NULL DEFAULT '',
+        review_time   INTEGER NOT NULL DEFAULT 0,
+        relative_time TEXT NOT NULL DEFAULT '',
+        first_seen    TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mc_page_setup (
+        mc_slug             TEXT PRIMARY KEY,
+        managed_by_darren   INTEGER NOT NULL DEFAULT 0,
+        managed_marked_by   TEXT,
+        managed_marked_at   TEXT,
+        leader_says_done_at TEXT,
+        nudges              INTEGER NOT NULL DEFAULT 0,
+        last_nudge_at       TEXT
+    )");
+    try { $pdo->exec("ALTER TABLE mc_page_setup ADD COLUMN not_needed INTEGER NOT NULL DEFAULT 0"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mc_page_setup ADD COLUMN darren_page_note TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE mc_page_setup ADD COLUMN contact_override TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Company Text — SMS counterpart to Company Email (backoffice_texts.php).
+    // Shares the same audience resolution (ce_resolve_recipients() in
+    // lib/company_email.php already enriches every recipient with a phone
+    // number) and the same delivery queue (notification_queue, channel='sms',
+    // already supported by process_notification_queue() — see
+    // queue_announcement_notifications() above for a prior example of that
+    // exact channel). Only the compose/audience UI and these two tracking
+    // tables are new.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS company_texts (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_email     TEXT    NOT NULL,
+        sender_role      TEXT    NOT NULL DEFAULT '',
+        audience         TEXT    NOT NULL DEFAULT '',
+        target_mc_slug   TEXT    NOT NULL DEFAULT '',
+        target_state     TEXT    NOT NULL DEFAULT '',
+        body             TEXT    NOT NULL,
+        recipient_count  INTEGER NOT NULL DEFAULT 0,
+        sent_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS scheduled_texts (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_email       TEXT    NOT NULL,
+        sender_role        TEXT    NOT NULL DEFAULT '',
+        audience           TEXT    NOT NULL DEFAULT '',
+        target_mc_slug     TEXT    NOT NULL DEFAULT '',
+        target_state       TEXT    NOT NULL DEFAULT '',
+        target_email       TEXT    NOT NULL DEFAULT '',
+        launch_class_date  TEXT    NOT NULL DEFAULT '',
+        body               TEXT    NOT NULL,
+        send_at            TEXT    NOT NULL,
+        recipient_count    INTEGER NOT NULL DEFAULT 0,
+        status             TEXT    NOT NULL DEFAULT 'pending',
+        created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+
+    // Restricted seats — an account that may only reach one specific page
+    // (e.g. a lender/vendor partner given calendar visibility only, no
+    // access to agent data). Empty = normal account. Enforced centrally in
+    // auth.php's require_login() and nav.php's render_sidebar() rather than
+    // per-page, so a new restricted value can't be bypassed by a page that
+    // forgot to check it.
+    try { $pdo->exec("ALTER TABLE agent_roles ADD COLUMN restricted_to TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Agent Tags — freeform admin-curated groups (e.g. "Team Leader
+    // Mastermind") selectable as a Company Email/Company Text audience
+    // without re-typing the same list of people into "Specific Person"
+    // every time. See lib/company_email.php's ce_resolve_tags() and
+    // backoffice_agent_tags.php.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_tags (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL UNIQUE,
+        created_by TEXT    NOT NULL DEFAULT '',
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS agent_tag_members (
+        tag_id   INTEGER NOT NULL REFERENCES agent_tags(id) ON DELETE CASCADE,
+        email    TEXT    NOT NULL,
+        added_by TEXT    NOT NULL DEFAULT '',
+        added_at TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (tag_id, email)
+    )");
+    // Which tag(s) a send/schedule used — CSV-joined like target_mc_slug,
+    // so history/scheduled rows keep showing the real tag(s) even after
+    // ce_resolve_tags() membership changes later.
+    try { $pdo->exec("ALTER TABLE company_emails ADD COLUMN target_tag TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE scheduled_emails ADD COLUMN target_tag TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE company_texts ADD COLUMN target_tag TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE scheduled_texts ADD COLUMN target_tag TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // MLS & Boards Payables — accounts payable for MLS/board/data-feed bills
+    // only (see lib/mlsap_lib.php, backoffice_mlsap.php). Supersedes the
+    // older mls_cost_items-based "MLS & Board Costs" page as the thing
+    // humans actually use, but does NOT drop mls_cost_items itself — Atlas's
+    // Python agent (coastline-server/src/innovate/agents/atlas.py) only
+    // knows that table by name, and atlas_lib.php's atlas_apply('mark_paid')
+    // writes straight to mls_cost_items.last_paid via raw SQL independent of
+    // this app's own UI/lib layer. legacy_mls_cost_item_id on mlsap_accounts
+    // lets a bill's "mark Paid" action write through to that same column
+    // (mirroring atlas_lib.php's own update exactly) so Atlas's "no payment
+    // recorded" alert still clears, with zero changes to Atlas's own code.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mlsap_accounts (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                    TEXT    NOT NULL,
+        account_type            TEXT    NOT NULL DEFAULT 'MLS',
+        state                   TEXT    NOT NULL DEFAULT '',
+        market_center           TEXT    NOT NULL DEFAULT '',
+        mls_integration_id      INTEGER,
+        legacy_mls_cost_item_id INTEGER,
+        designated_realtor_or_bic TEXT  NOT NULL DEFAULT '',
+        office_id_or_nrds       TEXT    NOT NULL DEFAULT '',
+        billing_site_url        TEXT    NOT NULL DEFAULT '',
+        billing_frequency       TEXT    NOT NULL DEFAULT 'Annual',
+        renewal_month           INTEGER,
+        autopay                 INTEGER NOT NULL DEFAULT 0,
+        owner_email             TEXT    NOT NULL DEFAULT '',
+        prior_year_volume       REAL,
+        notes                   TEXT    NOT NULL DEFAULT '',
+        active                  INTEGER NOT NULL DEFAULT 1,
+        created_by              TEXT    NOT NULL DEFAULT '',
+        created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at              TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mlsap_bills (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id           INTEGER NOT NULL REFERENCES mlsap_accounts(id) ON DELETE CASCADE,
+        invoice_number       TEXT    NOT NULL DEFAULT '',
+        invoice_date         TEXT    NOT NULL DEFAULT '',
+        due_date             TEXT    NOT NULL DEFAULT '',
+        amount               REAL    NOT NULL DEFAULT 0,
+        expense_code         TEXT    NOT NULL DEFAULT '',
+        period_start         TEXT    NOT NULL DEFAULT '',
+        period_end           TEXT    NOT NULL DEFAULT '',
+        status               TEXT    NOT NULL DEFAULT 'Open',
+        paid_date            TEXT    NOT NULL DEFAULT '',
+        paid_amount          REAL,
+        payment_method       TEXT    NOT NULL DEFAULT '',
+        receipt_key          TEXT    NOT NULL DEFAULT '',
+        receipt_name         TEXT    NOT NULL DEFAULT '',
+        darwin_status        TEXT    NOT NULL DEFAULT 'Not entered',
+        darwin_entered_by    TEXT    NOT NULL DEFAULT '',
+        darwin_entered_at    TEXT    NOT NULL DEFAULT '',
+        billed_back_agent_id INTEGER,
+        notes                TEXT    NOT NULL DEFAULT '',
+        created_by           TEXT    NOT NULL DEFAULT '',
+        created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mlsap_bills_account ON mlsap_bills(account_id)");
+    // Decision history — current decision for an account is simply the row
+    // with the latest decided_at; never overwritten in place so the audit
+    // trail (who decided what, when, why) stays intact.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS mlsap_decisions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id  INTEGER NOT NULL REFERENCES mlsap_accounts(id) ON DELETE CASCADE,
+        decision    TEXT    NOT NULL,
+        reason      TEXT    NOT NULL DEFAULT '',
+        decided_by  TEXT    NOT NULL DEFAULT '',
+        decided_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_mlsap_decisions_account ON mlsap_decisions(account_id)");
+
+    // Per-folder Vault restriction, independent of its department's own
+    // restricted flag — see lib/vault.php's vault_user_passes_folder_restriction().
+    // Comma-separated emails; empty means no per-folder override.
+    try { $pdo->exec("ALTER TABLE vault_folders ADD COLUMN restricted_emails TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    // Calendar import approval gate (vendor-invite filtering), 2026-10-27 —
+    // see training_cal.php/events_cal.php for the auto-decide rule and
+    // backoffice_calendar_approvals.php for the admin review queue.
+    // approval_status: '' (not yet evaluated/legacy row) | 'approved' | 'pending' | 'rejected'.
+    // approval_decided_by: blank when the status was set automatically by the
+    // import rule; an admin's email once a human has explicitly approved or
+    // rejected it — a non-blank value here means later re-syncs must leave
+    // the status alone instead of re-running the auto-rule over it.
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN approval_decided_by TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN approval_decided_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN approval_status TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN approval_decided_by TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE events_calendar ADD COLUMN approval_decided_at TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
+    local_db_ensure_officeap($pdo);
+    local_db_ensure_mlsap_memberships($pdo);
+
+    // A second phone number some agents use for marketing (Google Business
+    // Profile, ad call tracking, etc.) that's different from their main
+    // contact phone -- self-service, same local-only pattern as birthday/
+    // hire_date/license_renewal in agent_extra above.
+    try { $pdo->exec("ALTER TABLE agent_extra ADD COLUMN marketing_number TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+
     return $pdo;
+}
+
+// Shared by attempt_login() (auth.php Step 0) and bridge/verify.php's login
+// handler — the local AgentEdge password override lookup, in one place so
+// the two call sites can't drift apart. Read-only: no session, no writes.
+function local_password_matches(string $email, string $password): bool {
+    if ($email === '' || $password === '') return false;
+    try {
+        $stmt = local_db()->prepare("SELECT password_hash FROM agent_passwords WHERE email=? LIMIT 1");
+        $stmt->execute([strtolower(trim($email))]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return (bool)($row && password_verify($password, $row['password_hash']));
+    } catch (\Throwable $e) {
+        return false;
+    }
 }
 
 // Every CREATE TABLE IF NOT EXISTS / ALTER TABLE (wrapped in try/catch, for
@@ -249,6 +955,7 @@ function local_db(): PDO {
 // `if ($fromVersion < N) { ... }` block can be appended below without
 // re-running everything that came before it.
 function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
+    if ($fromVersion < 1) {
     // ── version 1 (baseline) ───────────────────────────────────────────────────
 
     // External nav links (editable by super_admin)
@@ -745,6 +1452,12 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     $pdo->exec(
         "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord)
          VALUES ('offboard','realscout','RealScout','Remove agent from RealScout account',0,65)"
+    );
+    // Migration: door lock step on both checklists (manual)
+    $pdo->exec(
+        "INSERT OR IGNORE INTO step_defs (process, step_key, label, note, is_auto, sort_ord)
+         VALUES ('onboard','door_lock','Door Lock','Add agent to the door lock',0,65),
+                ('offboard','door_lock','Door Lock','Remove agent from the door lock',0,75)"
     );
 
     // Role assignments — AgentEdge is the source of truth for role + MC scope.
@@ -1680,6 +2393,7 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_lfiles_lesson ON uni_lesson_files(lesson_id)");
 
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS uni_questions (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         lesson_id     INTEGER NOT NULL,
@@ -2506,6 +3220,9 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
     // the application layer across both training_events and events_calendar
     // (see slugify_reg_link() in api/training_event_action.php), not here.
     try { $pdo->exec("ALTER TABLE training_events ADD COLUMN reg_slug TEXT"); } catch (\Exception $e) {}
+    // Zoom meeting attached to this training event from the event form (lib/zoom.php).
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_meeting_id TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_host TEXT"); } catch (\Exception $e) {}
 
     // ── Company Calendar "Events" tab — same RSVP/capacity/waitlist pattern as
     // Training above, but a separate Google Calendar + separate RSVP pool, so
@@ -3311,6 +4028,174 @@ function local_db_migrate(PDO $pdo, string $dir, int $fromVersion): void {
             foreach ($names as $n) { $ins->execute([$n]); }
         } catch (\Exception $e) {}
     }
+    } // end if ($fromVersion < 1)
+
+    if ($fromVersion < 7) {
+    // ── version 7 — Feedback response metadata snapshots ─────────────────────
+    // NOTE ON NUMBERING (prod): this database was already stamped 6 by the University/On-Demand release-candidate
+    // migration (branch release/university-feedback-v1-rc), which created the feedback tables. This block therefore
+    // has to be > 6 or it would never run. Everything here is idempotent: the three feedback tables are
+    // CREATE ... IF NOT EXISTS (no-ops where they already exist) and the new pieces are the meta table + column.
+    // (Dev numbers the same two pieces 2 and 3 -- reconcile at merge time.)
+    // ── version 2 — Feedback lesson type ────────────────────────────────────
+    // uni_lessons (type='feedback') is the form parent, same as quiz has no
+    // separate parent table beyond uni_lessons -- see docs/design's Feedback
+    // audit. Deliberately not sharing uni_questions/uni_quiz_answers: those
+    // encode correctness/scoring (correct_index, correct_indexes) that
+    // doesn't apply here, and Feedback needs a draft/submitted response
+    // object quiz has no equivalent of.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_feedback_questions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id      INTEGER NOT NULL,
+        section_label  TEXT    NOT NULL DEFAULT '',
+        is_intro_field INTEGER NOT NULL DEFAULT 0,
+        qtype          TEXT    NOT NULL,               -- rating_5 | scale_10 | short_text | long_text | date
+        question       TEXT    NOT NULL,
+        config         TEXT    NOT NULL DEFAULT '{}',   -- JSON, shape depends on qtype -- see admin builder
+        sort_ord       INTEGER NOT NULL DEFAULT 0
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fbq_lesson ON uni_feedback_questions(lesson_id)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_feedback_responses (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id     INTEGER NOT NULL,
+        agent_email   TEXT    NOT NULL,                 -- from current_agent(), never client input
+        status        TEXT    NOT NULL DEFAULT 'draft',  -- draft | submitted
+        current_step  INTEGER NOT NULL DEFAULT 0,
+        started_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        submitted_at  TEXT,
+        UNIQUE(lesson_id, agent_email)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fbr_lesson ON uni_feedback_responses(lesson_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fbr_agent ON uni_feedback_responses(agent_email)");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_feedback_answers (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id  INTEGER NOT NULL,
+        question_id  INTEGER NOT NULL,
+        value_text   TEXT,                              -- short_text / long_text / date (ISO string)
+        value_number INTEGER,                            -- rating_5 (1-5) / scale_10 (1-10)
+        is_na        INTEGER NOT NULL DEFAULT 0,          -- explicit N/A on a rating_5 question -- distinct from unanswered (no row)
+        answered_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(response_id, question_id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fba_response ON uni_feedback_answers(response_id)");
+
+    // ── version 3 — Feedback response metadata snapshots ─────────────────────
+    // A feedback lesson opts in via uni_lessons.feedback_meta_profile (a key of
+    // FEEDBACK_META_PROFILES in lib/uni_feedback_meta.php; '' = off, which is
+    // every existing lesson). At submit, each field the profile can resolve is
+    // frozen into uni_feedback_response_meta -- one row per (response, key) --
+    // so later roster/coach/market-center changes never rewrite history.
+    // source: 'auto' (resolved by Agent Edge) | 'manual' (agent typed a fallback).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS uni_feedback_response_meta (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id   INTEGER NOT NULL,
+        meta_key      TEXT    NOT NULL,
+        value_text    TEXT    NOT NULL DEFAULT '',
+        source        TEXT    NOT NULL,                  -- auto | manual
+        source_detail TEXT    NOT NULL DEFAULT '',       -- e.g. launch_roster.coach
+        captured_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(response_id, meta_key)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_uni_fbm_response ON uni_feedback_response_meta(response_id)");
+    try { $pdo->exec("ALTER TABLE uni_lessons ADD COLUMN feedback_meta_profile TEXT NOT NULL DEFAULT ''"); } catch (\Exception $e) {}
+    }
+
+    if ($fromVersion < 8) {
+    // ── version 8 — Zoom meeting attached to a training event (lib/zoom.php) ──────
+    // These two ALTERs were first added inside the version-1 baseline block, which
+    // never re-runs on an existing database, so api/training_cal.php selected
+    // columns that did not exist and the Training tab came up empty (2026-10-08).
+    // Idempotent: a database that already has the columns just skips them.
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_meeting_id TEXT"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE training_events ADD COLUMN zoom_host TEXT"); } catch (\Exception $e) {}
+    }
+
+    if ($fromVersion < 9) {
+    // ── version 9 — Company Email embedded videos (api/email_video.php, watch_video.php) ──
+    // Video lives in S3 (browser PUTs straight to it); recipients get a poster
+    // image linking to the public watch page, which mints a short-lived GET URL.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_videos (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        token       TEXT NOT NULL UNIQUE,
+        owner_email TEXT NOT NULL,
+        orig_name   TEXT NOT NULL DEFAULT '',
+        storage_key TEXT NOT NULL,
+        mime_type   TEXT NOT NULL DEFAULT 'video/mp4',
+        poster_url  TEXT NOT NULL DEFAULT '',
+        title       TEXT NOT NULL DEFAULT '',
+        uploaded    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )");
+    }
+
+    if ($fromVersion < 10) {
+    // ── version 10 — Finance Cap Tracking (lib/cap_tracking.php) ───────────────
+    // darwin_cap_progress's money columns are NOT NULL DEFAULT 0 and the sync
+    // has always parsed a null/blank Darwin value to 0.0, so a stored 0 can't
+    // be told apart from "Darwin sent nothing". These *_reported columns hold
+    // the value exactly as Darwin reported it (NULL = missing/unparseable) and
+    // reported_captured_at says when a sync last wrote them; rows synced
+    // before this migration keep NULL there, so their zeros stay "possibly
+    // missing" until Darwin sends the row again. Legacy columns are unchanged.
+    try { $pdo->exec("ALTER TABLE darwin_cap_progress ADD COLUMN cap_amount_reported REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE darwin_cap_progress ADD COLUMN cap_earned_reported REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE darwin_cap_progress ADD COLUMN amount_left_to_cap_reported REAL"); } catch (\Exception $e) {}
+    try { $pdo->exec("ALTER TABLE darwin_cap_progress ADD COLUMN reported_captured_at TEXT"); } catch (\Exception $e) {}
+
+    // One row per cron/sync_darwin.php run, so "last successful sync" is a
+    // recorded fact rather than inferred from row timestamps (the sync is
+    // incremental, so MAX(synced_at) only says when some row last changed).
+    $pdo->exec("CREATE TABLE IF NOT EXISTS darwin_sync_runs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        finished_at  TEXT,
+        status       TEXT    NOT NULL DEFAULT 'running',
+        result_json  TEXT    NOT NULL DEFAULT '',
+        error        TEXT    NOT NULL DEFAULT ''
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dsr_status ON darwin_sync_runs(status, finished_at)");
+
+    // Point-in-time copies of Darwin's "CAP Report" (rpt_PropertyByAgent_
+    // CommissionLevels) supplied by Finance, imported only by
+    // tools/cap_report_import.php. Used as dated evidence (e.g. that a stored
+    // $0 was a real zero on the report date); never written into
+    // darwin_cap_progress and never presented as a sync, and never creates an
+    // identity link. Only match_status 'id_matched' (report carried the Darwin
+    // ID) or 'reconciled' (unique exact name+office+plan fit, active, same ICA
+    // date) is used as evidence; other rows keep their mapping for review only.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cap_report_snapshots (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_name         TEXT    NOT NULL,
+        report_generated_at TEXT    NOT NULL,
+        source              TEXT    NOT NULL,
+        file_sha256         TEXT    NOT NULL,
+        row_count           INTEGER NOT NULL,
+        imported_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS cap_report_rows (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id      INTEGER NOT NULL REFERENCES cap_report_snapshots(id),
+        line_no          INTEGER NOT NULL,
+        program          TEXT    NOT NULL,
+        office           TEXT    NOT NULL,
+        name             TEXT    NOT NULL,
+        scale            TEXT    NOT NULL,
+        cap              REAL    NOT NULL,
+        earned           REAL    NOT NULL,
+        earned_pct       REAL,
+        ica_start        TEXT    NOT NULL DEFAULT '',
+        anniv_start      TEXT    NOT NULL DEFAULT '',
+        anniv_end        TEXT    NOT NULL DEFAULT '',
+        amount_left      REAL    NOT NULL,
+        darwin_person_id INTEGER,
+        match_status     TEXT    NOT NULL,
+        match_note       TEXT    NOT NULL DEFAULT '',
+        match_evidence   TEXT    NOT NULL DEFAULT '{}'
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_crr_person ON cap_report_rows(darwin_person_id)");
+    }
 }
 
 // Practical starter list of major U.S. metros per state (not the full ~390-entry
@@ -3447,6 +4332,23 @@ function pandadoc_state_templates_all(): array {
     $rows = local_db()->query("SELECT * FROM pandadoc_state_templates ORDER BY state_code")->fetchAll(PDO::FETCH_ASSOC);
     $map = [];
     foreach ($rows as $r) $map[$r['state_code']] = $r;
+    return $map;
+}
+
+// PandaDoc template id for a compensation-plan key or TEAM_AGREEMENT, or null
+// if none has been set up.
+function pandadoc_doc_template_for_key(string $key): ?string {
+    $s = local_db()->prepare("SELECT template_id FROM pandadoc_doc_templates WHERE doc_key=?");
+    $s->execute([$key]);
+    $id = $s->fetchColumn();
+    return ($id !== false && $id !== '') ? $id : null;
+}
+
+// All configured plan / team-agreement templates keyed by doc_key.
+function pandadoc_doc_templates_all(): array {
+    $rows = local_db()->query("SELECT * FROM pandadoc_doc_templates ORDER BY doc_key")->fetchAll(PDO::FETCH_ASSOC);
+    $map = [];
+    foreach ($rows as $r) $map[$r['doc_key']] = $r;
     return $map;
 }
 

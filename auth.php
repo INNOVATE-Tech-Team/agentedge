@@ -59,6 +59,35 @@ function require_login(): array {
         header('Location: login.php' . ($next !== '' ? '?next=' . urlencode($next) : ''));
         exit;
     }
+    // Restricted seats (agent_roles.restricted_to, e.g. a lender/vendor
+    // partner given calendar-only access) may only reach their one allowed
+    // page. Checked here, not per-page, so it can't be bypassed by a page
+    // that forgot to check it — and not via roles.php's current_perms(),
+    // to avoid a circular require (roles.php itself requires this file).
+    // API/asset requests are left alone; those already have their own
+    // permission checks and the restricted page's own JS needs them to load.
+    if (function_exists('local_db')) {
+        try {
+            $stmt = local_db()->prepare("SELECT restricted_to FROM agent_roles WHERE LOWER(email)=LOWER(?)");
+            $stmt->execute([$a['email'] ?? '']);
+            $restricted = (string)($stmt->fetchColumn() ?: '');
+        } catch (\Throwable $e) { $restricted = ''; }
+
+        if ($restricted !== '') {
+            // Comma-separated so a restricted seat can be allowed more than one
+            // page (e.g. 'calendar,mc_events' for a partner who manages Market
+            // Center events for specific offices but shouldn't reach anything
+            // else) — a single value behaves exactly as before.
+            $allowedPages = array_map(fn($p) => trim($p) . '.php', explode(',', $restricted));
+            $uriPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+            $isApiOrAsset = strpos($uriPath, '/api/') !== false || strpos($uriPath, '/assets/') !== false;
+            $current = basename($uriPath);
+            if (!$isApiOrAsset && !in_array($current, array_merge($allowedPages, ['login.php', 'logout.php']), true)) {
+                header('Location: ' . $allowedPages[0]);
+                exit;
+            }
+        }
+    }
     return $a;
 }
 
@@ -69,12 +98,11 @@ function attempt_login(string $email, string $password): ?array {
 
     // Step 0 — check local AgentEdge password table (SQLite).
     // This allows us to set a default or custom password without touching Perfex.
-    if (function_exists('local_db') && $email !== '' && $password !== '') {
+    // local_password_matches() is shared with bridge/verify.php's login handler
+    // so the two never drift apart on what counts as a valid override.
+    if (function_exists('local_password_matches') && $email !== '' && $password !== '') {
         try {
-            $stmt = local_db()->prepare("SELECT password_hash FROM agent_passwords WHERE email=? LIMIT 1");
-            $stmt->execute([strtolower($email)]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            if ($row && password_verify($password, $row['password_hash'])) {
+            if (local_password_matches($email, $password)) {
                 // Fetch display info from tblstaff first, then innovate_roster as fallback.
                 // db_one_safe (not db_one) so a dead Perfex connection just falls through
                 // to innovate_roster instead of hard-exiting an already-successful login.
