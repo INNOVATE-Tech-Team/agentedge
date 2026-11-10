@@ -24,12 +24,25 @@ header('Content-Type: application/json');
 
 $agent = current_agent();
 if (!$agent) { http_response_code(401); echo json_encode(['error' => 'not signed in']); exit; }
-if (!can_post_announcements()) { http_response_code(403); echo json_encode(['error' => 'forbidden']); exit; }
+// Same gate as mc_events.php itself (was can_post_announcements(), which shut
+// out secondary-role BICs/MC Leaders the page lets in).
+if (!can_manage_mc_events()) { http_response_code(403); echo json_encode(['error' => 'forbidden']); exit; }
 
 $myEmail   = strtolower(trim($agent['email'] ?? ''));
 $isAdmin   = is_admin();
 // Own MCs plus any a Super Admin approved via mc_events.php's access request.
+// These govern edit/delete of existing events.
 $myMcSlugs = mc_access_effective_slugs(local_db(), $myEmail, my_event_mc_slugs());
+// Where NEW events may be posted: every MC for MC Leaders/BICs (their state or
+// the entire company), otherwise the same as $myMcSlugs.
+$myPostSlugs = mc_access_post_slugs(local_db(), $myMcSlugs);
+
+// Edit/delete: leads every MC the event is posted to, or created it (so a
+// leader who posts company-wide can still fix or remove their own event).
+function mc_events_can_edit(array $row, bool $isAdmin, array $myMcSlugs, string $myEmail): bool {
+    if ($myEmail !== '' && strtolower(trim($row['created_by'] ?? '')) === $myEmail) return true;
+    return mc_events_can_manage_all(mc_events_slugs_array($row['mc_slugs'] ?? ''), $isAdmin, $myMcSlugs);
+}
 
 function mc_events_slugs_array(string $csv): array {
     return array_values(array_filter(array_map('trim', explode(',', $csv))));
@@ -56,7 +69,7 @@ function mc_events_sanitize_slugs(PDO $db, array $requested, bool $isAdmin, arra
     if (!$requested) return ['error' => 'Select at least one Market Center'];
     if (!$isAdmin) {
         foreach ($requested as $s) {
-            if (!in_array($s, $myMcSlugs, true)) return ['error' => 'You can only post events for Market Centers you lead'];
+            if (!in_array($s, $myMcSlugs, true)) return ['error' => 'You can only post events for Market Centers you have access to'];
         }
     }
     $ph = implode(',', array_fill(0, count($requested), '?'));
@@ -88,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $requested = mc_events_slugs_array(trim($_GET['mc'] ?? ''));
     if (!$requested) { echo json_encode(['error' => 'mc is required']); exit; }
     foreach ($requested as $s) {
-        if (!mc_events_can_manage_all([$s], $isAdmin, $myMcSlugs)) {
+        if (!mc_events_can_manage_all([$s], $isAdmin, $myPostSlugs)) {
             http_response_code(403); echo json_encode(['error' => 'Not a leader of this Market Center']); exit;
         }
     }
@@ -100,6 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if ($vgHidden && in_array((int)$r['id'], $vgHidden, true)) continue;
         $eventSlugs = mc_events_slugs_array($r['mc_slugs'] ?? '');
         if (array_intersect($eventSlugs, $requested)) {
+            // Leaders can now view MCs they don't lead (they can post there);
+            // other people's events there are listed read-only.
+            $r['can_edit'] = mc_events_can_edit($r, $isAdmin, $myMcSlugs, $myEmail);
             $r['mc_slugs'] = $eventSlugs;
             // RSVP info for the management page. can_manage_rsvps is about the
             // attendee list only (creator / Staff / Super Admin / a leader of any
@@ -168,7 +184,7 @@ if ($action === 'save') {
         http_response_code(400); echo json_encode(['error' => 'Invalid image']); exit;
     }
 
-    $sanitized = mc_events_sanitize_slugs($db, (array)($in['mc_slugs'] ?? []), $isAdmin, $myMcSlugs);
+    $sanitized = mc_events_sanitize_slugs($db, (array)($in['mc_slugs'] ?? []), $isAdmin, $myPostSlugs);
     if (isset($sanitized['error'])) { http_response_code(400); echo json_encode(['error' => $sanitized['error']]); exit; }
     $mcSlugsCsv = implode(',', $sanitized['slugs']);
 
@@ -177,11 +193,12 @@ if ($action === 'save') {
     }
 
     if ($id > 0) {
-        $own = $db->prepare("SELECT mc_slugs FROM mc_events WHERE id=?");
+        $own = $db->prepare("SELECT mc_slugs, created_by FROM mc_events WHERE id=?");
         $own->execute([$id]);
-        $existingCsv = $own->fetchColumn();
-        if ($existingCsv === false) { http_response_code(404); echo json_encode(['error' => 'Not found']); exit; }
-        if (!mc_events_can_manage_all(mc_events_slugs_array($existingCsv), $isAdmin, $myMcSlugs)) {
+        $existing = $own->fetch(PDO::FETCH_ASSOC);
+        if ($existing === false) { http_response_code(404); echo json_encode(['error' => 'Not found']); exit; }
+        $existingCsv = $existing['mc_slugs'];
+        if (!mc_events_can_edit($existing, $isAdmin, $myMcSlugs, $myEmail)) {
             http_response_code(403); echo json_encode(['error' => 'forbidden']); exit;
         }
         // Adding or removing market centers on an EXISTING event is Super Admin
@@ -211,11 +228,11 @@ if ($action === 'save') {
 if ($action === 'delete') {
     $id = (int)($in['id'] ?? 0);
     if (in_array($id, $vgIds, true)) mc_events_vg_refuse($id);
-    $own = $db->prepare("SELECT mc_slugs FROM mc_events WHERE id=?");
+    $own = $db->prepare("SELECT mc_slugs, created_by FROM mc_events WHERE id=?");
     $own->execute([$id]);
-    $existingCsv = $own->fetchColumn();
-    if ($existingCsv === false) { http_response_code(404); echo json_encode(['error' => 'Not found']); exit; }
-    if (!mc_events_can_manage_all(mc_events_slugs_array($existingCsv), $isAdmin, $myMcSlugs)) {
+    $existing = $own->fetch(PDO::FETCH_ASSOC);
+    if ($existing === false) { http_response_code(404); echo json_encode(['error' => 'Not found']); exit; }
+    if (!mc_events_can_edit($existing, $isAdmin, $myMcSlugs, $myEmail)) {
         http_response_code(403); echo json_encode(['error' => 'forbidden']); exit;
     }
     $db->prepare("DELETE FROM mc_events WHERE id=?")->execute([$id]);

@@ -66,3 +66,20 @@ function mc_access_requestable(PDO $db, array $effectiveSlugs): array {
     $st->execute($states);
     return array_values(array_filter($st->fetchAll(PDO::FETCH_ASSOC), fn($r) => !in_array($r['slug'], $base, true)));
 }
+
+// MC Leaders and BICs (primary or secondary role) can post events to ANY
+// Market Center -- their own, their whole state, or the entire company --
+// without a grant (Darren, 2026-11-10). Posting only: editing/deleting an
+// event still needs every one of its MCs (mc_access_effective_slugs) or to
+// be its creator, see api/mc_events_action.php. Outside partners who only
+// have mc_slugs assigned (can_manage_mc_events() without a leader role)
+// still go through the request/grant flow above.
+function mc_access_can_post_anywhere(): bool {
+    return is_admin() || is_mc_leader() || is_bic() || my_secondary_mc_slugs() !== [];
+}
+
+// Slugs the signed-in person may POST new events to.
+function mc_access_post_slugs(PDO $db, array $effectiveSlugs): array {
+    if (!mc_access_can_post_anywhere()) return $effectiveSlugs;
+    return $db->query("SELECT slug FROM market_centers WHERE enabled=1")->fetchAll(PDO::FETCH_COLUMN);
+}

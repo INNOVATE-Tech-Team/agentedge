@@ -15,12 +15,16 @@ $isSuperAdmin = is_super_admin();   // only a Super Admin can change an existing
 $db        = local_db();
 // Own MCs plus any a Super Admin approved via the access request below.
 $myMcSlugs = mc_access_effective_slugs($db, strtolower(trim($agent['email'] ?? '')), my_event_mc_slugs());
-$canRequestAccess = !$isAdmin;
+// MC Leaders/BICs can post to any MC (own, state, or entire company) with no
+// request needed; only people without a leader role still request access.
+$canPostAnywhere = mc_access_can_post_anywhere();
+$canRequestAccess = !$isAdmin && !$canPostAnywhere;
 $requestable = $canRequestAccess ? mc_access_requestable($db, $myMcSlugs) : [];
 $hasCompanyGrant = $canRequestAccess && mc_access_has_company_grant($db, strtolower(trim($agent['email'] ?? '')));
 
-// Admins can manage any Market Center; MC Leaders/BICs are locked to their own.
-if ($isAdmin) {
+// Admins and MC Leaders/BICs see every Market Center; others only their own.
+// Leaders start with just their own MCs checked (see $mcDefaultChecked).
+if ($isAdmin || $canPostAnywhere) {
     $mcOptions = $db->query("SELECT slug, name, state_code FROM market_centers WHERE enabled=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 } else {
     if (!$myMcSlugs) {
@@ -32,6 +36,14 @@ if ($isAdmin) {
         $mcOptions = $st->fetchAll(PDO::FETCH_ASSOC);
     }
 }
+// Boxes checked on load / after save. Admins keep the old "everything
+// checked"; a leader's own MCs only, so a new event never defaults to
+// company-wide. Falls back to all if they lead no MC directly.
+$mcDefaultChecked = ($isAdmin || !$canPostAnywhere) ? array_column($mcOptions, 'slug')
+    : array_values(array_intersect(array_column($mcOptions, 'slug'), $myMcSlugs));
+if (!$mcDefaultChecked) $mcDefaultChecked = array_column($mcOptions, 'slug');
+$mcStates = array_values(array_unique(array_filter(array_column($mcOptions, 'state_code'))));
+sort($mcStates);
 ?>
 <!doctype html>
 <html lang="en">
@@ -79,10 +91,20 @@ if ($isAdmin) {
             <label>Market Center(s) <span style="font-weight:400;color:var(--faint);text-transform:none">— check all that this applies to</span></label>
             <a href="#" id="mce-mc-toggle-all" onclick="toggleAllMcs(event)" style="font-size:12px;white-space:nowrap">Deselect all</a>
           </div>
+          <?php if ($canPostAnywhere && !$isAdmin): ?>
+          <div id="mce-mc-quick" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px;font-size:12px">
+            <span style="color:var(--faint)">Post to:</span>
+            <button type="button" class="btn-sm" onclick="pickMcs('mine')">My Market Centers</button>
+            <?php foreach ($mcStates as $sc): ?>
+              <button type="button" class="btn-sm" onclick="pickMcs('state', '<?= h($sc) ?>')">All <?= h($sc) ?></button>
+            <?php endforeach; ?>
+            <button type="button" class="btn-sm" onclick="pickMcs('all')">Entire company</button>
+          </div>
+          <?php endif; ?>
           <div id="mce-mc-list" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;max-height:180px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:10px 12px;margin-top:4px">
             <?php foreach ($mcOptions as $mc): ?>
               <label class="mce-mc-label" style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:normal;color:#333;margin:0;padding:4px 0;cursor:pointer">
-                <input type="checkbox" class="mce-mc-check" value="<?= h($mc['slug']) ?>" checked onchange="syncMcToggle();loadMcEvents()" style="margin:0;flex-shrink:0;width:15px;height:15px">
+                <input type="checkbox" class="mce-mc-check" value="<?= h($mc['slug']) ?>" data-state="<?= h($mc['state_code']) ?>"<?= in_array($mc['slug'], $mcDefaultChecked, true) ? ' checked' : '' ?> onchange="syncMcToggle();loadMcEvents()" style="margin:0;flex-shrink:0;width:15px;height:15px">
                 <span><?= h($mc['name']) ?><?= $mc['state_code'] ? ' (' . h($mc['state_code']) . ')' : '' ?></span>
               </label>
             <?php endforeach; ?>
@@ -172,6 +194,7 @@ function fmtDate(s) { if (!s) return ''; const d = new Date(s + 'T00:00:00'); re
 
 let MCE_EVENTS = [];
 const MCE_MC_NAMES = <?= json_encode(array_column($mcOptions, 'name', 'slug')) ?>;
+const MCE_DEFAULT_CHECKED = new Set(<?= json_encode($mcDefaultChecked) ?>);
 
 function currentMcSlugs() {
   return Array.from(document.querySelectorAll('.mce-mc-check:checked')).map(cb => cb.value);
@@ -202,6 +225,8 @@ function renderMcEvents() {
       <td>${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.location || 'Link')}</a>` : esc(e.location || '—')}</td>
       <td style="white-space:nowrap">${e.vendorsgiving
         ? `<a class="btn-sm" href="${esc(e.vendorsgiving_url)}" title="Vendorsgiving events are managed from the Vendorsgiving page">Manage in Vendorsgiving</a>`
+        : e.can_edit === false
+        ? `<span style="font-size:11px;color:var(--faint)">Posted by another leader</span>`
         : `<button class="btn-sm" onclick='editMcEvent(${JSON.stringify(e).replace(/'/g, "&#39;")})'>Edit</button>
         <button class="btn-sm danger" onclick="deleteMcEvent(${e.id})">Delete</button>`}
       </td>
@@ -309,7 +334,16 @@ function cancelMcEdit() {
   showMceImage('');
   MCE_EDITING = null;
   lockMcBoxes(false);
-  document.querySelectorAll('.mce-mc-check').forEach(cb => { cb.checked = true; });
+  document.querySelectorAll('.mce-mc-check').forEach(cb => { cb.checked = MCE_DEFAULT_CHECKED.has(cb.value); });
+  syncMcToggle();
+  loadMcEvents();
+}
+
+// Leader shortcuts: their own MCs, one whole state, or every MC.
+function pickMcs(mode, state) {
+  document.querySelectorAll('.mce-mc-check:not(:disabled)').forEach(cb => {
+    cb.checked = mode === 'all' || (mode === 'state' ? cb.dataset.state === state : MCE_DEFAULT_CHECKED.has(cb.value));
+  });
   syncMcToggle();
   loadMcEvents();
 }
