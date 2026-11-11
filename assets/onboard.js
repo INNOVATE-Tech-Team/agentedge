@@ -331,11 +331,15 @@
     // after "Send Intake" had been clicked at least once, which left no path to
     // clear the completion gate for agents whose info was typed in manually and
     // were never going to be sent a real intake form at all.
+    // Copy Link: the same tokenized intake link the email sends, for staff to
+    // text/email it to the agent themselves when the email link doesn't work.
+    // Shown in every state -- a submitted-but-incomplete intake can still be
+    // resubmitted through that link (api/intake_public.php's duplicate check).
     const intakeStatusHtml = entry.intake_submitted
-      ? `<button class="ob-btn-sm ob-btn-done" onclick="toggleIntake(${entry.id})">${intakeOpenIds.has(entry.id) ? 'Hide' : 'View'} Intake Form</button>`
+      ? `<button class="ob-btn-sm ob-btn-done" onclick="toggleIntake(${entry.id})">${intakeOpenIds.has(entry.id) ? 'Hide' : 'View'} Intake Form</button><button class="ob-btn-sm ob-btn-undo" style="margin-left:4px" title="Copy the intake form link to send to the agent manually" onclick="copyIntakeLink(${entry.id}, this)">Copy Link to Send Manually</button>`
       : entry.intake_sent_at
-        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this)">Mark Submitted</button>`
-        : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this, true)">Skip — Entered Manually</button>`;
+        ? `<span style="font-size:11px;color:#888;margin-right:8px">Intake sent ${esc(entry.intake_sent_at)}</span><button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Resend Intake</button><button class="ob-btn-sm ob-btn-undo" style="margin-left:4px" title="Copy the intake form link to send to the agent manually" onclick="copyIntakeLink(${entry.id}, this)">Copy Link to Send Manually</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this)">Mark Submitted</button>`
+        : `<button class="ob-btn-sm ob-btn-undo" onclick="sendIntake(${entry.id}, this)">Send Intake</button><button class="ob-btn-sm ob-btn-undo" style="margin-left:4px" title="Copy the intake form link to send to the agent manually" onclick="copyIntakeLink(${entry.id}, this)">Copy Link to Send Manually</button><button class="ob-btn-sm ob-btn-done" style="margin-left:4px" onclick="markIntakeSubmitted(${entry.id}, this, true)">Skip — Entered Manually</button>`;
 
     // Derived Stage 1 requirements: met/missing comes from the server's
     // readiness payload (same function the completion action enforces).
@@ -853,6 +857,29 @@
         };
       })
       .catch(() => { btn.disabled = false; });
+  };
+
+  // Copies the agent's intake-form link to the clipboard. Falls back to a
+  // prompt() showing the link (pre-selected) when the Clipboard API isn't
+  // available or is blocked, so staff can always copy it by hand.
+  window.copyIntakeLink = function (queueId, btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    const done = text => {
+      btn.textContent = text;
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
+    };
+    post('api/onboard_action.php?action=intake_link', { queue_id: queueId })
+      .then(d => {
+        if (!d.ok || !d.url) { btn.disabled = false; alert(d.error || 'Could not get the intake link'); return; }
+        const fallback = () => { window.prompt('Copy this intake link and send it to the agent:', d.url); btn.disabled = false; };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(d.url).then(() => done('Link Copied ✓'), fallback);
+        } else {
+          fallback();
+        }
+      })
+      .catch(() => { btn.disabled = false; alert('Network error — could not get the intake link'); });
   };
 
   window.sendIntake = function (queueId, btn) {
