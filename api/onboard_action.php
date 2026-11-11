@@ -690,6 +690,19 @@ if ($action === 'cancel_onboarding') {
     json_out(['ok'=>true]);
 }
 
+// ── POST: intake_link (returns the agent's intake-form link for staff to copy
+// and send manually, e.g. when the email didn't arrive or its link won't open).
+// Same tokenized URL the Send Intake email uses (intake_link_url()); read-only:
+// sends nothing and doesn't touch intake_sent_at. ─────────────────────────────
+if ($action === 'intake_link') {
+    require_once __DIR__ . '/../lib/notifications.php';
+    $queueId = (int)($body['queue_id'] ?? 0);
+    $st = $pdo->prepare("SELECT id FROM onboard_queue WHERE id=?");
+    $st->execute([$queueId]);
+    if (!$st->fetchColumn()) json_out(['ok'=>false,'error'=>'Queue entry not found'], 404);
+    json_out(['ok'=>true, 'url'=>intake_link_url($queueId)]);
+}
+
 // ── POST: send_intake (manual send / resend of the intake-form email) ────────
 if ($action === 'send_intake') {
     require_once __DIR__ . '/../lib/notifications.php';
