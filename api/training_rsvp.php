@@ -26,13 +26,35 @@ function training_gcal_sync(string $event_id, string $email, bool $add): void {
         $token = gcal_access_token($key_file);
         if (!$token) return;
         $add ? gcal_add_attendee($cal_id, $token, $event_id, $email) : gcal_remove_attendee($cal_id, $token, $event_id, $email);
-    } catch (\Throwable $e) {}
+    } catch (\Throwable $e) { error_log('[gcal] training sync threw: ' . $e->getMessage()); }
+}
+
+// Google Calendar "add event" link for the confirmation email, so registrants
+// get the event on their calendar even if the attendee-invite sync above fails.
+function training_add_to_cal_url(string $title, string $start, string $end, string $location): string {
+    $fmt = function (string $iso): ?string {
+        if (strpos($iso, 'T') === false) return null;
+        try { return (new DateTime($iso))->setTimezone(new DateTimeZone('UTC'))->format('Ymd\THis\Z'); }
+        catch (\Throwable $e) { return null; }
+    };
+    $s = $fmt($start);
+    if (!$s) return '';
+    $e = $fmt($end) ?: $s;
+    return 'https://calendar.google.com/calendar/render?' . http_build_query([
+        'action'   => 'TEMPLATE',
+        'text'     => $title,
+        'dates'    => "$s/$e",
+        'location' => $location,
+    ]);
 }
 
 $body        = json_decode(file_get_contents('php://input'), true) ?? [];
 $event_id    = trim($body['event_id']    ?? '');
 $event_title = trim($body['event_title'] ?? '');
 $event_date  = trim($body['event_date']  ?? '');
+$ev_start    = trim($body['start']       ?? '');
+$ev_end      = trim($body['end']         ?? '');
+$ev_location = trim($body['location']    ?? '');
 
 if (!$event_id) { http_response_code(400); echo json_encode(['error' => 'missing event_id']); exit; }
 
@@ -108,14 +130,13 @@ if ($email) {
             "— AgentEdge Training",
         ]));
     } else {
-        queue_email_to([$email], "You're registered: {$event_title}", implode("\n", [
-            "You're confirmed for:",
-            "",
-            $event_title,
-            "Date: {$event_date}",
-            "",
-            "— AgentEdge Training",
-        ]));
+        $calUrl = training_add_to_cal_url($event_title, $ev_start, $ev_end, $ev_location);
+        $h = fn($v) => htmlspecialchars($v, ENT_QUOTES);
+        $html = "<p>You're confirmed for:</p><p><strong>" . $h($event_title) . "</strong><br>Date: " . $h($event_date)
+              . ($ev_location ? "<br>Where: " . $h($ev_location) : '') . "</p>"
+              . ($calUrl ? "<p><a href=\"" . $h($calUrl) . "\">Add to Google Calendar</a></p>" : '')
+              . "<p>— AgentEdge Training</p>";
+        queue_email_to([$email], "You're registered: {$event_title}", $html, '', '', '', true);
     }
 }
 
