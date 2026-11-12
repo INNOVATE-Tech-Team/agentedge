@@ -16,9 +16,13 @@
 // agents" query instead: every agent_intake row not yet terminated.
 //
 // GET /api/agent_directory_export.php?token=...
-// Response: { agents: [{ agent_name, email, market_center, state_code }] }
+// Response: { agents: [{ agent_name, email, market_center, state_code, onboarding_state }] }
+// onboarding_state (lib/onboarding_export.php): 'onboarding_complete' once
+// Complete Onboarding (Stage 1 and Stage 2) is done; the website makes a new
+// agent's page only then (innovate-advantage-server #275, Nov 11, 2026).
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/onboarding_export.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -51,5 +55,6 @@ foreach ($rows as $r) {
     unset($r['terminated_date']);
     $agents[] = $r;
 }
+$agents = add_onboarding_states(local_db(), $agents);
 
 echo json_encode(['agents' => $agents]);

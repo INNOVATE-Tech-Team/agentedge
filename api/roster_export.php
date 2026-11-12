@@ -10,8 +10,12 @@
 //              email }] }
 // `email` added for coastline's agent-sites sync (matches against
 // innovate.users) — see api/agent_profile_export.php for bio/headshot.
+// `onboarding_state` too (lib/onboarding_export.php), as in
+// api/agent_directory_export.php: the sync makes a new agent's page only once
+// it is 'onboarding_complete' (innovate-advantage-server #275, Nov 11, 2026).
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../local_db.php';
+require_once __DIR__ . '/../lib/onboarding_export.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -36,5 +40,6 @@ $rows = local_db()->query(
             retention_status, retention_notes, last_contact_at, added_at, email
      FROM innovate_roster WHERE active = 1"
 )->fetchAll(PDO::FETCH_ASSOC);
+$rows = add_onboarding_states(local_db(), $rows);
 
 echo json_encode(['agents' => $rows]);
